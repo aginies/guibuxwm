@@ -30,6 +30,11 @@ class BaseModal(ModalScreen[T]):
         """Cancel and close the modal."""
         self.dismiss(None)
 
+    def on_click(self, event) -> None:
+        """Dismiss the modal when clicking outside the content."""
+        if getattr(event, "control", None) is self:
+            self.action_cancel_modal()
+
 
 class BaseDialog(Screen[T]):
     """A base class for dialogs with a cancel binding."""
