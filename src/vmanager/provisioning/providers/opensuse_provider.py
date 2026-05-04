@@ -63,43 +63,19 @@ class OpenSUSEProvider(OSProvider):
 
     def get_supported_versions(self) -> List[OSVersion]:
         """Return supported OpenSUSE versions."""
-        versions = []
-
-        # Add major distributions
-        distributions = [
-            ("leap-16.1", "openSUSE Leap 16.1", False),
-            ("leap-16.0", "openSUSE Leap 16.0", False),
-            ("leap-15.6", "openSUSE Leap 15.6", False),
-            ("tumbleweed", "openSUSE Tumbleweed", False),
-            ("slowroll", "openSUSE Slowroll", False),
-        ]
-
-        for version_id, display_name, is_eval in distributions:
-            versions.append(
-                OSVersion(
-                    os_type=OSType.OPENSUSE,
-                    version_id=version_id,
-                    display_name=display_name,
-                    architecture=self.host_arch,
-                    is_evaluation=is_eval,
-                )
-            )
-
-        return versions
+        return self._get_versions_from_config("opensuse", default_arch=self.host_arch)
 
     def get_iso_sources(self, version: OSVersion) -> List[str]:
         """Return ISO download URLs for an OpenSUSE version."""
         # Map version IDs to distribution types
-        distro_mapping = {
-            "leap-16.1": OpenSUSEDistro.LEAP,
-            "leap-16.0": OpenSUSEDistro.LEAP,
-            "leap-15.6": OpenSUSEDistro.LEAP,
-            "tumbleweed": OpenSUSEDistro.TUMBLEWEED,
-            "slowroll": OpenSUSEDistro.SLOWROLL,
-        }
-
-        distro = distro_mapping.get(version.version_id)
-        if not distro:
+        v_id = version.version_id.lower()
+        if "tumbleweed" in v_id:
+            distro = OpenSUSEDistro.TUMBLEWEED
+        elif "slowroll" in v_id:
+            distro = OpenSUSEDistro.SLOWROLL
+        elif "leap" in v_id:
+            distro = OpenSUSEDistro.LEAP
+        else:
             return []
 
         try:
