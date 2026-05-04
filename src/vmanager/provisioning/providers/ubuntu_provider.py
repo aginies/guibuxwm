@@ -20,13 +20,13 @@ from ..os_provider import OSProvider, OSType, OSVersion, hash_password
 class UbuntuDistro(Enum):
     """Ubuntu distribution types."""
 
+    UBUNTU_26_04_LTS = "26.04 LTS (Resolute Raccoon)"
     UBUNTU_24_04_LTS = "24.04 LTS (Noble Numbat)"
     UBUNTU_22_04_LTS = "22.04 LTS (Jammy Jellyfish)"
     UBUNTU_20_04_LTS = "20.04 LTS (Focal Fossa)"
     UBUNTU_25_10 = "25.10 (Questing Quokka)"
     UBUNTU_24_10 = "24.10 (Oracular Oriole)"
     UBUNTU_23_10 = "23.10 (Mantic Minotaur)"
-    UBUNTU_23_04 = "23.04 (Lunar Lobster)"
     CUSTOM = "Custom ISO"
 
 
@@ -46,13 +46,13 @@ class UbuntuProvider(OSProvider):
         """Get list of supported Ubuntu versions."""
         versions = []
         distributions = [
+            ("26.04", "26.04 LTS (Resolute Raccoon)"),
             ("24.04", "24.04 LTS (Noble Numbat)"),
             ("22.04", "22.04 LTS (Jammy Jellyfish)"),
             ("20.04", "20.04 LTS (Focal Fossa)"),
             ("25.10", "25.10 (Questing Quokka)"),
             ("24.10", "24.10 (Oracular Oriole)"),
             ("23.10", "23.10 (Mantic Minotaur)"),
-            ("23.04", "23.04 (Lunar Lobster)"),
         ]
 
         for version_id, display_name in distributions:

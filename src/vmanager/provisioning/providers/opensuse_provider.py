@@ -67,8 +67,9 @@ class OpenSUSEProvider(OSProvider):
 
         # Add major distributions
         distributions = [
+            ("leap-16.1", "openSUSE Leap 16.1", False),
+            ("leap-16.0", "openSUSE Leap 16.0", False),
             ("leap-15.6", "openSUSE Leap 15.6", False),
-            ("leap-15.5", "openSUSE Leap 15.5", False),
             ("tumbleweed", "openSUSE Tumbleweed", False),
             ("slowroll", "openSUSE Slowroll", False),
         ]
@@ -90,8 +91,9 @@ class OpenSUSEProvider(OSProvider):
         """Return ISO download URLs for an OpenSUSE version."""
         # Map version IDs to distribution types
         distro_mapping = {
+            "leap-16.1": OpenSUSEDistro.LEAP,
+            "leap-16.0": OpenSUSEDistro.LEAP,
             "leap-15.6": OpenSUSEDistro.LEAP,
-            "leap-15.5": OpenSUSEDistro.LEAP,
             "tumbleweed": OpenSUSEDistro.TUMBLEWEED,
             "slowroll": OpenSUSEDistro.SLOWROLL,
         }
@@ -576,7 +578,7 @@ class OpenSUSEProvider(OSProvider):
         try:
             if distro == OpenSUSEDistro.LEAP:
                 # Use hardcoded versions
-                versions15 = ["15.5", "15.6"]
+                versions15 = ["15.6"]
                 versions16 = ["16.0", "16.1"]
                 for ver in versions15 + versions16:
                     if ver in versions15:
