@@ -28,7 +28,11 @@ class BaseModal(ModalScreen[T]):
 
     def action_cancel_modal(self) -> None:
         """Cancel and close the modal."""
-        self.dismiss(None)
+        try:
+            if self.app.screen is self:
+                self.dismiss(None)
+        except Exception:
+            pass
 
     def on_click(self, event) -> None:
         """Dismiss the modal when clicking outside the content."""
@@ -43,7 +47,11 @@ class BaseDialog(Screen[T]):
 
     def action_cancel_modal(self) -> None:
         """Cancel the modal dialog."""
-        self.dismiss(None)
+        try:
+            if self.app.screen is self:
+                self.dismiss(None)
+        except Exception:
+            pass
 
     @staticmethod
     def validate_name(name: str) -> str | None:

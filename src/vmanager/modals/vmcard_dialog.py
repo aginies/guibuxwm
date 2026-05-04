@@ -38,12 +38,6 @@ class VMActionsModal(BaseModal[str | None]):
         self.r_viewer_available = r_viewer_available
         self.graphics_type = graphics_type
 
-    def on_click(self, event) -> None:
-        """Dismiss when clicking outside the modal dialog."""
-        if self.query_one("#vm-actions-modal").region.contains_point(event.screen_offset):
-            return
-        self.dismiss(None)
-
     def compose(self) -> ComposeResult:
         from ..vmcard import VMCardActions
 
