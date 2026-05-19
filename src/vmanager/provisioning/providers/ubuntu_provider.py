@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from enum import Enum
 
-import requests
 import yaml
 from ..os_provider import OSProvider, OSType, OSVersion, hash_password
 
