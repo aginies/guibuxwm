@@ -237,5 +237,8 @@ To install dependencies manually from official repositories (this is done automa
 
 ```bash
 sudo zypper in libvirt-python python3-textual python3-PyYAML python3-markdown-it-py \
-    7zip tmux python3-packaging python3-netifaces python3-requests python3-websockify
+    7zip tmux python3-packaging python3-netifaces python3-requests python3-websockify \
+    libosinfo osinfo-db python3-gobject
+```
+es python3-requests python3-websockify
 ```

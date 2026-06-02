@@ -5,6 +5,7 @@ markdown-it-py
 linkify-it-py
 websockify
 netifaces
+PyGObject
 # build and test
 packaging
 pytest-cov

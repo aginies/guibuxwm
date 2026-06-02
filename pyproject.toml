@@ -41,6 +41,7 @@ dependencies = [
     "packaging",
     "requests",
     "netifaces",
+    "PyGObject",
 ]
 
 [project.optional-dependencies]
