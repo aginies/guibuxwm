@@ -70,7 +70,7 @@ VirtUI Manager is available as a package in the [Virtualization](https://build.o
 
 * Repository:
   * [15.6 repo](https://download.opensuse.org/repositories/Virtualization/15.6/noarch/)
-  * [15.7 repo](hhttps://download.opensuse.org/repositories/Virtualization/15.7/noarch/)
+  * [15.7 repo](https://download.opensuse.org/repositories/Virtualization/15.7/noarch/)
   * [16 repo](https://download.opensuse.org/repositories/Virtualization/16.0/noarch/)
   * [Slowroll](https://download.opensuse.org/repositories/Virtualization/openSUSE_Slowroll/noarch/)
   * [Tumbleweed](https://download.opensuse.org/repositories/Virtualization/openSUSE_Tumbleweed/)
