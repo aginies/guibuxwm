@@ -690,12 +690,6 @@ Specify the NUMA nodes to use.
     CONFIGURE_AUTOMATION_AND_SCC_SUBTITLE = _(
         "Set default values for automation fields and SUSE Customer Center registration"
     )
-    ROOT_PASSWORD_LABEL = _("Root Password")
-    ROOT_PASSWORD_PLACEHOLDER = _("Default root password")
-    USERNAME_LABEL = _("Username:")
-    USERNAME_PLACEHOLDER = _("Default username")
-    USER_PASSWORD_LABEL = _("User Password")
-    USER_PASSWORD_PLACEHOLDER = _("Default user password")
     KEYBOARD_LAYOUT_LABEL = _("Keyboard Layout")
     LANGUAGE_LABEL = _("Language")
     SUSE_SCC_CONFIGURATION_HEADER = _("SUSE Customer Center (SCC) Configuration")
