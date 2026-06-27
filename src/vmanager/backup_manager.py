@@ -173,8 +173,7 @@ class BackupManager:
         # Get VM disk information
         from .vm_queries import get_vm_disks_info, _get_domain_root
 
-        domain_xml = domain.XMLDesc(0)
-        root = _get_domain_root(domain_xml)
+        _, root = _get_domain_root(domain)
         disks = get_vm_disks_info(conn, root)
 
         if not disks:
