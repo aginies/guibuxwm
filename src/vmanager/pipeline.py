@@ -21,7 +21,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 import libvirt
-from .backup_manager import BackupManager
+from .backup_manager import BackupManager, BackupType, BackupOptions
 
 from .utils import remote_viewer_cmd
 from .vm_actions import (
@@ -756,7 +756,6 @@ class BackupCommand(PipelineCommand):
         backup_type = "snapshot"
         compress = False
         encrypt = False
-        verify = True
 
         # Parse options
         for arg in self.args[1:]:
@@ -768,8 +767,6 @@ class BackupCommand(PipelineCommand):
                 compress = True
             elif arg == "--encrypt":
                 encrypt = True
-            elif arg == "--no-verify":
-                verify = False
 
         # Determine VMs to backup
         vms_to_backup = {}
@@ -811,17 +808,13 @@ class BackupCommand(PipelineCommand):
                         generated_name = backup_name
 
                     # Map string to enum
-                    if backup_type.lower() == "snapshot":
-                        bt = BackupType.SNAPSHOT
-                    elif backup_type.lower() == "overlay":
+                    if backup_type.lower() == "overlay":
                         bt = BackupType.OVERLAY
-                    elif backup_type.lower() == "clone":
-                        bt = BackupType.CLONE
                     else:
                         bt = BackupType.SNAPSHOT
 
                     # Create backup options
-                    options = BackupOptions(compress=compress, encrypt=encrypt, verify=verify)
+                    options = BackupOptions(compress=compress, encrypt=encrypt)
 
                     # Create the backup
                     metadata = backup_manager.create_backup(domain, generated_name, bt, options)
@@ -883,16 +876,11 @@ class BackupCommand(PipelineCommand):
             return context
 
         # Map backup type
-        if backup_type.lower() == "snapshot":
-            bt = BackupType.SNAPSHOT
-        elif backup_type.lower() == "overlay":
+        if backup_type.lower() == "overlay":
             bt = BackupType.OVERLAY
-        elif backup_type.lower() == "clone":
-            bt = BackupType.CLONE
         else:
             bt = BackupType.SNAPSHOT
 
-        retention = RetentionPolicy(keep_count=keep_count)
         options = BackupOptions()
 
         scheduled_count = 0
@@ -904,7 +892,7 @@ class BackupCommand(PipelineCommand):
                         server_name=server_name,
                         backup_type=bt,
                         schedule_pattern=schedule_pattern,
-                        retention=retention,
+                        keep_count=keep_count,
                         options=options,
                     )
                     scheduled_count += 1
