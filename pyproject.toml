@@ -67,6 +67,7 @@ Changelog = "https://github.com/aginies/virtui-manager/releases"
 [project.scripts]
 virtui-manager = "vmanager.wrapper:main"
 virtui-manager-cmd = "vmanager.wrapper:cmd_main"
+vmc = "vmanager.wrapper:cmd_main"
 virtui-remote-viewer = "vmanager.wrapper:remote_viewer_main"
 virtui-gui = "vmanager.wrapper:gui_main"
 
