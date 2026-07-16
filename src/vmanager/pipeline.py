@@ -1031,6 +1031,30 @@ class BackupCommand(PipelineCommand):
             return f"backup {action}"
 
 
+class ConnectCommand(PipelineCommand):
+    """Pipeline command for connecting to servers."""
+
+    def validate(self, context: PipelineContext, vm_service, cli_instance) -> List[str]:
+        errors = []
+        if not self.args:
+            errors.append("connect command requires server name or URI")
+        return errors
+
+    def execute(self, context: PipelineContext, vm_service, cli_instance) -> PipelineContext:
+        """Execute connect command."""
+        for server in self.args:
+            try:
+                cli_instance.do_connect(server)
+            except Exception as e:
+                context.errors.append(f"Connect to '{server}' failed: {e}")
+        return context
+
+    def get_description(self, context: PipelineContext) -> str:
+        if self.args:
+            return f"Connect to: {', '.join(self.args)}"
+        return "Connect to server"
+
+
 class PipelineParser:
     """Parser for command pipelines."""
 
@@ -1049,6 +1073,8 @@ class PipelineParser:
             "wait": WaitCommand,
             "view": ViewCommand,
             "info": InfoCommand,
+            "vm_info": InfoCommand,
+            "connect": ConnectCommand,
         }
 
     def parse(self, pipeline_str: str) -> List[PipelineCommand]:
@@ -1255,6 +1281,10 @@ class PipelineExecutor:
         for i, command in enumerate(commands):
             print(f"{i + 1}. {command.get_description(context)}")
         print("=" * 31)
+
+        # Check if yes_mode is enabled via cli_instance
+        if self.cli_instance and getattr(self.cli_instance, "yes_mode", False):
+            return True
 
         response = input("Execute this pipeline? (yes/no): ").strip().lower()
         if response in ["exit", "quit"]:

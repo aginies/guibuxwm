@@ -126,6 +126,7 @@ class VManagerCMD(cmd.Cmd):
 
     def __init__(self, vm_service=None):
         super().__init__()
+        self.yes_mode = False
 
         # Setup logging
         try:
@@ -537,6 +538,14 @@ class VManagerCMD(cmd.Cmd):
                 choices_used.append(shlex.quote(val))
             return val
 
+        # 2b. Yes-mode: auto-select first option
+        if self.yes_mode:
+            selected = options[0]
+            print(f"{prompt}: {get_display(selected)} (auto-selected)")
+            if choices_used is not None:
+                choices_used.append("1")
+            return get_value(selected)
+
         # 3. Interactive selection
         print(f"\n{prompt}:")
         for i, opt in enumerate(options):
@@ -594,6 +603,11 @@ class VManagerCMD(cmd.Cmd):
         if choices_provided:
             val = choices_provided.pop(0)
             print(f"{prompt}{val}")
+        elif self.yes_mode:
+            val = ""
+            print(f"{prompt}{val}")
+            if choices_used is not None:
+                choices_used.append('""')
         else:
             try:
                 val = input(prompt).strip()
@@ -3801,7 +3815,28 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 def main():
     """Entry point for Virtui Manager command-line interface."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Virtui Manager CLI")
+    parser.add_argument(
+        "-c", "--command",
+        help="Execute a single command non-interactively and exit",
+    )
+    args = parser.parse_args()
+
+    # Show help if -c/--command passed with no value
+    if args.command is None and ("-c" in sys.argv or "--command" in sys.argv):
+        parser.print_help()
+        return
+
     cmd_app = VManagerCMD()
+    cmd_app.yes_mode = bool(args.command)
+
+    if args.command:
+        cmd_app.preloop()
+        cmd_app.onecmd(args.command)
+        return
+
     try:
         cmd_app.cmdloop()
     except KeyboardInterrupt:
