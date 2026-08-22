@@ -63,6 +63,8 @@
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_data_device.h>
+#include <wlr/types/wlr_primary_selection.h>
+#include <wlr/types/wlr_primary_selection_v1.h>
 #include <wlr/types/wlr_input_device.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_output.h>
@@ -231,6 +233,7 @@ struct guibux_server {
 	struct wl_listener request_cursor;
 	struct wl_listener pointer_focus_change;
 	struct wl_listener request_set_selection;
+	struct wl_listener request_set_primary_selection;
 	struct wl_list keyboards;
 	enum guibux_cursor_mode cursor_mode;
 	struct guibux_toplevel *grabbed_toplevel;
@@ -259,6 +262,8 @@ struct guibux_server {
 	struct wl_event_source *topbar_test_timer;
 	struct wl_event_source *workspace_test_timer;
 	struct wl_event_source *keybind_test_timer;
+	struct wl_event_source *psel_test_timer;
+	bool psel_test_enter_sent;
 	struct guibux_launcher launcher;
 };
 
@@ -1120,6 +1125,34 @@ static int topbar_test_run(void *data) {
 	return 0;
 }
 
+// test hook: GUIBUX_TEST_PRIMARY_SELECTION=1 gives the seat the pointer
+// capability (the headless backend has no devices), then delivers a pointer
+// enter to the most recently mapped toplevel so the psel-test client gets a
+// valid seat serial for set_selection
+static int psel_test_run(void *data) {
+	struct guibux_server *server = data;
+	if (wl_list_empty(&server->toplevels)) {
+		wlr_log(WLR_ERROR, "psel-test: FAIL no toplevel mapped");
+		return 0;
+	}
+	if (!server->psel_test_enter_sent) {
+		wlr_seat_set_capabilities(server->seat, WL_SEAT_CAPABILITY_POINTER);
+		wlr_log(WLR_INFO, "psel-test: pointer capability set");
+		server->psel_test_enter_sent = true;
+		wl_event_source_timer_update(server->psel_test_timer, 1000);
+		return 0;
+	}
+	struct guibux_toplevel *t = wl_container_of(
+		server->toplevels.next, t, link);
+	struct wlr_surface *surface = t->xdg_toplevel->base->surface;
+	wlr_seat_pointer_notify_enter(server->seat, surface, 0.0, 0.0);
+	// keyboard focus is what the primary selection protocol keys off of:
+	// wlroots only sends selection events to the keyboard-focused client
+	wlr_seat_keyboard_notify_enter(server->seat, surface, NULL, 0, NULL);
+	wlr_log(WLR_INFO, "psel-test: enter sent");
+	return 0;
+}
+
 // re-layout all non-fullscreen windows of an output according to its tile
 // mode. window order = focus order (focused window first)
 static void retile_output(struct guibux_output *output) {
@@ -1808,6 +1841,13 @@ static void seat_request_set_selection(struct wl_listener *listener, void *data)
 		listener, server, request_set_selection);
 	struct wlr_seat_request_set_selection_event *event = data;
 	wlr_seat_set_selection(server->seat, event->source, event->serial);
+}
+
+static void seat_request_set_primary_selection(struct wl_listener *listener, void *data) {
+	struct guibux_server *server = wl_container_of(
+		listener, server, request_set_primary_selection);
+	struct wlr_seat_request_set_primary_selection_event *event = data;
+	wlr_seat_set_primary_selection(server->seat, event->source, event->serial);
 }
 
 static struct guibux_toplevel *desktop_toplevel_at(
@@ -2819,6 +2859,7 @@ int main(int argc, char *argv[]) {
 	wlr_compositor_create(server.wl_display, 5, server.renderer);
 	wlr_subcompositor_create(server.wl_display);
 	wlr_data_device_manager_create(server.wl_display);
+	wlr_primary_selection_v1_device_manager_create(server.wl_display);
 
 	server.output_layout = wlr_output_layout_create(server.wl_display);
 
@@ -2868,6 +2909,9 @@ int main(int argc, char *argv[]) {
 	server.request_set_selection.notify = seat_request_set_selection;
 	wl_signal_add(&server.seat->events.request_set_selection,
 		&server.request_set_selection);
+	server.request_set_primary_selection.notify = seat_request_set_primary_selection;
+	wl_signal_add(&server.seat->events.request_set_primary_selection,
+		&server.request_set_primary_selection);
 
 	const char *socket = wl_display_add_socket_auto(server.wl_display);
 	if (!socket) {
@@ -2924,6 +2968,17 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.topbar_test_timer, 500);
 	}
 
+	// test hook: GUIBUX_TEST_PRIMARY_SELECTION delivers a pointer enter so
+	// the psel-test client can set the primary selection (late enough for
+	// the client to map its toplevel)
+	const char *psel_test = getenv("GUIBUX_TEST_PRIMARY_SELECTION");
+	if (psel_test != NULL) {
+		server.psel_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			psel_test_run, &server);
+		wl_event_source_timer_update(server.psel_test_timer, 1500);
+	}
+
 	// test hook: GUIBUX_TEST_WORKSPACES=N exercises the workspace state
 	// machine (late enough for a test client to map windows)
 	const char *workspace_test = getenv("GUIBUX_TEST_WORKSPACES");
@@ -2965,6 +3020,7 @@ int main(int argc, char *argv[]) {
 	wl_list_remove(&server.request_cursor.link);
 	wl_list_remove(&server.pointer_focus_change.link);
 	wl_list_remove(&server.request_set_selection.link);
+	wl_list_remove(&server.request_set_primary_selection.link);
 
 	wl_list_remove(&server.new_output.link);
 
@@ -2979,6 +3035,9 @@ int main(int argc, char *argv[]) {
 	}
 	if (server.keybind_test_timer != NULL) {
 		wl_event_source_remove(server.keybind_test_timer);
+	}
+	if (server.psel_test_timer != NULL) {
+		wl_event_source_remove(server.psel_test_timer);
 	}
 
 	launcher_hide(&server);

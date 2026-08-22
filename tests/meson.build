@@ -21,3 +21,11 @@ executable('tile-test',
   c_args: test_c_args,
   dependencies: test_deps,
 )
+
+executable('psel-test',
+  'psel-test.c',
+  'xdg-shell-protocol.c',
+  'primary-selection-client-protocol.c',
+  c_args: test_c_args,
+  dependencies: test_deps,
+)

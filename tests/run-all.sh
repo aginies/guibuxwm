@@ -27,6 +27,7 @@ run "tile mode 2 (main+stack)" ./run-tile-test.sh 2
 run "topbar" ./run-topbar-test.sh
 run "launcher" ./run-launcher-test.sh
 run "config" ./run-config-test.sh
+run "primary selection" ./run-psel-test.sh
 
 echo "=================================="
 echo "passed: $pass   failed: $fail"
