@@ -90,6 +90,8 @@
 #define DEFAULT_COLOR_HIGHLIGHT 0x3a3c55
 #define DEFAULT_COLOR_TEXT 0xffffff
 #define DEFAULT_COLOR_DIM 0x8888aa
+#define DEFAULT_COLOR_TOPBAR_BG 0x73ba25
+#define DEFAULT_COLOR_TOPBAR_TEXT 0x1e1e2e
 
 struct output_placement {
 	char name[64];
@@ -247,6 +249,7 @@ struct guibux_server {
 	struct guibux_keybind keybinds[NUM_KEYBINDS];
 	int num_keybinds;
 	uint32_t color_bg, color_border, color_highlight, color_text, color_dim;
+	uint32_t color_topbar_bg, color_topbar_text;
 	struct output_placement placements[MAX_OUTPUT_PLACEMENTS];
 	int num_placements;
 
@@ -914,7 +917,7 @@ static void topbar_render(struct guibux_output *o) {
 	cairo_t *cr = cairo_create(cs);
 
 	// background + bottom border
-	set_color(cr, server->color_bg);
+	set_color(cr, server->color_topbar_bg);
 	cairo_paint(cr);
 	set_color(cr, server->color_border);
 	cairo_rectangle(cr, 0, h - scale, w, scale);
@@ -928,7 +931,7 @@ static void topbar_render(struct guibux_output *o) {
 	char left[16];
 	snprintf(left, sizeof(left), "%c", 'A' + (o->topbar_number - 1));
 	launcher_draw_text(cs, server->launcher.face, left,
-		TOPBAR_PAD * scale, baseline, server->color_text);
+		TOPBAR_PAD * scale, baseline, server->color_topbar_text);
 
 	// workspace cells after the monitor letter, current one highlighted.
 	// workspaces are numbered 1 2 3 4. cell layout is stored in logical px
@@ -949,7 +952,7 @@ static void topbar_render(struct guibux_output *o) {
 				(x + 4) * scale, baseline, server->color_text);
 		} else {
 			launcher_draw_text(cs, server->launcher.face, num,
-				(x + 4) * scale, baseline, server->color_dim);
+				(x + 4) * scale, baseline, server->color_topbar_text);
 		}
 		x += cell_w;
 	}
@@ -963,7 +966,7 @@ static void topbar_render(struct guibux_output *o) {
 	launcher_draw_text(cs, server->launcher.face, o->topbar_right,
 		w - TOPBAR_PAD * scale -
 			guibux_text_width(server->launcher.face, o->topbar_right),
-		baseline, server->color_text);
+		baseline, server->color_topbar_text);
 
 	cairo_destroy(cr);
 	cairo_surface_destroy(cs);
@@ -2656,6 +2659,18 @@ static void load_config(struct guibux_server *server, const char *path) {
 			} else {
 				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
 			}
+		} else if (!strcmp(key, "topbar_bg")) {
+			if (parse_color(val, &server->color_topbar_bg)) {
+				wlr_log(WLR_INFO, "config: topbar_bg = %s", val);
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
+			}
+		} else if (!strcmp(key, "topbar_text")) {
+			if (parse_color(val, &server->color_topbar_text)) {
+				wlr_log(WLR_INFO, "config: topbar_text = %s", val);
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
+			}
 		} else {
 			wlr_log(WLR_ERROR, "config: %s:%d: unknown key '%s'", path, lineno, key);
 		}
@@ -2724,6 +2739,8 @@ int main(int argc, char *argv[]) {
 	server.color_highlight = DEFAULT_COLOR_HIGHLIGHT;
 	server.color_text = DEFAULT_COLOR_TEXT;
 	server.color_dim = DEFAULT_COLOR_DIM;
+	server.color_topbar_bg = DEFAULT_COLOR_TOPBAR_BG;
+	server.color_topbar_text = DEFAULT_COLOR_TOPBAR_TEXT;
 	keybinds_defaults(&server);
 
 	// config file: -c flag > GUIBUX_CONFIG env > ~/.config/guibuxwm/config

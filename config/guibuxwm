@@ -42,3 +42,6 @@ color_border = #45475a
 color_highlight = #3a3c55
 color_text = #ffffff
 color_dim = #8888aa
+# topbar (openSUSE green)
+topbar_bg = #73ba25
+topbar_text = #1e1e2e

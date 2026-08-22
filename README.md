@@ -148,6 +148,8 @@ it to `~/.config/guibuxwm/config` and edit.
 | `color_highlight` | Highlight (launcher selection, current workspace cell) | `color_highlight = #3a3c55` |
 | `color_text` | Text and cursor | `color_text = #ffffff` |
 | `color_dim` | Dimmed text (launcher non-selected, inactive workspaces) | `color_dim = #8888aa` |
+| `topbar_bg` | Topbar background (default: openSUSE green) | `topbar_bg = #73ba25` |
+| `topbar_text` | Topbar text (monitor letter, workspaces, date/time) | `topbar_text = #1e1e2e` |
 
 Example:
 
