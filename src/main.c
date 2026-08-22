@@ -12,6 +12,9 @@
 //     monitor arrangement via GUIBUX_OUTPUTS="NAME@XxY,NAME@XxY"
 //   - topbar per monitor: screen number on the left, date and time on the
 //     right (updates every second)
+//   - workspaces per monitor (4, named A B C D): Mod+a..d switch,
+//     Mod+Shift+A..D move a window; workspace letters shown in the topbar
+//     (current highlighted, clickable)
 //   - keybindings (Mod = Super):
 //       Mod+Return            start a new terminal
 //       Mod+q                 close focused window
@@ -19,6 +22,8 @@
 //       Mod+t                 cycle tile mode (free / split / main+stack)
 //       Mod+e                 command box: type a command, Enter runs it
 //       Mod+Tab               cycle focus
+//       Mod+a..d              switch to workspace A..D on the focused monitor
+//       Mod+Shift+A..D        move focused window to workspace A..D
 //       Mod+Shift+Left/Right  move window to previous/next monitor
 //       Mod+Shift+q           quit
 //       Alt+Escape            quit
@@ -74,6 +79,7 @@
 #define TOPBAR_H 24
 #define TOPBAR_FONT_PX 14
 #define TOPBAR_PAD 8
+#define NUM_WORKSPACES 4
 
 struct output_placement {
 	char name[64];
@@ -101,10 +107,13 @@ struct guibux_output {
 	struct guibux_server *server;
 	struct wlr_output *wlr_output;
 	int tile_mode;
+	int current_workspace; // 1..NUM_WORKSPACES
 	struct wlr_scene_buffer *topbar_node;
 	struct wlr_buffer *topbar_buffer;
 	int topbar_number;
 	char topbar_right[64];
+	int topbar_ws_x[NUM_WORKSPACES + 1]; // cell x, logical px (set by render)
+	int topbar_ws_cell_w; // cell width, logical px (set by render)
 	struct wl_listener frame;
 	struct wl_listener request_state;
 	struct wl_listener destroy;
@@ -116,6 +125,7 @@ struct guibux_toplevel {
 	struct wlr_xdg_toplevel *xdg_toplevel;
 	struct wlr_scene_tree *scene_tree;
 	bool is_fullscreen;
+	int workspace; // 1..NUM_WORKSPACES
 	double saved_x, saved_y;
 	struct wl_listener map;
 	struct wl_listener unmap;
@@ -207,10 +217,12 @@ struct guibux_server {
 	struct wl_event_source *tile_test_timer;
 	struct wl_event_source *topbar_timer;
 	struct wl_event_source *topbar_test_timer;
+	struct wl_event_source *workspace_test_timer;
 	struct guibux_launcher launcher;
 };
 
 static void topbar_raise_all(struct guibux_server *server);
+static bool toplevel_visible(struct guibux_toplevel *toplevel);
 
 static void focus_toplevel(struct guibux_toplevel *toplevel) {
 	if (toplevel == NULL) {
@@ -875,6 +887,39 @@ static void topbar_render(struct guibux_output *o) {
 	launcher_draw_text(cs, server->launcher.face, left,
 		TOPBAR_PAD * scale, baseline, 0xFFFFFF);
 
+	// workspace cells after the screen number, current one highlighted.
+	// workspaces are named A B C D. cell layout is stored in logical px
+	// for click hit-testing
+	int cell_w = 0;
+	for (int i = 0; i < NUM_WORKSPACES; i++) {
+		char name[2] = { (char)('A' + i), 0 };
+		int w = guibux_text_width(server->launcher.face, name) / scale;
+		if (w > cell_w) {
+			cell_w = w;
+		}
+	}
+	cell_w += 8;
+	o->topbar_ws_cell_w = cell_w;
+	int x = TOPBAR_PAD + guibux_text_width(server->launcher.face, left) / scale + 12;
+	for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {
+		o->topbar_ws_x[ws] = x;
+		char num[8];
+		num[0] = 'A' + (ws - 1);
+		num[1] = '\0';
+		if (ws == o->current_workspace) {
+			cairo_set_source_rgb(cr, 0x3a / 255.0, 0x3c / 255.0, 0x55 / 255.0);
+			cairo_rectangle(cr, x * scale, (TOPBAR_H / 4) * scale,
+				cell_w * scale, (TOPBAR_H / 2) * scale);
+			cairo_fill(cr);
+			launcher_draw_text(cs, server->launcher.face, num,
+				(x + 4) * scale, baseline, 0xFFFFFF);
+		} else {
+			launcher_draw_text(cs, server->launcher.face, num,
+				(x + 4) * scale, baseline, 0x8888AA);
+		}
+		x += cell_w;
+	}
+
 	// date and time on the right
 	time_t now = time(NULL);
 	struct tm tm;
@@ -895,6 +940,39 @@ static void topbar_render(struct guibux_output *o) {
 		wlr_scene_buffer_set_buffer(o->topbar_node, o->topbar_buffer);
 	}
 	wlr_output_schedule_frame(o->wlr_output);
+}
+
+// bar under a global point, if any; *ws = workspace cell hit (0 = none)
+static bool topbar_workspace_at(struct guibux_server *server, double lx,
+		double ly, struct guibux_output **output, int *ws) {
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->topbar_buffer == NULL) {
+			continue;
+		}
+		struct wlr_box box;
+		wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+		if (lx < box.x || lx >= box.x + box.width ||
+				ly < box.y || ly >= box.y + TOPBAR_H) {
+			continue;
+		}
+		if (output != NULL) {
+			*output = o;
+		}
+		if (ws != NULL) {
+			*ws = 0;
+			double rel = lx - box.x;
+			for (int i = 1; i <= NUM_WORKSPACES; i++) {
+				if (rel >= o->topbar_ws_x[i] &&
+						rel < o->topbar_ws_x[i] + o->topbar_ws_cell_w) {
+					*ws = i;
+					break;
+				}
+			}
+		}
+		return true;
+	}
+	return false;
 }
 
 static void topbar_create(struct guibux_output *o) {
@@ -1027,7 +1105,7 @@ static void retile_output(struct guibux_output *output) {
 	int n = 0;
 	struct guibux_toplevel *t;
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->is_fullscreen) {
+		if (t->is_fullscreen || !toplevel_visible(t)) {
 			continue;
 		}
 		if (toplevel_output_for(t) != output->wlr_output) {
@@ -1072,6 +1150,230 @@ static void retile_output(struct guibux_output *output) {
 			box.x + rx, box.y + ry);
 		wlr_xdg_toplevel_set_size(wins[i]->xdg_toplevel, rw, rh);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Workspaces: each output has NUM_WORKSPACES workspaces, one current.
+// windows not on the current workspace are hidden (scene node disabled:
+// not rendered, not hit-testable)
+// ---------------------------------------------------------------------------
+
+static bool toplevel_visible(struct guibux_toplevel *toplevel) {
+	struct guibux_output *o = guibux_output_for(toplevel->server,
+		toplevel_output_for(toplevel));
+	return o != NULL && toplevel->workspace == o->current_workspace;
+}
+
+static void clear_keyboard_focus(struct guibux_server *server) {
+	// notify_clear_focus is the grab-compatible way to drop focus
+	// (notify_enter with a NULL surface is prohibited)
+	wlr_seat_keyboard_notify_clear_focus(server->seat);
+}
+
+// a popup (menu, dropdown) may hold seat grabs: end them so a hidden
+// workspace does not keep grabbing an invisible popup
+static void end_seat_grabs(struct guibux_server *server) {
+	if (wlr_seat_keyboard_has_grab(server->seat)) {
+		wlr_seat_keyboard_end_grab(server->seat);
+	}
+	if (wlr_seat_pointer_has_grab(server->seat)) {
+		wlr_seat_pointer_end_grab(server->seat);
+	}
+}
+
+static void switch_workspace(struct guibux_output *output, int ws) {
+	if (ws < 1 || ws > NUM_WORKSPACES || ws == output->current_workspace) {
+		return;
+	}
+	struct guibux_server *server = output->server;
+	output->current_workspace = ws;
+
+	end_seat_grabs(server);
+
+	struct guibux_toplevel *t;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (toplevel_output_for(t) == output->wlr_output) {
+			wlr_scene_node_set_enabled(&t->scene_tree->node,
+				t->workspace == ws);
+		}
+	}
+	retile_output(output);
+
+	// the focused window may have just been hidden: focus a visible
+	// window, or clear keyboard focus if none is visible
+	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
+	struct wlr_xdg_toplevel *focused_xdg = NULL;
+	if (focused != NULL) {
+		focused_xdg = wlr_xdg_toplevel_try_from_wlr_surface(focused);
+	}
+	struct guibux_toplevel *focused_toplevel = NULL;
+	if (focused_xdg != NULL) {
+		wl_list_for_each(t, &server->toplevels, link) {
+			if (t->xdg_toplevel == focused_xdg) {
+				focused_toplevel = t;
+				break;
+			}
+		}
+	}
+	if (focused_toplevel != NULL && !toplevel_visible(focused_toplevel)) {
+		struct guibux_toplevel *next = NULL;
+		wl_list_for_each(t, &server->toplevels, link) {
+			if (toplevel_visible(t)) {
+				next = t;
+				break;
+			}
+		}
+		if (next != NULL) {
+			focus_toplevel(next);
+		} else {
+			clear_keyboard_focus(server);
+		}
+	}
+	topbar_render(output);
+}
+
+static void move_toplevel_to_workspace(struct guibux_toplevel *toplevel,
+		int ws) {
+	if (ws < 1 || ws > NUM_WORKSPACES || toplevel->workspace == ws) {
+		return;
+	}
+	struct guibux_server *server = toplevel->server;
+	struct guibux_output *o = guibux_output_for(server,
+		toplevel_output_for(toplevel));
+	end_seat_grabs(server);
+	toplevel->workspace = ws;
+	wlr_scene_node_set_enabled(&toplevel->scene_tree->node,
+		o != NULL && ws == o->current_workspace);
+	if (o != NULL) {
+		retile_output(o);
+		topbar_render(o);
+	}
+}
+
+// test helper: the headless backend has no input devices, but the seat
+// focus paths (enter/clear) need a keyboard to be exercised; must run
+// before any window maps
+static void test_seat_add_keyboard(struct guibux_server *server) {
+	if (wlr_seat_get_keyboard(server->seat) != NULL) {
+		return;
+	}
+	struct wlr_keyboard *kb = calloc(1, sizeof(*kb));
+	if (kb == NULL) {
+		return;
+	}
+	wl_signal_init(&kb->base.events.destroy);
+	wl_signal_init(&kb->events.key);
+	wl_signal_init(&kb->events.modifiers);
+	wl_signal_init(&kb->events.keymap);
+	wl_signal_init(&kb->events.repeat_info);
+	struct xkb_context *ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	struct xkb_keymap *map = xkb_keymap_new_from_names(ctx, NULL,
+		XKB_KEYMAP_COMPILE_NO_FLAGS);
+	if (map != NULL && wlr_keyboard_set_keymap(kb, map)) {
+		wlr_seat_set_keyboard(server->seat, kb);
+	}
+	if (map != NULL) {
+		xkb_keymap_unref(map);
+	}
+	xkb_context_unref(ctx);
+}
+
+// test hook: GUIBUX_TEST_WORKSPACES=N exercises the workspace state machine
+// shortly after start (late enough for a test client to map windows)
+static int workspace_test_run(void *data) {
+	struct guibux_server *server = data;
+	int ws = atoi(getenv("GUIBUX_TEST_WORKSPACES"));
+	if (ws < 1 || ws > NUM_WORKSPACES) {
+		ws = 2;
+	}
+	struct guibux_toplevel *t;
+	int n_outputs = 0, n_toplevels = 0;
+
+	wl_list_for_each(t, &server->toplevels, link) {
+		n_toplevels++;
+	}
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		n_outputs++;
+		if (o->current_workspace != 1) {
+			wlr_log(WLR_ERROR, "workspace-test: FAIL initial workspace "
+				"on %s (got %d, want 1)",
+				o->wlr_output->name ? o->wlr_output->name : "(unknown)",
+				o->current_workspace);
+			return 0;
+		}
+	}
+	if (n_outputs == 0) {
+		wlr_log(WLR_ERROR, "workspace-test: FAIL no outputs");
+		return 0;
+	}
+	// all toplevels start visible (workspace 1 == current)
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (!t->scene_tree->node.enabled) {
+			wlr_log(WLR_ERROR, "workspace-test: FAIL toplevel hidden "
+				"before any switch");
+			return 0;
+		}
+	}
+
+	// switch every output to ws. Windows on not-yet-switched outputs stay
+	// visible (per-monitor isolation); once the last one is switched, all
+	// windows are hidden and keyboard focus must be cleared.
+	wl_list_for_each(o, &server->outputs, link) {
+		switch_workspace(o, ws);
+		if (o->current_workspace != ws) {
+			wlr_log(WLR_ERROR, "workspace-test: FAIL switch on %s "
+				"(got %d, want %d)",
+				o->wlr_output->name ? o->wlr_output->name : "(unknown)",
+				o->current_workspace, ws);
+			return 0;
+		}
+	}
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->scene_tree->node.enabled) {
+			wlr_log(WLR_ERROR, "workspace-test: FAIL toplevel visible "
+				"on non-current workspace");
+			return 0;
+		}
+	}
+
+	// move a toplevel to ws (becomes visible) and back to 1 (hides)
+	struct guibux_toplevel *mover = NULL;
+	wl_list_for_each(t, &server->toplevels, link) {
+		mover = t;
+		break;
+	}
+	if (mover != NULL) {
+		move_toplevel_to_workspace(mover, ws);
+		if (mover->workspace != ws || !mover->scene_tree->node.enabled) {
+			wlr_log(WLR_ERROR, "workspace-test: FAIL move to current ws "
+				"(workspace=%d, enabled=%d, want %d/1)",
+				mover->workspace, mover->scene_tree->node.enabled, ws);
+			return 0;
+		}
+		move_toplevel_to_workspace(mover, 1);
+		if (mover->workspace != 1 || mover->scene_tree->node.enabled) {
+			wlr_log(WLR_ERROR, "workspace-test: FAIL move away "
+				"(workspace=%d, enabled=%d, want 1/0)",
+				mover->workspace, mover->scene_tree->node.enabled);
+			return 0;
+		}
+	}
+
+	// switch everything back: all toplevels visible again
+	wl_list_for_each(o, &server->outputs, link) {
+		switch_workspace(o, 1);
+	}
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (!t->scene_tree->node.enabled) {
+			wlr_log(WLR_ERROR, "workspace-test: FAIL toplevel still "
+				"hidden after switch back");
+			return 0;
+		}
+	}
+	wlr_log(WLR_INFO, "workspace-test: OK (%d outputs, ws %d, %d toplevels)",
+		n_outputs, ws, n_toplevels);
+	return 0;
 }
 
 // test hook: GUIBUX_TEST_TILE_MODE=N sets the tile mode of all outputs
@@ -1154,6 +1456,10 @@ static void move_toplevel_to_output(struct guibux_toplevel *toplevel,
 		toplevel->xdg_toplevel->title ? toplevel->xdg_toplevel->title : "(untitled)",
 		output->name ? output->name : "(unknown)");
 	struct guibux_output *o;
+	// the window joins the target monitor's current workspace
+	if ((o = guibux_output_for(server, output)) != NULL) {
+		toplevel->workspace = o->current_workspace;
+	}
 	if ((o = guibux_output_for(server, src)) != NULL &&
 			o->tile_mode != GUIBUX_TILE_FREE) {
 		retile_output(o);
@@ -1235,7 +1541,24 @@ static bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
 			}
 			return true;
 		}
+		if (sym >= XKB_KEY_A && sym <= XKB_KEY_A + NUM_WORKSPACES - 1) {
+			if (toplevel != NULL) {
+				move_toplevel_to_workspace(toplevel, sym - XKB_KEY_A + 1);
+			}
+			return true;
+		}
 		return false;
+	}
+
+	if (sym >= XKB_KEY_a && sym <= XKB_KEY_a + NUM_WORKSPACES - 1) {
+		struct wlr_output *out = toplevel != NULL
+			? toplevel_output_for(toplevel) : output_at_cursor(server);
+		struct guibux_output *o = out != NULL
+			? guibux_output_for(server, out) : NULL;
+		if (o != NULL) {
+			switch_workspace(o, sym - XKB_KEY_a + 1);
+		}
+		return true;
 	}
 
 	switch (sym) {
@@ -1268,13 +1591,24 @@ static bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
 			}
 		}
 		return true;
-	case XKB_KEY_Tab:
-		if (toplevel != NULL && wl_list_length(&server->toplevels) > 1) {
-			struct guibux_toplevel *next = wl_container_of(
-				toplevel->link.next, next, link);
+	case XKB_KEY_Tab: {
+		// cycle focus over visible windows only (wraps around)
+		struct guibux_toplevel *next = NULL;
+		struct guibux_toplevel *t;
+		wl_list_for_each(t, &server->toplevels, link) {
+			if (t == toplevel) {
+				continue;
+			}
+			if (toplevel_visible(t)) {
+				next = t;
+				break;
+			}
+		}
+		if (next != NULL) {
 			focus_toplevel(next);
 		}
 		return true;
+	}
 	case XKB_KEY_e:
 		launcher_show(server);
 		return true;
@@ -1527,7 +1861,11 @@ static void process_cursor_motion(struct guibux_server *server, uint32_t time) {
 	struct wlr_surface *surface = NULL;
 	struct guibux_toplevel *toplevel = desktop_toplevel_at(server,
 		server->cursor->x, server->cursor->y, &surface, &sx, &sy);
-	if (!toplevel) {
+	int ws = 0;
+	if (topbar_workspace_at(server, server->cursor->x, server->cursor->y,
+			NULL, &ws) && ws != 0) {
+		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
+	} else if (!toplevel) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "default");
 	}
 	if (surface) {
@@ -1565,6 +1903,18 @@ static void server_cursor_button(struct wl_listener *listener, void *data) {
 			event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
 		launcher_hide(server);
 		return;
+	}
+	if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
+		struct guibux_output *o = NULL;
+		int ws = 0;
+		if (topbar_workspace_at(server, server->cursor->x, server->cursor->y,
+				&o, &ws)) {
+			// bar click: switch workspace on a cell hit, always consumed
+			if (ws != 0) {
+				switch_workspace(o, ws);
+			}
+			return;
+		}
 	}
 	wlr_seat_pointer_notify_button(server->seat,
 		event->time_msec, event->button, event->state);
@@ -1673,6 +2023,7 @@ static void server_new_output(struct wl_listener *listener, void *data) {
 	struct guibux_output *output = calloc(1, sizeof(*output));
 	output->wlr_output = wlr_output;
 	output->server = server;
+	output->current_workspace = 1;
 
 	output->frame.notify = output_frame;
 	wl_signal_add(&wlr_output->events.frame, &output->frame);
@@ -1735,6 +2086,7 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	struct wlr_output *output = output_at_cursor(toplevel->server);
 	struct guibux_output *o = output != NULL
 		? guibux_output_for(toplevel->server, output) : NULL;
+	toplevel->workspace = o != NULL ? o->current_workspace : 1;
 	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
 		// park the node on its target output so retile_output picks it up
 		struct wlr_box box;
@@ -1767,6 +2119,10 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 		struct guibux_toplevel *next =
 			wl_container_of(server->toplevels.next, next, link);
 		focus_toplevel(next);
+	} else {
+		// last window gone: drop keyboard focus so the seat does not
+		// keep pointing at a destroyed surface
+		clear_keyboard_focus(server);
 	}
 }
 
@@ -2164,6 +2520,17 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.topbar_test_timer, 500);
 	}
 
+	// test hook: GUIBUX_TEST_WORKSPACES=N exercises the workspace state
+	// machine (late enough for a test client to map windows)
+	const char *workspace_test = getenv("GUIBUX_TEST_WORKSPACES");
+	if (workspace_test != NULL) {
+		test_seat_add_keyboard(&server);
+		server.workspace_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			workspace_test_run, &server);
+		wl_event_source_timer_update(server.workspace_test_timer, 2000);
+	}
+
 	spawn_terminal(&server);
 
 	wlr_log(WLR_INFO, "guibuxwm running on WAYLAND_DISPLAY=%s", socket);
@@ -2192,6 +2559,9 @@ int main(int argc, char *argv[]) {
 	}
 	if (server.topbar_test_timer != NULL) {
 		wl_event_source_remove(server.topbar_test_timer);
+	}
+	if (server.workspace_test_timer != NULL) {
+		wl_event_source_remove(server.workspace_test_timer);
 	}
 
 	launcher_hide(&server);
