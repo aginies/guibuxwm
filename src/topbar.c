@@ -190,19 +190,34 @@ void topbar_render(struct guibux_output *o) {
 	localtime_r(&now, &tm);
 	strftime(o->topbar_right, sizeof(o->topbar_right),
 		"%a %d %b %Y  %H:%M", &tm);
+
+	/* update sysinfo */
+	sysinfo_update(&o->server->sysinfo);
+
+	/* calculate indicator width */
+	int ind_w = 0;
+	if (o->server->sysinfo.network[0] != '\0') {
+		ind_w += guibux_text_width(server->launcher.face, o->server->sysinfo.network);
+	}
+	if (o->server->sysinfo.battery[0] != '\0') {
+		if (ind_w > 0) ind_w += 8;
+		ind_w += guibux_text_width(server->launcher.face, o->server->sysinfo.battery);
+	}
+
 	int date_w = guibux_text_width(server->launcher.face, o->topbar_right);
 	int date_x = w / scale - TOPBAR_PAD - date_w;
-	int win_end = date_x - sep_gap;
+	int ind_start = date_x - 4 - ind_w;
+	int win_end = ind_start - sep_gap;
 	if (win_end < win_x)
 		win_end = win_x;
 
-	/* vertical separator before date */
-	if (win_x < date_x - sep_gap) {
+	/* vertical separator before indicators */
+	if (win_x < win_end - sep_gap) {
 		cairo_set_source_rgb(cr,
 			((server->color_border >> 16) & 0xFF) / 255.0,
 			((server->color_border >> 8) & 0xFF) / 255.0,
 			(server->color_border & 0xFF) / 255.0);
-		cairo_rectangle(cr, (int)((date_x - sep_gap / 2) * scale) - (int)(scale / 2.f),
+		cairo_rectangle(cr, (int)((win_end + sep_gap / 2) * scale) - (int)(scale / 2.f),
 			(TOPBAR_H / 4) * scale, 1 * scale,
 			(TOPBAR_H / 2) * scale);
 		cairo_fill(cr);
@@ -264,6 +279,36 @@ void topbar_render(struct guibux_output *o) {
 		rendered++;
 	}
 	o->topbar_win_count = rendered;
+
+	/* render network + battery indicators */
+	int ind_x = date_x - ind_w - 4;
+	o->topbar_net_x = ind_x;
+	o->topbar_net_w = ind_w;
+
+	/* separator between indicators and date */
+	if (ind_w > 0) {
+		cairo_set_source_rgb(cr,
+			((server->color_border >> 16) & 0xFF) / 255.0,
+			((server->color_border >> 8) & 0xFF) / 255.0,
+			(server->color_border & 0xFF) / 255.0);
+		cairo_rectangle(cr, (int)((date_x - 2) * scale) - (int)(scale / 2.f),
+			(TOPBAR_H / 4) * scale, 1 * scale,
+			(TOPBAR_H / 2) * scale);
+		cairo_fill(cr);
+	}
+
+	if (o->server->sysinfo.network[0] != '\0') {
+		launcher_draw_text_on_surface(cs, server->launcher.face,
+			o->server->sysinfo.network,
+			ind_x * scale, baseline, server->color_topbar_text);
+		ind_x += guibux_text_width(server->launcher.face,
+			o->server->sysinfo.network) / scale + 8;
+	}
+	if (o->server->sysinfo.battery[0] != '\0') {
+		launcher_draw_text_on_surface(cs, server->launcher.face,
+			o->server->sysinfo.battery,
+			ind_x * scale, baseline, server->color_topbar_text);
+	}
 
 	launcher_draw_text_on_surface(cs, server->launcher.face, o->topbar_right,
 		date_x * scale,
@@ -336,6 +381,27 @@ bool topbar_workspace_at(struct guibux_server *server, double lx,
 			}
 		}
 		return true;
+	}
+	return false;
+}
+
+bool topbar_network_at(struct guibux_server *server, double lx, double ly) {
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->topbar_buffer == NULL || o->topbar_net_w <= 0) {
+			continue;
+		}
+		struct wlr_box box;
+		wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+		if (lx < box.x || lx >= box.x + box.width ||
+				ly < box.y || ly >= box.y + TOPBAR_H) {
+			continue;
+		}
+		double rel = lx - box.x;
+		if (rel >= o->topbar_net_x &&
+				rel < o->topbar_net_x + o->topbar_net_w) {
+			return true;
+		}
 	}
 	return false;
 }

@@ -71,6 +71,9 @@ void process_cursor_motion(struct guibux_server *server, uint32_t time) {
 	if (topbar_workspace_at(server, server->cursor->x, server->cursor->y,
 			NULL, &ws) && ws != 0) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
+	} else if (topbar_network_at(server, server->cursor->x,
+			server->cursor->y)) {
+		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
 	} else if (!toplevel) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "default");
 	}
@@ -114,7 +117,13 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 		int ws = 0;
 		if (topbar_workspace_at(server, server->cursor->x,
 				server->cursor->y, &o, &ws)) {
-			/* check window labels first */
+			/* check network indicator first */
+			if (topbar_network_at(server, server->cursor->x,
+					server->cursor->y)) {
+				spawn_network_info(server);
+				return;
+			}
+			/* check window labels */
 			struct guibux_toplevel *win = NULL;
 			if (o)
 				win = topbar_win_at(o,

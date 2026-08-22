@@ -217,6 +217,8 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
+	sysinfo_init(&server);
+
 	if (!wlr_backend_start(server.backend)) {
 		wlr_backend_destroy(server.backend);
 		wl_display_destroy(server.wl_display);
@@ -290,6 +292,8 @@ int main(int argc, char *argv[]) {
 
 	wlr_log(WLR_INFO, "guibuxwm running on WAYLAND_DISPLAY=%s", socket);
 	wl_display_run(server.wl_display);
+
+	sysinfo_destroy(&server);
 
 	wl_display_destroy_clients(server.wl_display);
 

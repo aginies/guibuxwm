@@ -16,6 +16,23 @@ void spawn_terminal(struct guibux_server *server) {
 	wlr_log(WLR_INFO, "spawned terminal (%s) pid %d", server->term_cmd, pid);
 }
 
+void spawn_network_info(struct guibux_server *server) {
+	char cmd[512];
+	snprintf(cmd, sizeof(cmd),
+		"sh -c '%s -- bash -c \"nmcli -t -f DEVICE,TYPE,STATE,CONNECTION,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS device show 2>/dev/null || nmcli device show; read -p \\\"\\nPress enter\\\"\"'",
+		server->term_cmd);
+	pid_t pid = fork();
+	if (pid < 0) {
+		wlr_log(WLR_ERROR, "fork failed: %m");
+		return;
+	}
+	if (pid == 0) {
+		execl("/bin/sh", "/bin/sh", "-c", cmd, (void *)NULL);
+		_exit(127);
+	}
+	wlr_log(WLR_INFO, "spawned network info terminal pid %d", pid);
+}
+
 // ---------------------------------------------------------------------------
 // Keybind actions
 // ---------------------------------------------------------------------------

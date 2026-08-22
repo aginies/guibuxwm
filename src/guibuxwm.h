@@ -19,6 +19,7 @@
 #include <xkbcommon/xkbcommon.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include <dbus/dbus.h>
 
 #define CASCADE_STEP 40
 #define CASCADE_MAX 6
@@ -85,6 +86,18 @@ struct guibux_keybind {
 };
 
 struct guibux_server;
+
+/* sysinfo.c */
+struct guibux_sysinfo {
+    DBusConnection *system_bus;
+    bool nm_available;
+    char network[64];
+    char battery[32];
+};
+
+void sysinfo_init(struct guibux_server *server);
+void sysinfo_destroy(struct guibux_server *server);
+void sysinfo_update(struct guibux_sysinfo *si);
 struct guibux_toplevel;
 
 // declared in wlr/render/allocator/shm.h (not installed with our wlroots build)
@@ -99,8 +112,12 @@ struct guibux_output {
 	struct wlr_scene_buffer *topbar_node;
 	struct wlr_buffer *topbar_buffer;
 	int topbar_number;
-	char topbar_right[64];
-	int topbar_ws_x[NUM_WORKSPACES + 1];
+    char topbar_right[64];
+    char topbar_network[64];
+    char topbar_battery[32];
+    int topbar_net_x;
+    int topbar_net_w;
+    int topbar_ws_x[NUM_WORKSPACES + 1];
 	int topbar_ws_cell_w;
 #define TOPBAR_WIN_W 100
 #define TOPBAR_WIN_GAP 8
@@ -225,6 +242,7 @@ struct guibux_server {
 	struct wl_event_source *psel_test_timer;
 	bool psel_test_enter_sent;
 	struct guibux_launcher launcher;
+	struct guibux_sysinfo sysinfo;
 };
 
 /* output.c */
@@ -243,6 +261,7 @@ void topbar_renumber(struct guibux_server *server);
 int outputs_sorted_by_x(struct guibux_server *server, struct wlr_output **sorted, struct wlr_box *boxes, int cap);
 
 struct guibux_toplevel *topbar_win_at(struct guibux_output *o, double lx, double ly);
+bool topbar_network_at(struct guibux_server *server, double lx, double ly);
 
 /* toplevel.c */
 void focus_toplevel(struct guibux_toplevel *toplevel);
@@ -299,6 +318,7 @@ void do_action(struct guibux_server *server, enum guibux_action action, int arg,
 void keybinds_defaults(struct guibux_server *server);
 void keybind_add(struct guibux_server *server, uint32_t modifiers, xkb_keysym_t keysym, enum guibux_action action, int arg);
 void spawn_terminal(struct guibux_server *server);
+void spawn_network_info(struct guibux_server *server);
 
 /* config.c */
 void load_config(struct guibux_server *server, const char *path);
