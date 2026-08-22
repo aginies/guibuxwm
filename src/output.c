@@ -1,0 +1,216 @@
+#include "guibuxwm.h"
+#include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_buffer.h>
+#include <wlr/render/drm_format_set.h>
+#include <math.h>
+
+// ---------------------------------------------------------------------------
+// Helpers: output lookup, toplevel output, visibility
+// ---------------------------------------------------------------------------
+
+struct wlr_output *output_at_cursor(struct guibux_server *server) {
+	struct wlr_output *output = wlr_output_layout_output_at(
+		server->output_layout, server->cursor->x, server->cursor->y);
+	if (output != NULL) {
+		return output;
+	}
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		return o->wlr_output;
+	}
+	return NULL;
+}
+
+struct wlr_output *toplevel_output_for(struct guibux_toplevel *toplevel) {
+	struct guibux_server *server = toplevel->server;
+	struct wlr_output *output = toplevel->xdg_toplevel->requested.fullscreen_output;
+	if (output != NULL) {
+		return output;
+	}
+	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
+	int w = surface->buffer ? surface->current.width : 0;
+	int h = surface->buffer ? surface->current.height : 0;
+	int cx = toplevel->scene_tree->node.x + w / 2;
+	int cy = toplevel->scene_tree->node.y + h / 2;
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (wlr_output_layout_contains_point(server->output_layout,
+				o->wlr_output, cx, cy)) {
+			return o->wlr_output;
+		}
+	}
+	wl_list_for_each(o, &server->outputs, link) {
+		return o->wlr_output;
+	}
+	return NULL;
+}
+
+struct guibux_output *guibux_output_for(struct guibux_server *server,
+		struct wlr_output *wlr_output) {
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->wlr_output == wlr_output) {
+			return o;
+		}
+	}
+	return NULL;
+}
+
+bool toplevel_visible(struct guibux_toplevel *toplevel) {
+	struct guibux_output *o = guibux_output_for(toplevel->server,
+		toplevel_output_for(toplevel));
+	return o != NULL && toplevel->workspace == o->current_workspace;
+}
+
+// ---------------------------------------------------------------------------
+// Topbar helpers
+// ---------------------------------------------------------------------------
+
+void topbar_raise_all(struct guibux_server *server) {
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->topbar_node != NULL) {
+			wlr_scene_node_raise_to_top(&o->topbar_node->node);
+		}
+	}
+}
+
+int outputs_sorted_by_x(struct guibux_server *server,
+		struct wlr_output **sorted, struct wlr_box *boxes, int cap) {
+	int n = 0;
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (n >= cap) {
+			break;
+		}
+		sorted[n] = o->wlr_output;
+		wlr_output_layout_get_box(server->output_layout, sorted[n], &boxes[n]);
+		n++;
+	}
+	for (int i = 1; i < n; i++) {
+		struct wlr_output *so = sorted[i];
+		struct wlr_box sb = boxes[i];
+		int j = i - 1;
+		while (j >= 0 && boxes[j].x > sb.x) {
+			sorted[j + 1] = sorted[j];
+			boxes[j + 1] = boxes[j];
+			j--;
+		}
+		sorted[j + 1] = so;
+		boxes[j + 1] = sb;
+	}
+	return n;
+}
+
+// ---------------------------------------------------------------------------
+// Output lifecycle
+// ---------------------------------------------------------------------------
+
+void server_new_output(struct wl_listener *listener, void *data) {
+	struct guibux_server *server =
+		wl_container_of(listener, server, new_output);
+	struct wlr_output *wlr_output = data;
+
+	wlr_output_init_render(wlr_output, server->allocator, server->renderer);
+
+	const struct output_placement *placement = NULL;
+	for (int i = 0; i < server->num_placements; i++) {
+		if (strcmp(wlr_output->name, server->placements[i].name) == 0) {
+			placement = &server->placements[i];
+			break;
+		}
+	}
+
+	struct wlr_output_state state;
+	wlr_output_state_init(&state);
+	wlr_output_state_set_enabled(&state, true);
+
+	struct wlr_output_mode *mode = wlr_output_preferred_mode(wlr_output);
+	if (mode != NULL) {
+		wlr_output_state_set_mode(&state, mode);
+	}
+
+	wlr_output_commit_state(wlr_output, &state);
+	wlr_output_state_finish(&state);
+
+	if (placement != NULL && placement->transform >= 0) {
+		struct wlr_output_state tstate;
+		wlr_output_state_init(&tstate);
+		wlr_output_state_set_transform(&tstate, placement->transform);
+		if (!wlr_output_commit_state(wlr_output, &tstate)) {
+			wlr_log(WLR_ERROR, "%s: failed to apply transform %d "
+				"(backend may not support it)",
+				wlr_output->name, placement->transform);
+		}
+		wlr_output_state_finish(&tstate);
+	}
+
+	struct guibux_output *output = calloc(1, sizeof(*output));
+	output->wlr_output = wlr_output;
+	output->server = server;
+	output->current_workspace = 1;
+
+	output->frame.notify = output_frame;
+	wl_signal_add(&wlr_output->events.frame, &output->frame);
+
+	output->request_state.notify = output_request_state;
+	wl_signal_add(&wlr_output->events.request_state, &output->request_state);
+
+	output->destroy.notify = output_destroy;
+	wl_signal_add(&wlr_output->events.destroy, &output->destroy);
+
+	wl_list_insert(&server->outputs, &output->link);
+
+	struct wlr_output_layout_output *l_output = NULL;
+	if (placement != NULL) {
+		l_output = wlr_output_layout_add(server->output_layout, wlr_output,
+			placement->x, placement->y);
+	}
+	if (l_output == NULL) {
+		l_output = wlr_output_layout_add_auto(server->output_layout, wlr_output);
+	}
+	struct wlr_scene_output *scene_output =
+		wlr_scene_output_create(server->scene, wlr_output);
+	if (l_output == NULL) {
+		wlr_log(WLR_ERROR, "%s: failed to add output to layout",
+			wlr_output->name);
+	} else {
+		wlr_scene_output_layout_add_output(server->scene_layout, l_output, scene_output);
+	}
+	topbar_create(output);
+	topbar_renumber(server);
+}
+
+void output_frame(struct wl_listener *listener, void *data) {
+	struct guibux_output *output = wl_container_of(listener, output, frame);
+	struct wlr_scene *scene = output->server->scene;
+
+	struct wlr_scene_output *scene_output = wlr_scene_get_scene_output(
+		scene, output->wlr_output);
+
+	wlr_scene_output_commit(scene_output, NULL);
+
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	wlr_scene_output_send_frame_done(scene_output, &now);
+}
+
+void output_request_state(struct wl_listener *listener, void *data) {
+	struct guibux_output *output = wl_container_of(listener, output, request_state);
+	const struct wlr_output_event_request_state *event = data;
+	wlr_output_commit_state(output->wlr_output, event->state);
+}
+
+void output_destroy(struct wl_listener *listener, void *data) {
+	struct guibux_output *output = wl_container_of(listener, output, destroy);
+	struct guibux_server *server = output->server;
+
+	topbar_destroy(output);
+	topbar_renumber(server);
+
+	wl_list_remove(&output->frame.link);
+	wl_list_remove(&output->request_state.link);
+	wl_list_remove(&output->destroy.link);
+	wl_list_remove(&output->link);
+	free(output);
+}

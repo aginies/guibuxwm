@@ -10,7 +10,9 @@ freetype_dep = dependency('freetype2')
 cairo_dep = dependency('cairo')
 
 executable('guibuxwm',
-  'src/main.c',
+  ['src/main.c', 'src/guibuxwm.h', 'src/output.c', 'src/toplevel.c',
+   'src/window-layout.c', 'src/topbar.c', 'src/launcher.c', 'src/keyboard.c',
+   'src/config.c', 'src/cursor.c', 'src/popup.c', 'src/wm-test.c'],
   c_args: ['-DWLR_USE_UNSTABLE', '-Wno-unused-parameter'],
   dependencies: [wlroots_dep, wayland_dep, xkbcommon_dep, freetype_dep, cairo_dep],
   install: true,

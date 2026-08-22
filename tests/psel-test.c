@@ -119,13 +119,19 @@ static void pointer_button(void *data, struct wl_pointer *p, uint32_t serial,
 static void pointer_axis(void *data, struct wl_pointer *p, uint32_t time,
 		uint32_t axis, wl_fixed_t value) {}
 static void pointer_frame(void *data, struct wl_pointer *p) {}
+static void pointer_axis_source(void *data, struct wl_pointer *p, uint32_t axis_source) {}
+static void pointer_axis_stop(void *data, struct wl_pointer *p, uint32_t time, uint32_t axis) {}
+static void pointer_axis_discrete(void *data, struct wl_pointer *p, uint32_t axis, int32_t discrete) {}
 static const struct wl_pointer_listener pointer_listener = {
-	pointer_enter,
-	pointer_leave,
-	pointer_motion,
-	pointer_button,
-	pointer_axis,
-	pointer_frame,
+	.enter = pointer_enter,
+	.leave = pointer_leave,
+	.motion = pointer_motion,
+	.button = pointer_button,
+	.axis = pointer_axis,
+	.frame = pointer_frame,
+	.axis_source = pointer_axis_source,
+	.axis_stop = pointer_axis_stop,
+	.axis_discrete = pointer_axis_discrete,
 };
 
 static void seat_capabilities(void *data, struct wl_seat *s, uint32_t caps) {
