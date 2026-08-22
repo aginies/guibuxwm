@@ -10,10 +10,10 @@
 //   - multi-monitor: new windows open on the output under the cursor,
 //     windows move between monitors with Mod+Shift+Left/Right,
 //     monitor arrangement via GUIBUX_OUTPUTS="NAME@XxY,NAME@XxY"
-//   - topbar per monitor: screen number on the left, date and time on the
-//     right (updates every second)
-//   - workspaces per monitor (4, named A B C D): Mod+a..d switch,
-//     Mod+Shift+A..D move a window; workspace letters shown in the topbar
+//   - topbar per monitor: monitor letter (A, B, C, ...) on the left, date
+//     and time on the right (updates every second)
+//   - workspaces per monitor (4, numbered 1 2 3 4): Mod+1..4 switch,
+//     Mod+Shift+1..4 move a window; workspace numbers shown in the topbar
 //     (current highlighted, clickable)
 //   - keybindings (Mod = Super):
 //       Mod+Return            start a new terminal
@@ -22,8 +22,8 @@
 //       Mod+t                 cycle tile mode (free / split / main+stack)
 //       Mod+e                 command box: type a command, Enter runs it
 //       Mod+Tab               cycle focus
-//       Mod+a..d              switch to workspace A..D on the focused monitor
-//       Mod+Shift+A..D        move focused window to workspace A..D
+//       Mod+1..4              switch to workspace 1..4 on the focused monitor
+//       Mod+Shift+1..4        move focused window to workspace 1..4
 //       Mod+Shift+Left/Right  move window to previous/next monitor
 //       Mod+Shift+q           quit
 //       Alt+Escape            quit
@@ -797,7 +797,7 @@ static struct guibux_output *guibux_output_for(struct guibux_server *server,
 }
 
 // ---------------------------------------------------------------------------
-// Topbar: per-output bar at the top of each monitor, screen number on the
+// Topbar: per-output bar at the top of each monitor, monitor letter on the
 // left, date and time on the right. reuses the launcher's shm allocator,
 // freetype face and text renderer
 // ---------------------------------------------------------------------------
@@ -881,31 +881,22 @@ static void topbar_render(struct guibux_output *o) {
 	FT_Set_Pixel_Sizes(server->launcher.face, 0, font_px);
 	int baseline = TOPBAR_H / 2 * scale + font_px * 35 / 100;
 
-	// screen number on the left
+	// monitor letter on the left (A, B, C, ...)
 	char left[16];
-	snprintf(left, sizeof(left), "%d", o->topbar_number);
+	snprintf(left, sizeof(left), "%c", 'A' + (o->topbar_number - 1));
 	launcher_draw_text(cs, server->launcher.face, left,
 		TOPBAR_PAD * scale, baseline, 0xFFFFFF);
 
-	// workspace cells after the screen number, current one highlighted.
-	// workspaces are named A B C D. cell layout is stored in logical px
+	// workspace cells after the monitor letter, current one highlighted.
+	// workspaces are numbered 1 2 3 4. cell layout is stored in logical px
 	// for click hit-testing
-	int cell_w = 0;
-	for (int i = 0; i < NUM_WORKSPACES; i++) {
-		char name[2] = { (char)('A' + i), 0 };
-		int w = guibux_text_width(server->launcher.face, name) / scale;
-		if (w > cell_w) {
-			cell_w = w;
-		}
-	}
-	cell_w += 8;
+	int cell_w = guibux_text_width(server->launcher.face, "9") / scale + 8;
 	o->topbar_ws_cell_w = cell_w;
 	int x = TOPBAR_PAD + guibux_text_width(server->launcher.face, left) / scale + 12;
 	for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {
 		o->topbar_ws_x[ws] = x;
 		char num[8];
-		num[0] = 'A' + (ws - 1);
-		num[1] = '\0';
+		snprintf(num, sizeof(num), "%d", ws);
 		if (ws == o->current_workspace) {
 			cairo_set_source_rgb(cr, 0x3a / 255.0, 0x3c / 255.0, 0x55 / 255.0);
 			cairo_rectangle(cr, x * scale, (TOPBAR_H / 4) * scale,
@@ -1541,22 +1532,22 @@ static bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
 			}
 			return true;
 		}
-		if (sym >= XKB_KEY_A && sym <= XKB_KEY_A + NUM_WORKSPACES - 1) {
+		if (sym >= XKB_KEY_1 && sym <= XKB_KEY_1 + NUM_WORKSPACES - 1) {
 			if (toplevel != NULL) {
-				move_toplevel_to_workspace(toplevel, sym - XKB_KEY_A + 1);
+				move_toplevel_to_workspace(toplevel, sym - XKB_KEY_1 + 1);
 			}
 			return true;
 		}
 		return false;
 	}
 
-	if (sym >= XKB_KEY_a && sym <= XKB_KEY_a + NUM_WORKSPACES - 1) {
+	if (sym >= XKB_KEY_1 && sym <= XKB_KEY_1 + NUM_WORKSPACES - 1) {
 		struct wlr_output *out = toplevel != NULL
 			? toplevel_output_for(toplevel) : output_at_cursor(server);
 		struct guibux_output *o = out != NULL
 			? guibux_output_for(server, out) : NULL;
 		if (o != NULL) {
-			switch_workspace(o, sym - XKB_KEY_a + 1);
+			switch_workspace(o, sym - XKB_KEY_1 + 1);
 		}
 		return true;
 	}

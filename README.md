@@ -9,10 +9,11 @@ Derived from [tinywl](https://gitlab.freedesktop.org/wlroots/wlroots/-/tree/main
 - Tile modes (`Mod+t`): free / left-right split / main+stack, per monitor
 - Command box (`Mod+e`) to launch programs by typing a command, with
   `$PATH` command suggestions (Up/Down to select)
-- Topbar on each monitor: screen number on the left, date and time on the
-  right (updates every second); tiled windows are laid out below it
-- Workspaces per monitor (4, named A B C D): `Mod+a..d` switch,
-  `Mod+Shift+A..D` move the focused window; workspace letters shown in the
+- Topbar on each monitor: monitor letter (A, B, C, ...) on the left, date
+  and time on the right (updates every second); tiled windows are laid out
+  below it
+- Workspaces per monitor (4, numbered 1 2 3 4): `Mod+1..4` switch,
+  `Mod+Shift+1..4` move the focused window; workspace numbers shown in the
   topbar with the current one highlighted (clickable to switch)
 - Starts a terminal automatically at launch (default: `alacritty`)
 - Configurable keyboard layout (e.g. French)
@@ -79,8 +80,8 @@ Run:
 | `Mod+f` | Toggle fullscreen |
 | `Mod+t` | Cycle tile mode of the focused window's monitor (free / split / main+stack) |
 | `Mod+Tab` | Cycle window focus |
-| `Mod+a..d` | Switch to workspace A..D on the focused window's monitor |
-| `Mod+Shift+A..D` | Move focused window to workspace A..D (same monitor) |
+| `Mod+1..4` | Switch to workspace 1..4 on the focused window's monitor |
+| `Mod+Shift+1..4` | Move focused window to workspace 1..4 (same monitor) |
 | `Mod+Shift+Left` / `Mod+Shift+Right` | Move focused window to previous/next monitor |
 | `Mod+Shift+q` | Quit |
 | `Alt+Escape` | Quit |
@@ -273,8 +274,8 @@ window and verifies the re-pack, then fullscreens a window and verifies it
 returns to its tile slot.
 
 `GUIBUX_TEST_TOPBAR=1` verifies the topbars shortly after start (one bar per
-output, screen number matches the left-to-right layout order, non-empty
-date/time string), logging `topbar-test: OK (N outputs)` on success:
+output, monitor letter matches the left-to-right layout order (A = leftmost),
+non-empty date/time string), logging `topbar-test: OK (N outputs)` on success:
 
 ```sh
 GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_TOPBAR=1 GUIBUX_TERM=true \
