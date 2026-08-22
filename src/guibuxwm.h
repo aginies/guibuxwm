@@ -101,11 +101,39 @@ struct guibux_keybind {
 struct guibux_server;
 
 /* sysinfo.c */
+enum sysinfo_prop {
+    SYSINFO_PROP_DEVTYPE,
+    SYSINFO_PROP_STATE,
+    SYSINFO_PROP_IFACE,
+    SYSINFO_PROP_SSID,
+    SYSINFO_PROP_STRENGTH,
+};
+
 struct guibux_sysinfo {
     DBusConnection *system_bus;
     bool nm_available;
     char network[64];
     char battery[32];
+    struct wl_event_source *dbus_fd_source;
+    int dbus_fd;
+    bool query_pending;
+    char query_display[128];
+    int query_devices_count;
+    char *query_devices[16];
+    int query_pending_replies;
+    struct {
+        char iface[32];
+        dbus_uint32_t type;
+        dbus_uint32_t state;
+        char ssid[64];
+        dbus_uint32_t strength;
+        bool type_ready;
+        bool state_ready;
+        bool iface_ready;
+        bool ssid_ready;
+        bool strength_ready;
+    } query_dev_data[16];
+    int query_dev_index;
 };
 
 void sysinfo_init(struct guibux_server *server);
@@ -130,23 +158,24 @@ struct guibux_output {
     char topbar_right[64];
     char topbar_network[64];
     char topbar_battery[32];
-    int topbar_net_x;
+   int topbar_net_x;
     int topbar_net_w;
     int topbar_ws_x[NUM_WORKSPACES + 1];
-	int topbar_ws_cell_w;
-	struct wlr_scene_buffer *bg_node;
-	struct wlr_buffer *bg_buffer;
-	int bg_w, bg_h;
-	cairo_surface_t *bg_surface;
+    int topbar_ws_cell_w;
+    struct wlr_scene_buffer *bg_node;
+    struct wlr_buffer *bg_buffer;
+    int bg_w, bg_h;
+    cairo_surface_t *bg_surface;
 #define TOPBAR_WIN_W 100
 #define TOPBAR_WIN_GAP 8
 #define TOPBAR_WIN_MAX 64
 
-	int topbar_win_x[TOPBAR_WIN_MAX];
-	int topbar_win_w[TOPBAR_WIN_MAX];
-	char topbar_win_titles[TOPBAR_WIN_MAX][64];
-	int topbar_win_count;
-	bool topbar_dirty;
+    int topbar_win_x[TOPBAR_WIN_MAX];
+    int topbar_win_w[TOPBAR_WIN_MAX];
+    char topbar_win_titles[TOPBAR_WIN_MAX][64];
+    int topbar_win_count;
+    struct guibux_toplevel *topbar_wins[TOPBAR_WIN_MAX];
+    bool topbar_dirty;
 	struct wl_listener frame;
 	struct wl_listener request_state;
 	struct wl_listener destroy;
@@ -271,9 +300,10 @@ struct guibux_server {
 	struct wl_event_source *psel_test_timer;
 	bool psel_test_enter_sent;
 	struct guibux_launcher launcher;
-	struct guibux_sysinfo sysinfo;
-	uint32_t last_topbar_click_time;
-	struct guibux_toplevel *last_topbar_click_win;
+   struct guibux_sysinfo sysinfo;
+    uint32_t last_topbar_click_time;
+    struct guibux_toplevel *last_topbar_click_win;
+    struct guibux_output *cursor_topbar_output;
 };
 
 /* output.c */
@@ -292,7 +322,7 @@ void topbar_renumber(struct guibux_server *server);
 int outputs_sorted_by_x(struct guibux_server *server, struct wlr_output **sorted, struct wlr_box *boxes, int cap);
 
 struct guibux_toplevel *topbar_win_at(struct guibux_output *o, double lx, double ly);
-bool topbar_network_at(struct guibux_server *server, double lx, double ly);
+bool topbar_network_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
 
 /* toplevel.c */
 void focus_toplevel(struct guibux_toplevel *toplevel);

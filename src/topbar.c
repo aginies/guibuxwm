@@ -305,9 +305,10 @@ void topbar_render(struct guibux_output *o) {
 		int cell_w = tw + 16;
 		if (cell_w > max_w)
 			cell_w = max_w;
-		snprintf(o->topbar_win_titles[i], sizeof(o->topbar_win_titles[i]), "%s", buf);
-		o->topbar_win_x[i] = win_x;
-		o->topbar_win_w[i] = cell_w;
+		o->topbar_wins[rendered] = wins[i];
+		snprintf(o->topbar_win_titles[rendered], sizeof(o->topbar_win_titles[rendered]), "%s", buf);
+		o->topbar_win_x[rendered] = win_x;
+		o->topbar_win_w[rendered] = cell_w;
 
 		if (wins[i] == kb_focus_t) {
 			set_color(cr, server->color_highlight);
@@ -391,21 +392,10 @@ struct guibux_toplevel *topbar_win_at(struct guibux_output *o,
 			ly < box.y || ly >= box.y + o->server->topbar_height)
 		return NULL;
 	double rel = lx - box.x;
-	struct guibux_toplevel *wins[TOPBAR_WIN_MAX];
-	int nwins = 0;
-	struct guibux_toplevel *t;
-	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->is_fullscreen)
-			continue;
-		if (toplevel_output_for(t) != o->wlr_output)
-			continue;
-		if (nwins < TOPBAR_WIN_MAX)
-			wins[nwins++] = t;
-	}
-	for (int i = 0; i < o->topbar_win_count && i < nwins; i++) {
+	for (int i = 0; i < o->topbar_win_count; i++) {
 		if (rel >= o->topbar_win_x[i] &&
 				rel < o->topbar_win_x[i] + o->topbar_win_w[i])
-			return wins[i];
+			return o->topbar_wins[i];
 	}
 	return NULL;
 }
@@ -442,23 +432,20 @@ bool topbar_workspace_at(struct guibux_server *server, double lx,
 	return false;
 }
 
-bool topbar_network_at(struct guibux_server *server, double lx, double ly) {
-	struct guibux_output *o;
-	wl_list_for_each(o, &server->outputs, link) {
-		if (o->topbar_buffer == NULL || o->topbar_net_w <= 0) {
-			continue;
-		}
-		struct wlr_box box;
-		wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
-		if (lx < box.x || lx >= box.x + box.width ||
-				ly < box.y || ly >= box.y + o->server->topbar_height) {
-			continue;
-		}
-		double rel = lx - box.x;
-		if (rel >= o->topbar_net_x &&
-				rel < o->topbar_net_x + o->topbar_net_w) {
-			return true;
-		}
+bool topbar_network_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly) {
+	if (o == NULL || o->topbar_buffer == NULL || o->topbar_net_w <= 0) {
+		return false;
+	}
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+	if (lx < box.x || lx >= box.x + box.width ||
+			ly < box.y || ly >= box.y + o->server->topbar_height) {
+		return false;
+	}
+	double rel = lx - box.x;
+	if (rel >= o->topbar_net_x &&
+			rel < o->topbar_net_x + o->topbar_net_w) {
+		return true;
 	}
 	return false;
 }

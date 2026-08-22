@@ -258,7 +258,7 @@ int main(int argc, char *argv[]) {
 	server.topbar_timer = wl_event_loop_add_timer(
 		wl_display_get_event_loop(server.wl_display),
 		topbar_tick, &server);
-	wl_event_source_timer_update(server.topbar_timer, 500);
+	wl_event_source_timer_update(server.topbar_timer, 1000);
 
 	server.sysinfo_timer = wl_event_loop_add_timer(
 		wl_display_get_event_loop(server.wl_display),

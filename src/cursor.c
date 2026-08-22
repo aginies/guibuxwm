@@ -67,16 +67,20 @@ void process_cursor_motion(struct guibux_server *server, uint32_t time) {
 	struct wlr_surface *surface = NULL;
 	struct guibux_toplevel *toplevel = desktop_toplevel_at(server,
 		server->cursor->x, server->cursor->y, &surface, &sx, &sy);
+
+	struct guibux_output *o = NULL;
 	int ws = 0;
-	if (topbar_workspace_at(server, server->cursor->x, server->cursor->y,
-			NULL, &ws) && ws != 0) {
+	bool in_topbar = topbar_workspace_at(server, server->cursor->x, server->cursor->y,
+		&o, &ws);
+	if (in_topbar && ws != 0) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
-	} else if (topbar_network_at(server, server->cursor->x,
+	} else if (in_topbar && topbar_network_at(server, o, server->cursor->x,
 			server->cursor->y)) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
 	} else if (!toplevel) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "default");
 	}
+	server->cursor_topbar_output = o;
 	if (surface) {
 		wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
 		wlr_seat_pointer_notify_motion(seat, time, sx, sy);
@@ -113,22 +117,21 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 		return;
 	}
 	if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
-		struct guibux_output *o = NULL;
+		struct guibux_output *o = server->cursor_topbar_output;
 		int ws = 0;
-		if (topbar_workspace_at(server, server->cursor->x,
-				server->cursor->y, &o, &ws)) {
+		if (o && topbar_workspace_at(server, server->cursor->x,
+				server->cursor->y, NULL, &ws)) {
 			/* check network indicator first */
-			if (topbar_network_at(server, server->cursor->x,
+			if (topbar_network_at(server, o, server->cursor->x,
 					server->cursor->y)) {
 				spawn_network_info(server);
 				return;
 			}
 			/* check window labels */
 			struct guibux_toplevel *win = NULL;
-			if (o)
-				win = topbar_win_at(o,
-					server->cursor->x,
-					server->cursor->y);
+			win = topbar_win_at(o,
+				server->cursor->x,
+				server->cursor->y);
 			if (win) {
 				uint32_t dt = event->time_msec - server->last_topbar_click_time;
 				if (dt < 300 && server->last_topbar_click_win == win) {

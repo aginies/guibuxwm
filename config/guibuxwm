@@ -57,7 +57,7 @@ topbar_bg = #73ba25
 topbar_text = #1e1e2e
 
 # topbar height in pixels (default: 24)
-#topbar_height = 28
+topbar_height = 30
 
 # desktop background image (PNG or JPEG)
 background = /home/aginies/Pictures/Emission_nebulae_in_Cassiopeia.jpg
