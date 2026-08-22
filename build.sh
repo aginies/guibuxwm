@@ -1,6 +1,7 @@
 #!/bin/sh
 # guibuxwm build script
 # Builds wlroots 0.20.2 (if not installed) and the WM.
+# Usage: ./build.sh [clean]   (clean removes build/ including the binary)
 
 set -e
 
@@ -35,6 +36,12 @@ if ! have_wlroots; then
 fi
 
 cd "$(dirname "$0")"
+
+if [ "${1:-}" = "clean" ]; then
+	rm -rf build
+	echo ">> cleaned: build/ removed (incl. ./build/guibuxwm)"
+	exit 0
+fi
 
 if [ -d build ]; then
 	meson setup build --reconfigure
