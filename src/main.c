@@ -4,9 +4,10 @@
 //
 // Features:
 //   - xdg-shell toplevels: focus, move, resize, fullscreen
-//   - starts a terminal at launch (GUIBUX_TERM env or -t flag, default: alacritty)
-//   - keyboard layout: -k flag, GUIBUX_XKB_LAYOUT or XKB_DEFAULT_LAYOUT env
-//     (e.g. -k fr for French)
+//   - starts a terminal at launch (config `term`, GUIBUX_TERM env or -t
+//     flag, default: gnome-terminal)
+//   - keyboard layout: -k flag, config `xkb_layout`, GUIBUX_XKB_LAYOUT or
+//     XKB_DEFAULT_LAYOUT env (e.g. -k fr); variant and options via config
 //   - multi-monitor: new windows open on the output under the cursor,
 //     windows move between monitors with Mod+Shift+Left/Right,
 //     monitor arrangement via GUIBUX_OUTPUTS="NAME@XxY,NAME@XxY"
@@ -15,7 +16,7 @@
 //   - workspaces per monitor (4, numbered 1 2 3 4): Mod+1..4 switch,
 //     Mod+Shift+1..4 move a window; workspace numbers shown in the topbar
 //     (current highlighted, clickable)
-//   - keybindings (Mod = Super):
+//   - keybindings (Mod = Super), all configurable via the config file:
 //       Mod+Return            start a new terminal
 //       Mod+q                 close focused window
 //       Mod+f                 toggle fullscreen
@@ -27,6 +28,8 @@
 //       Mod+Shift+Left/Right  move window to previous/next monitor
 //       Mod+Shift+q           quit
 //       Alt+Escape            quit
+//   - config file: -c flag, GUIBUX_CONFIG env or ~/.config/guibuxwm/config
+//     (keybinds, terminal, keyboard layout/variant/options, colors)
 //
 // Build:
 //   meson setup build && ninja -C build
@@ -36,6 +39,7 @@
 #include <assert.h>
 #include <cairo.h>
 #include <dirent.h>
+#include <errno.h>
 #include <drm_fourcc.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -80,6 +84,12 @@
 #define TOPBAR_FONT_PX 14
 #define TOPBAR_PAD 8
 #define NUM_WORKSPACES 4
+#define NUM_KEYBINDS 64
+#define DEFAULT_COLOR_BG 0x1e1e2e
+#define DEFAULT_COLOR_BORDER 0x45475a
+#define DEFAULT_COLOR_HIGHLIGHT 0x3a3c55
+#define DEFAULT_COLOR_TEXT 0xffffff
+#define DEFAULT_COLOR_DIM 0x8888aa
 
 struct output_placement {
 	char name[64];
@@ -97,6 +107,27 @@ enum guibux_tile_mode {
 	GUIBUX_TILE_FREE,
 	GUIBUX_TILE_SPLIT,
 	GUIBUX_TILE_MAIN_STACK,
+};
+
+enum guibux_action {
+	GUIBUX_ACT_TERMINAL,
+	GUIBUX_ACT_CLOSE,
+	GUIBUX_ACT_FULLSCREEN,
+	GUIBUX_ACT_TILE,
+	GUIBUX_ACT_LAUNCHER,
+	GUIBUX_ACT_FOCUS_NEXT,
+	GUIBUX_ACT_QUIT,
+	GUIBUX_ACT_SWITCH_WS,
+	GUIBUX_ACT_MOVE_WS,
+	GUIBUX_ACT_MOVE_MON_LEFT,
+	GUIBUX_ACT_MOVE_MON_RIGHT,
+};
+
+struct guibux_keybind {
+	uint32_t modifiers;
+	xkb_keysym_t keysym;
+	enum guibux_action action;
+	int arg;
 };
 
 struct guibux_server;
@@ -210,7 +241,12 @@ struct guibux_server {
 
 	int cascade;
 	char *term_cmd;
-	const char *xkb_layout;
+	char *xkb_layout;
+	char *xkb_variant;
+	char *xkb_options;
+	struct guibux_keybind keybinds[NUM_KEYBINDS];
+	int num_keybinds;
+	uint32_t color_bg, color_border, color_highlight, color_text, color_dim;
 	struct output_placement placements[MAX_OUTPUT_PLACEMENTS];
 	int num_placements;
 
@@ -218,6 +254,7 @@ struct guibux_server {
 	struct wl_event_source *topbar_timer;
 	struct wl_event_source *topbar_test_timer;
 	struct wl_event_source *workspace_test_timer;
+	struct wl_event_source *keybind_test_timer;
 	struct guibux_launcher launcher;
 };
 
@@ -475,6 +512,11 @@ static int launcher_draw_text(cairo_surface_t *cs, FT_Face face,
 	return cx - x;
 }
 
+static void set_color(cairo_t *cr, uint32_t c) {
+	cairo_set_source_rgb(cr, ((c >> 16) & 0xFF) / 255.0,
+		((c >> 8) & 0xFF) / 255.0, (c & 0xFF) / 255.0);
+}
+
 static void launcher_render(struct guibux_server *server) {
 	struct guibux_launcher *l = &server->launcher;
 	if (l->buffer == NULL || l->face == NULL) {
@@ -501,10 +543,10 @@ static void launcher_render(struct guibux_server *server) {
 	cairo_t *cr = cairo_create(cs);
 
 	// background
-	cairo_set_source_rgb(cr, 0x1e / 255.0, 0x1e / 255.0, 0x2e / 255.0);
+	set_color(cr, server->color_bg);
 	cairo_paint(cr);
 	// border
-	cairo_set_source_rgb(cr, 0x45 / 255.0, 0x47 / 255.0, 0x5a / 255.0);
+	set_color(cr, server->color_border);
 	cairo_set_line_width(cr, l->box_scale);
 	cairo_rectangle(cr, l->box_scale / 2.0, l->box_scale / 2.0,
 		w - l->box_scale, h - l->box_scale);
@@ -516,10 +558,10 @@ static void launcher_render(struct guibux_server *server) {
 	int pad = 12 * l->box_scale;
 	int baseline = LAUNCHER_BOX_H / 2 * l->box_scale + font_px * 35 / 100;
 	int x = pad;
-	x += launcher_draw_text(cs, l->face, "$ ", x, baseline, 0xFFFFFF)
+	x += launcher_draw_text(cs, l->face, "$ ", x, baseline, server->color_text)
 		+ 4 * l->box_scale;
-	x += launcher_draw_text(cs, l->face, l->text, x, baseline, 0xFFFFFF);
-	cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+	x += launcher_draw_text(cs, l->face, l->text, x, baseline, server->color_text);
+	set_color(cr, server->color_text);
 	cairo_rectangle(cr, x + 2 * l->box_scale, baseline - font_px * 7 / 10,
 		font_px / 2, font_px * 8 / 10);
 	cairo_fill(cr);
@@ -529,12 +571,13 @@ static void launcher_render(struct guibux_server *server) {
 		int ly = (LAUNCHER_BOX_H + i * LAUNCHER_LINE_H) * l->box_scale;
 		int lh = LAUNCHER_LINE_H * l->box_scale;
 		if (i == l->selection) {
-			cairo_set_source_rgb(cr, 0x3a / 255.0, 0x3c / 255.0, 0x55 / 255.0);
+			set_color(cr, server->color_highlight);
 			cairo_rectangle(cr, l->box_scale, ly, w - 2 * l->box_scale, lh);
 			cairo_fill(cr);
 		}
 		int mb = ly + lh / 2 + font_px * 35 / 100;
-		uint32_t mc = (i == l->selection) ? 0xFFFFFF : 0x8888AA;
+		uint32_t mc = (i == l->selection) ? server->color_text :
+			server->color_dim;
 		launcher_draw_text(cs, l->face, l->matches[i], pad, mb, mc);
 	}
 
@@ -871,9 +914,9 @@ static void topbar_render(struct guibux_output *o) {
 	cairo_t *cr = cairo_create(cs);
 
 	// background + bottom border
-	cairo_set_source_rgb(cr, 0x1e / 255.0, 0x1e / 255.0, 0x2e / 255.0);
+	set_color(cr, server->color_bg);
 	cairo_paint(cr);
-	cairo_set_source_rgb(cr, 0x45 / 255.0, 0x47 / 255.0, 0x5a / 255.0);
+	set_color(cr, server->color_border);
 	cairo_rectangle(cr, 0, h - scale, w, scale);
 	cairo_fill(cr);
 
@@ -885,7 +928,7 @@ static void topbar_render(struct guibux_output *o) {
 	char left[16];
 	snprintf(left, sizeof(left), "%c", 'A' + (o->topbar_number - 1));
 	launcher_draw_text(cs, server->launcher.face, left,
-		TOPBAR_PAD * scale, baseline, 0xFFFFFF);
+		TOPBAR_PAD * scale, baseline, server->color_text);
 
 	// workspace cells after the monitor letter, current one highlighted.
 	// workspaces are numbered 1 2 3 4. cell layout is stored in logical px
@@ -898,15 +941,15 @@ static void topbar_render(struct guibux_output *o) {
 		char num[8];
 		snprintf(num, sizeof(num), "%d", ws);
 		if (ws == o->current_workspace) {
-			cairo_set_source_rgb(cr, 0x3a / 255.0, 0x3c / 255.0, 0x55 / 255.0);
+			set_color(cr, server->color_highlight);
 			cairo_rectangle(cr, x * scale, (TOPBAR_H / 4) * scale,
 				cell_w * scale, (TOPBAR_H / 2) * scale);
 			cairo_fill(cr);
 			launcher_draw_text(cs, server->launcher.face, num,
-				(x + 4) * scale, baseline, 0xFFFFFF);
+				(x + 4) * scale, baseline, server->color_text);
 		} else {
 			launcher_draw_text(cs, server->launcher.face, num,
-				(x + 4) * scale, baseline, 0x8888AA);
+				(x + 4) * scale, baseline, server->color_dim);
 		}
 		x += cell_w;
 	}
@@ -920,7 +963,7 @@ static void topbar_render(struct guibux_output *o) {
 	launcher_draw_text(cs, server->launcher.face, o->topbar_right,
 		w - TOPBAR_PAD * scale -
 			guibux_text_width(server->launcher.face, o->topbar_right),
-		baseline, 0xFFFFFF);
+		baseline, server->color_text);
 
 	cairo_destroy(cr);
 	cairo_surface_destroy(cs);
@@ -1506,68 +1549,23 @@ static void move_toplevel_to_adjacent_output(struct guibux_server *server,
 	move_toplevel_to_output(toplevel, sorted[next]);
 }
 
-static bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
-		uint32_t modifiers) {
-	if ((modifiers & WLR_MODIFIER_ALT) && sym == XKB_KEY_Escape) {
-		wl_display_terminate(server->wl_display);
-		return true;
-	}
-
-	if (!(modifiers & WLR_MODIFIER_LOGO)) {
-		return false;
-	}
-
-	struct guibux_toplevel *toplevel = wl_list_empty(&server->toplevels) ? NULL :
-		wl_container_of(server->toplevels.next, toplevel, link);
-
-	if (modifiers & WLR_MODIFIER_SHIFT) {
-		if (sym == XKB_KEY_q) {
-			wl_display_terminate(server->wl_display);
-			return true;
-		}
-		if (sym == XKB_KEY_Left || sym == XKB_KEY_Right) {
-			if (toplevel != NULL) {
-				move_toplevel_to_adjacent_output(server, toplevel,
-					sym == XKB_KEY_Right ? 1 : -1);
-			}
-			return true;
-		}
-		if (sym >= XKB_KEY_1 && sym <= XKB_KEY_1 + NUM_WORKSPACES - 1) {
-			if (toplevel != NULL) {
-				move_toplevel_to_workspace(toplevel, sym - XKB_KEY_1 + 1);
-			}
-			return true;
-		}
-		return false;
-	}
-
-	if (sym >= XKB_KEY_1 && sym <= XKB_KEY_1 + NUM_WORKSPACES - 1) {
-		struct wlr_output *out = toplevel != NULL
-			? toplevel_output_for(toplevel) : output_at_cursor(server);
-		struct guibux_output *o = out != NULL
-			? guibux_output_for(server, out) : NULL;
-		if (o != NULL) {
-			switch_workspace(o, sym - XKB_KEY_1 + 1);
-		}
-		return true;
-	}
-
-	switch (sym) {
-	case XKB_KEY_Return:
-	case XKB_KEY_KP_Enter:
+static void do_action(struct guibux_server *server, enum guibux_action action,
+		int arg, struct guibux_toplevel *toplevel) {
+	switch (action) {
+	case GUIBUX_ACT_TERMINAL:
 		spawn_terminal(server);
-		return true;
-	case XKB_KEY_q:
+		break;
+	case GUIBUX_ACT_CLOSE:
 		if (toplevel != NULL) {
 			wlr_xdg_toplevel_send_close(toplevel->xdg_toplevel);
 		}
-		return true;
-	case XKB_KEY_f:
+		break;
+	case GUIBUX_ACT_FULLSCREEN:
 		if (toplevel != NULL) {
 			set_fullscreen(toplevel, !toplevel->is_fullscreen);
 		}
-		return true;
-	case XKB_KEY_t:
+		break;
+	case GUIBUX_ACT_TILE:
 		if (toplevel != NULL) {
 			struct guibux_output *o = guibux_output_for(server,
 				toplevel_output_for(toplevel));
@@ -1581,8 +1579,11 @@ static bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
 					: "main+stack");
 			}
 		}
-		return true;
-	case XKB_KEY_Tab: {
+		break;
+	case GUIBUX_ACT_LAUNCHER:
+		launcher_show(server);
+		break;
+	case GUIBUX_ACT_FOCUS_NEXT: {
 		// cycle focus over visible windows only (wraps around)
 		struct guibux_toplevel *next = NULL;
 		struct guibux_toplevel *t;
@@ -1598,14 +1599,55 @@ static bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
 		if (next != NULL) {
 			focus_toplevel(next);
 		}
-		return true;
+		break;
 	}
-	case XKB_KEY_e:
-		launcher_show(server);
-		return true;
-	default:
-		return false;
+	case GUIBUX_ACT_QUIT:
+		wl_display_terminate(server->wl_display);
+		break;
+	case GUIBUX_ACT_SWITCH_WS: {
+		struct wlr_output *out = toplevel != NULL
+			? toplevel_output_for(toplevel) : output_at_cursor(server);
+		struct guibux_output *o = out != NULL
+			? guibux_output_for(server, out) : NULL;
+		if (o != NULL) {
+			switch_workspace(o, arg);
+		}
+		break;
 	}
+	case GUIBUX_ACT_MOVE_WS:
+		if (toplevel != NULL) {
+			move_toplevel_to_workspace(toplevel, arg);
+		}
+		break;
+	case GUIBUX_ACT_MOVE_MON_LEFT:
+		if (toplevel != NULL) {
+			move_toplevel_to_adjacent_output(server, toplevel, -1);
+		}
+		break;
+	case GUIBUX_ACT_MOVE_MON_RIGHT:
+		if (toplevel != NULL) {
+			move_toplevel_to_adjacent_output(server, toplevel, 1);
+		}
+		break;
+	}
+}
+
+// look up (modifiers, keysym) in the keybind table and run the action;
+// returns true if a binding matched
+static bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
+		uint32_t modifiers) {
+	uint32_t mods = modifiers & (WLR_MODIFIER_LOGO | WLR_MODIFIER_SHIFT |
+		WLR_MODIFIER_ALT | WLR_MODIFIER_CTRL);
+	struct guibux_toplevel *toplevel = wl_list_empty(&server->toplevels) ? NULL :
+		wl_container_of(server->toplevels.next, toplevel, link);
+	for (int i = 0; i < server->num_keybinds; i++) {
+		struct guibux_keybind *kb = &server->keybinds[i];
+		if (kb->modifiers == mods && kb->keysym == sym) {
+			do_action(server, kb->action, kb->arg, toplevel);
+			return true;
+		}
+	}
+	return false;
 }
 
 static void keyboard_handle_modifiers(struct wl_listener *listener, void *data) {
@@ -1670,9 +1712,12 @@ static void server_new_keyboard(struct guibux_server *server,
 
 	struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	struct xkb_keymap *keymap;
-	if (server->xkb_layout) {
+	if (server->xkb_layout != NULL || server->xkb_variant != NULL ||
+			server->xkb_options != NULL) {
 		struct xkb_rule_names rules = {0};
 		rules.layout = server->xkb_layout;
+		rules.variant = server->xkb_variant;
+		rules.options = server->xkb_options;
 		keymap = xkb_keymap_new_from_names(context, &rules,
 			XKB_KEYMAP_COMPILE_NO_FLAGS);
 	} else {
@@ -1686,8 +1731,10 @@ static void server_new_keyboard(struct guibux_server *server,
 		free(keyboard);
 		return;
 	}
-	wlr_log(WLR_INFO, "keyboard layout: %s",
-		server->xkb_layout ? server->xkb_layout : "default");
+	wlr_log(WLR_INFO, "keyboard: layout '%s' variant '%s' options '%s'",
+		server->xkb_layout ? server->xkb_layout : "default",
+		server->xkb_variant ? server->xkb_variant : "default",
+		server->xkb_options ? server->xkb_options : "default");
 
 	wlr_keyboard_set_keymap(wlr_keyboard, keymap);
 	xkb_keymap_unref(keymap);
@@ -2338,13 +2385,319 @@ static void parse_output_placements(struct guibux_server *server) {
 	free(copy);
 }
 
+// ---------------------------------------------------------------------------
+// Config file: keybinds, terminal, keyboard layout/variant/options, colors
+//
+// keybinds_defaults() fills the table with the built-in bindings; the config
+// file then replaces entries with the same (modifiers, keysym) or appends
+// new ones.
+// ---------------------------------------------------------------------------
+
+static void keybind_add(struct guibux_server *server, uint32_t modifiers,
+		xkb_keysym_t keysym, enum guibux_action action, int arg) {
+	for (int i = 0; i < server->num_keybinds; i++) {
+		struct guibux_keybind *kb = &server->keybinds[i];
+		if (kb->modifiers == modifiers && kb->keysym == keysym) {
+			kb->action = action;
+			kb->arg = arg;
+			return;
+		}
+	}
+	if (server->num_keybinds >= NUM_KEYBINDS) {
+		wlr_log(WLR_ERROR, "config: too many keybinds (max %d)", NUM_KEYBINDS);
+		return;
+	}
+	struct guibux_keybind *kb = &server->keybinds[server->num_keybinds++];
+	kb->modifiers = modifiers;
+	kb->keysym = keysym;
+	kb->action = action;
+	kb->arg = arg;
+}
+
+static void keybinds_defaults(struct guibux_server *server) {
+	keybind_add(server, WLR_MODIFIER_ALT, XKB_KEY_Escape, GUIBUX_ACT_QUIT, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_Return, GUIBUX_ACT_TERMINAL, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_q, GUIBUX_ACT_CLOSE, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_f, GUIBUX_ACT_FULLSCREEN, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_t, GUIBUX_ACT_TILE, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_e, GUIBUX_ACT_LAUNCHER, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_Tab, GUIBUX_ACT_FOCUS_NEXT, 0);
+	for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {
+		keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_1 + ws - 1,
+			GUIBUX_ACT_SWITCH_WS, ws);
+		keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_SHIFT,
+			XKB_KEY_1 + ws - 1, GUIBUX_ACT_MOVE_WS, ws);
+	}
+	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_SHIFT, XKB_KEY_Left,
+		GUIBUX_ACT_MOVE_MON_LEFT, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_SHIFT, XKB_KEY_Right,
+		GUIBUX_ACT_MOVE_MON_RIGHT, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_SHIFT, XKB_KEY_q,
+		GUIBUX_ACT_QUIT, 0);
+}
+
+// parse "Mod+Shift+q: action[:arg]" (at least one modifier required)
+static bool parse_keybind(struct guibux_server *server, const char *value) {
+	char *copy = strdup(value);
+	if (copy == NULL) {
+		return false;
+	}
+	char *colon = strchr(copy, ':');
+	if (colon == NULL) {
+		wlr_log(WLR_ERROR, "config: bad keybind '%s' (expected 'MODS+key: action')", value);
+		free(copy);
+		return false;
+	}
+	*colon = '\0';
+	const char *action_str = colon + 1;
+	while (*action_str == ' ' || *action_str == '\t') {
+		action_str++;
+	}
+	char *keyspec = copy;
+
+	char *plus = strrchr(keyspec, '+');
+	xkb_keysym_t sym;
+	uint32_t mods = 0;
+	if (plus != NULL) {
+		*plus = '\0';
+		sym = xkb_keysym_from_name(plus + 1, XKB_KEYSYM_NO_FLAGS);
+		if (sym == XKB_KEY_NoSymbol) {
+			wlr_log(WLR_ERROR, "config: bad keybind '%s' (unknown key '%s')",
+				value, plus + 1);
+			free(copy);
+			return false;
+		}
+		char *save = NULL;
+		for (char *tok = strtok_r(keyspec, "+", &save); tok != NULL;
+				tok = strtok_r(NULL, "+", &save)) {
+			if (!strcmp(tok, "Mod") || !strcmp(tok, "Super")) {
+				mods |= WLR_MODIFIER_LOGO;
+			} else if (!strcmp(tok, "Shift")) {
+				mods |= WLR_MODIFIER_SHIFT;
+			} else if (!strcmp(tok, "Alt")) {
+				mods |= WLR_MODIFIER_ALT;
+			} else if (!strcmp(tok, "Ctrl")) {
+				mods |= WLR_MODIFIER_CTRL;
+			} else {
+				wlr_log(WLR_ERROR, "config: bad keybind '%s' (unknown modifier '%s')",
+					value, tok);
+				free(copy);
+				return false;
+			}
+		}
+	} else {
+		sym = xkb_keysym_from_name(keyspec, XKB_KEYSYM_NO_FLAGS);
+		if (sym == XKB_KEY_NoSymbol) {
+			wlr_log(WLR_ERROR, "config: bad keybind '%s' (unknown key)", value);
+			free(copy);
+			return false;
+		}
+	}
+	if (mods == 0) {
+		wlr_log(WLR_ERROR, "config: bad keybind '%s' (at least one modifier required)", value);
+		free(copy);
+		return false;
+	}
+
+	int arg = 0;
+	char *argcolon = strchr((char *)action_str, ':');
+	if (argcolon != NULL) {
+		*argcolon = '\0';
+		arg = atoi(argcolon + 1);
+	}
+	enum guibux_action action;
+	if (!strcmp(action_str, "terminal")) {
+		action = GUIBUX_ACT_TERMINAL;
+	} else if (!strcmp(action_str, "close")) {
+		action = GUIBUX_ACT_CLOSE;
+	} else if (!strcmp(action_str, "fullscreen")) {
+		action = GUIBUX_ACT_FULLSCREEN;
+	} else if (!strcmp(action_str, "tile")) {
+		action = GUIBUX_ACT_TILE;
+	} else if (!strcmp(action_str, "launcher")) {
+		action = GUIBUX_ACT_LAUNCHER;
+	} else if (!strcmp(action_str, "focus-next")) {
+		action = GUIBUX_ACT_FOCUS_NEXT;
+	} else if (!strcmp(action_str, "quit")) {
+		action = GUIBUX_ACT_QUIT;
+	} else if (!strcmp(action_str, "workspace")) {
+		if (arg < 1 || arg > NUM_WORKSPACES) {
+			wlr_log(WLR_ERROR, "config: bad keybind '%s' (workspace %d out of range 1..%d)",
+				value, arg, NUM_WORKSPACES);
+			free(copy);
+			return false;
+		}
+		action = GUIBUX_ACT_SWITCH_WS;
+	} else if (!strcmp(action_str, "move-workspace")) {
+		if (arg < 1 || arg > NUM_WORKSPACES) {
+			wlr_log(WLR_ERROR, "config: bad keybind '%s' (move-workspace %d out of range 1..%d)",
+				value, arg, NUM_WORKSPACES);
+			free(copy);
+			return false;
+		}
+		action = GUIBUX_ACT_MOVE_WS;
+	} else if (!strcmp(action_str, "move-monitor-left")) {
+		action = GUIBUX_ACT_MOVE_MON_LEFT;
+	} else if (!strcmp(action_str, "move-monitor-right")) {
+		action = GUIBUX_ACT_MOVE_MON_RIGHT;
+	} else {
+		wlr_log(WLR_ERROR, "config: bad keybind '%s' (unknown action '%s')",
+			value, action_str);
+		free(copy);
+		return false;
+	}
+
+	wlr_log(WLR_INFO, "config: keybind '%s' -> %s", value, action_str);
+	free(copy);
+	keybind_add(server, mods, sym, action, arg);
+	return true;
+}
+
+// parse "#rrggbb"
+static bool parse_color(const char *value, uint32_t *out) {
+	uint32_t c;
+	if (sscanf(value, "#%x", &c) != 1 || c > 0xFFFFFF) {
+		return false;
+	}
+	*out = c;
+	return true;
+}
+
+static void load_config(struct guibux_server *server, const char *path) {
+	FILE *f = fopen(path, "r");
+	if (f == NULL) {
+		if (errno != ENOENT) {
+			wlr_log(WLR_ERROR, "config: cannot open %s: %m", path);
+		}
+		return;
+	}
+	wlr_log(WLR_INFO, "config: loading %s", path);
+	char line[512];
+	int lineno = 0;
+	while (fgets(line, sizeof(line), f) != NULL) {
+		lineno++;
+		char *p = line;
+		while (*p == ' ' || *p == '\t') {
+			p++;
+		}
+		if (*p == '\0' || *p == '#' || *p == '\n') {
+			continue;
+		}
+		char *eq = strchr(p, '=');
+		if (eq == NULL) {
+			wlr_log(WLR_ERROR, "config: %s:%d: expected 'key = value'", path, lineno);
+			continue;
+		}
+		*eq = '\0';
+		char *key = p;
+		char *val = eq + 1;
+		char *end = key + strlen(key);
+		while (end > key && (end[-1] == ' ' || end[-1] == '\t')) {
+			*--end = '\0';
+		}
+		while (*val == ' ' || *val == '\t') {
+			val++;
+		}
+		end = val + strlen(val);
+		while (end > val && (end[-1] == ' ' || end[-1] == '\t' ||
+				end[-1] == '\n' || end[-1] == '\r')) {
+			*--end = '\0';
+		}
+		if (*key == '\0' || *val == '\0') {
+			wlr_log(WLR_ERROR, "config: %s:%d: empty key or value", path, lineno);
+			continue;
+		}
+
+		if (!strcmp(key, "term")) {
+			free(server->term_cmd);
+			server->term_cmd = strdup(val);
+			wlr_log(WLR_INFO, "config: term = %s", val);
+		} else if (!strcmp(key, "xkb_layout")) {
+			free(server->xkb_layout);
+			server->xkb_layout = strdup(val);
+			wlr_log(WLR_INFO, "config: xkb_layout = %s", val);
+		} else if (!strcmp(key, "xkb_variant")) {
+			free(server->xkb_variant);
+			server->xkb_variant = strdup(val);
+			wlr_log(WLR_INFO, "config: xkb_variant = %s", val);
+		} else if (!strcmp(key, "xkb_options")) {
+			free(server->xkb_options);
+			server->xkb_options = strdup(val);
+			wlr_log(WLR_INFO, "config: xkb_options = %s", val);
+		} else if (!strcmp(key, "keybind")) {
+			parse_keybind(server, val);
+		} else if (!strcmp(key, "color_bg")) {
+			if (parse_color(val, &server->color_bg)) {
+				wlr_log(WLR_INFO, "config: color_bg = %s", val);
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
+			}
+		} else if (!strcmp(key, "color_border")) {
+			if (parse_color(val, &server->color_border)) {
+				wlr_log(WLR_INFO, "config: color_border = %s", val);
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
+			}
+		} else if (!strcmp(key, "color_highlight")) {
+			if (parse_color(val, &server->color_highlight)) {
+				wlr_log(WLR_INFO, "config: color_highlight = %s", val);
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
+			}
+		} else if (!strcmp(key, "color_text")) {
+			if (parse_color(val, &server->color_text)) {
+				wlr_log(WLR_INFO, "config: color_text = %s", val);
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
+			}
+		} else if (!strcmp(key, "color_dim")) {
+			if (parse_color(val, &server->color_dim)) {
+				wlr_log(WLR_INFO, "config: color_dim = %s", val);
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
+			}
+		} else {
+			wlr_log(WLR_ERROR, "config: %s:%d: unknown key '%s'", path, lineno, key);
+		}
+	}
+	fclose(f);
+}
+
+// test hook: GUIBUX_TEST_KEYBIND="g" sends Mod+g through the keybind table
+// shortly after start and checks the launcher opened
+static int keybind_test_run(void *data) {
+	struct guibux_server *server = data;
+	const char *key = getenv("GUIBUX_TEST_KEYBIND");
+	if (key == NULL) {
+		return 0;
+	}
+	xkb_keysym_t sym = xkb_keysym_from_name(key, XKB_KEYSYM_NO_FLAGS);
+	if (sym == XKB_KEY_NoSymbol) {
+		wlr_log(WLR_ERROR, "keybind-test: FAIL unknown key '%s'", key);
+		return 0;
+	}
+	bool handled = handle_keybinding(server, sym, WLR_MODIFIER_LOGO);
+	if (!handled) {
+		wlr_log(WLR_ERROR, "keybind-test: FAIL Mod+%s not in keybind table", key);
+		return 0;
+	}
+	if (!server->launcher.active) {
+		wlr_log(WLR_ERROR, "keybind-test: FAIL launcher not active after Mod+%s", key);
+		return 0;
+	}
+	launcher_hide(server);
+	wlr_log(WLR_INFO, "keybind-test: OK (Mod+%s opened the launcher)", key);
+	return 0;
+}
+
 int main(int argc, char *argv[]) {
 	wlr_log_init(WLR_INFO, NULL);
 
 	char *term_cmd = NULL;
 	char *xkb_layout = NULL;
+	char *config_path = NULL;
 	int c;
-	while ((c = getopt(argc, argv, "t:k:h")) != -1) {
+	while ((c = getopt(argc, argv, "t:k:c:h")) != -1) {
 		switch (c) {
 		case 't':
 			term_cmd = optarg;
@@ -2352,25 +2705,65 @@ int main(int argc, char *argv[]) {
 		case 'k':
 			xkb_layout = optarg;
 			break;
+		case 'c':
+			config_path = optarg;
+			break;
 		default:
-			printf("Usage: %s [-t terminal command] [-k keyboard layout]\n", argv[0]);
+			printf("Usage: %s [-t terminal command] [-k keyboard layout] [-c config file]\n", argv[0]);
 			return 1;
 		}
 	}
 	if (optind < argc) {
-		printf("Usage: %s [-t terminal command] [-k keyboard layout]\n", argv[0]);
+		printf("Usage: %s [-t terminal command] [-k keyboard layout] [-c config file]\n", argv[0]);
 		return 1;
 	}
 
 	struct guibux_server server = {0};
-	const char *env_term = getenv("GUIBUX_TERM");
-	const char *default_term = term_cmd ? term_cmd
-		: (env_term ? env_term : "alacritty");
-	server.term_cmd = strdup(default_term);
-	server.xkb_layout = xkb_layout
-		? xkb_layout
-		: (getenv("GUIBUX_XKB_LAYOUT") ? getenv("GUIBUX_XKB_LAYOUT")
-			: getenv("XKB_DEFAULT_LAYOUT"));
+	server.color_bg = DEFAULT_COLOR_BG;
+	server.color_border = DEFAULT_COLOR_BORDER;
+	server.color_highlight = DEFAULT_COLOR_HIGHLIGHT;
+	server.color_text = DEFAULT_COLOR_TEXT;
+	server.color_dim = DEFAULT_COLOR_DIM;
+	keybinds_defaults(&server);
+
+	// config file: -c flag > GUIBUX_CONFIG env > ~/.config/guibuxwm/config
+	if (config_path == NULL) {
+		config_path = getenv("GUIBUX_CONFIG");
+	}
+	if (config_path == NULL) {
+		const char *home = getenv("HOME");
+		if (home != NULL) {
+			static char default_config[PATH_MAX];
+			snprintf(default_config, sizeof(default_config),
+				"%s/.config/guibuxwm/config", home);
+			config_path = default_config;
+		}
+	}
+	if (config_path != NULL) {
+		load_config(&server, config_path);
+	}
+
+	// env vars fill what the config file did not set
+	if (server.term_cmd == NULL) {
+		const char *env_term = getenv("GUIBUX_TERM");
+		server.term_cmd = strdup(env_term ? env_term : "gnome-terminal");
+	}
+	if (server.xkb_layout == NULL) {
+		const char *env_layout = getenv("GUIBUX_XKB_LAYOUT")
+			? getenv("GUIBUX_XKB_LAYOUT") : getenv("XKB_DEFAULT_LAYOUT");
+		if (env_layout != NULL) {
+			server.xkb_layout = strdup(env_layout);
+		}
+	}
+	// command-line flags override everything
+	if (term_cmd != NULL) {
+		free(server.term_cmd);
+		server.term_cmd = strdup(term_cmd);
+	}
+	if (xkb_layout != NULL) {
+		free(server.xkb_layout);
+		server.xkb_layout = strdup(xkb_layout);
+	}
 	parse_output_placements(&server);
 
 	server.wl_display = wl_display_create();
@@ -2522,6 +2915,16 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.workspace_test_timer, 2000);
 	}
 
+	// test hook: GUIBUX_TEST_KEYBIND="key" sends Mod+key through the
+	// keybind table shortly after start
+	const char *keybind_test = getenv("GUIBUX_TEST_KEYBIND");
+	if (keybind_test != NULL) {
+		server.keybind_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			keybind_test_run, &server);
+		wl_event_source_timer_update(server.keybind_test_timer, 500);
+	}
+
 	spawn_terminal(&server);
 
 	wlr_log(WLR_INFO, "guibuxwm running on WAYLAND_DISPLAY=%s", socket);
@@ -2554,6 +2957,9 @@ int main(int argc, char *argv[]) {
 	if (server.workspace_test_timer != NULL) {
 		wl_event_source_remove(server.workspace_test_timer);
 	}
+	if (server.keybind_test_timer != NULL) {
+		wl_event_source_remove(server.keybind_test_timer);
+	}
 
 	launcher_hide(&server);
 	launcher_free_commands(&server.launcher);
@@ -2576,5 +2982,8 @@ int main(int argc, char *argv[]) {
 	wlr_renderer_destroy(server.renderer);
 	wl_display_destroy(server.wl_display);
 	free(server.term_cmd);
+	free(server.xkb_layout);
+	free(server.xkb_variant);
+	free(server.xkb_options);
 	return 0;
 }

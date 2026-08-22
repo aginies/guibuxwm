@@ -1,0 +1,44 @@
+# guibuxwm default configuration
+#
+# Copy to ~/.config/guibuxwm/config (or pass -c /path/to/config).
+# Every line mirrors the built-in default; change what you want.
+# A keybind with the same modifiers+key as a default replaces it.
+
+# terminal command started at launch (and by Mod+Return)
+term = gnome-terminal
+
+# keyboard (xkb names; leave unset for the system default)
+#xkb_layout = fr
+#xkb_variant = osd
+#xkb_options = caps:swapscape
+
+# keybinds: MODS+key: action
+# modifiers: Mod (Super), Shift, Alt, Ctrl
+# actions: terminal, close, fullscreen, tile, launcher, focus-next,
+#          quit, workspace:N, move-workspace:N,
+#          move-monitor-left, move-monitor-right
+keybind = Mod+Return: terminal
+keybind = Mod+q: close
+keybind = Mod+f: fullscreen
+keybind = Mod+t: tile
+keybind = Mod+e: launcher
+keybind = Mod+Tab: focus-next
+keybind = Mod+1: workspace:1
+keybind = Mod+2: workspace:2
+keybind = Mod+3: workspace:3
+keybind = Mod+4: workspace:4
+keybind = Mod+Shift+1: move-workspace:1
+keybind = Mod+Shift+2: move-workspace:2
+keybind = Mod+Shift+3: move-workspace:3
+keybind = Mod+Shift+4: move-workspace:4
+keybind = Mod+Shift+Left: move-monitor-left
+keybind = Mod+Shift+Right: move-monitor-right
+keybind = Mod+Shift+q: quit
+keybind = Alt+Escape: quit
+
+# colors (#rrggbb)
+color_bg = #1e1e2e
+color_border = #45475a
+color_highlight = #3a3c55
+color_text = #ffffff
+color_dim = #8888aa

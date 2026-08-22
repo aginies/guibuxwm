@@ -15,8 +15,9 @@ Derived from [tinywl](https://gitlab.freedesktop.org/wlroots/wlroots/-/tree/main
 - Workspaces per monitor (4, numbered 1 2 3 4): `Mod+1..4` switch,
   `Mod+Shift+1..4` move the focused window; workspace numbers shown in the
   topbar with the current one highlighted (clickable to switch)
-- Starts a terminal automatically at launch (default: `alacritty`)
-- Configurable keyboard layout (e.g. French)
+- Starts a terminal automatically at launch (default: `gnome-terminal`)
+- Configurable keyboard layout (e.g. French), variant and options
+- Config file for keybinds, terminal, keyboard and colors
 - Multi-monitor support:
   - new windows open on the output under the mouse cursor
   - move windows between monitors with a keybind
@@ -33,7 +34,7 @@ Tested on openSUSE. All development packages are expected to be preinstalled:
 - `freetype-devel`, `cairo-devel`
 - `pixman-devel`, `libegl-devel` / `libgles-devel` (Mesa)
 - `libudev-devel`, `libdisplay-info-devel`, `lcms2-devel`, `libliftoff-devel`, `libseat-devel`
-- a Wayland terminal for the startup terminal (e.g. `alacritty`)
+- a Wayland terminal for the startup terminal (e.g. `gnome-terminal`)
 
 wlroots itself is **not** taken from the distribution package: `build.sh`
 builds wlroots 0.20.2 from source (see [Build](#build)).
@@ -70,7 +71,8 @@ Run:
 
 ## Keybindings
 
-`Mod` is the Super key.
+`Mod` is the Super key. All bindings can be changed via the config file
+(see [Keybinds](#keybinds)).
 
 | Shortcut | Action |
 |---|---|
@@ -121,33 +123,89 @@ or moving a window between monitors).
 
 ## Configuration
 
-All configuration is via command-line flags and environment variables.
-There is no config file.
+Configuration is via a config file, command-line flags and environment
+variables. Priority: command-line flag > config file > `GUIBUX_*` env >
+standard env > default.
+
+### Config file
+
+Location: `~/.config/guibuxwm/config` (override with the `-c` flag or the
+`GUIBUX_CONFIG` env var). A missing file is skipped silently; malformed lines
+are logged and ignored. Format: one `key = value` per line, `#` comments.
+
+A sample with all defaults is in [`config/guibuxwm`](config/guibuxwm) — copy
+it to `~/.config/guibuxwm/config` and edit.
+
+| Key | Meaning | Example |
+|---|---|---|
+| `term` | Terminal command started at launch (and by `Mod+Return`) | `term = foot` |
+| `xkb_layout` | Keyboard layout (xkb layout name) | `xkb_layout = fr` |
+| `xkb_variant` | Keyboard variant | `xkb_variant = osd` |
+| `xkb_options` | xkb options (comma-separated) | `xkb_options = caps:swapscape` |
+| `keybind` | Keybinding, repeatable, see [Keybinds](#keybinds) | `keybind = Mod+g: launcher` |
+| `color_bg` | Topbar/launcher background, `#rrggbb` | `color_bg = #1e1e2e` |
+| `color_border` | Topbar bottom border / launcher border | `color_border = #45475a` |
+| `color_highlight` | Highlight (launcher selection, current workspace cell) | `color_highlight = #3a3c55` |
+| `color_text` | Text and cursor | `color_text = #ffffff` |
+| `color_dim` | Dimmed text (launcher non-selected, inactive workspaces) | `color_dim = #8888aa` |
+
+Example:
+
+```
+# ~/.config/guibuxwm/config
+term = foot
+xkb_layout = fr
+keybind = Mod+g: launcher
+keybind = Mod+Shift+q: quit
+color_bg = #1e1e2e
+```
+
+### Keybinds
+
+Syntax: `keybind = MODS+key: action`. At least one modifier is required:
+`Mod` (or `Super`), `Shift`, `Alt`, `Ctrl`. `key` is an xkb key name
+(`q`, `Return`, `Tab`, `F1`, ...). Actions:
+
+| Action | Meaning |
+|---|---|
+| `terminal` | Start a new terminal |
+| `close` | Close the focused window |
+| `fullscreen` | Toggle fullscreen of the focused window |
+| `tile` | Cycle tile mode of the focused window's monitor |
+| `launcher` | Open the command box |
+| `focus-next` | Cycle window focus |
+| `quit` | Quit the compositor |
+| `workspace:N` | Switch to workspace N (1..4) |
+| `move-workspace:N` | Move the focused window to workspace N (1..4) |
+| `move-monitor-left` / `move-monitor-right` | Move the focused window to the previous/next monitor |
+
+A config keybind with the same modifiers+key as a default replaces it,
+otherwise it is added. Defaults are listed in [Keybindings](#keybindings).
 
 ### Command-line flags
 
 ```
-guibuxwm [-t terminal command] [-k keyboard layout]
+guibuxwm [-t terminal command] [-k keyboard layout] [-c config file]
 ```
 
 | Flag | Meaning | Example |
 |---|---|---|
 | `-t` | Terminal command started at launch (and by `Mod+Return`) | `-t "gnome-terminal"` |
 | `-k` | Keyboard layout (xkb layout name) | `-k fr` |
+| `-c` | Path to the config file | `-c ~/.config/guibuxwm/config` |
 
 ### Environment variables
 
 | Variable | Meaning | Example |
 |---|---|---|
-| `GUIBUX_TERM` | Terminal command (overridden by `-t`) | `GUIBUX_TERM="foot"` |
-| `GUIBUX_XKB_LAYOUT` | Keyboard layout (overridden by `-k`) | `GUIBUX_XKB_LAYOUT="fr"` |
+| `GUIBUX_CONFIG` | Config file path (overridden by `-c`) | `GUIBUX_CONFIG=~/wm.conf` |
+| `GUIBUX_TERM` | Terminal command (overridden by `-t` and config `term`) | `GUIBUX_TERM="foot"` |
+| `GUIBUX_XKB_LAYOUT` | Keyboard layout (overridden by `-k` and config `xkb_layout`) | `GUIBUX_XKB_LAYOUT="fr"` |
 | `XKB_DEFAULT_LAYOUT` | Keyboard layout, standard xkb env (lowest priority) | `XKB_DEFAULT_LAYOUT="fr,us"` |
 | `GUIBUX_OUTPUTS` | Manual monitor arrangement, see below | see below |
 | `GUIBUX_TEST_EXTRA_OUTPUTS` | Test-only, see [Testing](#testing) | `GUIBUX_TEST_EXTRA_OUTPUTS=1` |
 
-Priority: command-line flag > `GUIBUX_*` env > standard env > default.
-
-Terminal default: `alacritty`. Keyboard layout default: system default
+Terminal default: `gnome-terminal`. Keyboard layout default: system default
 (usually `us`).
 
 ### Multi-monitor arrangement (`GUIBUX_OUTPUTS`)
@@ -234,6 +292,7 @@ tests/run-ws-test.sh [ws]        # workspace state machine (default ws 2)
 tests/run-tile-test.sh <mode>    # tiling: 0=free, 1=split, 2=main+stack
 tests/run-topbar-test.sh         # per-output topbar (number + time)
 tests/run-launcher-test.sh       # command box (show/type/enter/escape)
+tests/run-config-test.sh         # config file (term, keybind, colors)
 ```
 
 The compositor can also be run headless directly for smoke testing:
@@ -297,11 +356,21 @@ GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_WORKSPACES=2 GUIBUX_TERM=true \
 ./build/tests/ws-test
 ```
 
+`GUIBUX_TEST_KEYBIND="key"` sends `Mod+key` through the keybind table
+shortly after start and expects the launcher to open (used by the config
+test to verify a custom keybind):
+
+```sh
+GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_KEYBIND=g \
+  GUIBUX_CONFIG=/path/to/config WLR_RENDERER=gles2 ./build/guibuxwm
+```
+
 ## Project layout
 
 ```
 meson.build      build definition (wlroots-0.20, freetype2, cairo deps)
 build.sh         builds wlroots 0.20.2 if needed, then the WM
+config/guibuxwm  sample config file (all defaults, copy to ~/.config/guibuxwm/config)
 src/main.c       the whole compositor (~2500 lines, incl. command box, topbar, workspaces and tiling)
 tests/           headless test clients (ws-test, tile-test) + runner scripts (run-all.sh)
 ```
