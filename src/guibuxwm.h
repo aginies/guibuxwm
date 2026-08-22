@@ -89,6 +89,7 @@ enum guibux_action {
 	GUIBUX_ACT_SNAP_BOTTOM,
 	GUIBUX_ACT_SWITCH_WS_LEFT,
 	GUIBUX_ACT_SWITCH_WS_RIGHT,
+	GUIBUX_ACT_SHOW_HELP,
 };
 
 struct guibux_keybind {
@@ -144,6 +145,8 @@ struct guibux_toplevel;
 
 // declared in wlr/render/allocator/shm.h (not installed with our wlroots build)
 struct wlr_allocator *wlr_shm_allocator_create(void);
+struct wlr_buffer *wlr_allocator_create_buffer(struct wlr_allocator *alloc,
+	int width, int height, const struct wlr_drm_format *format);
 
 struct guibux_output {
 	struct wl_list link;
@@ -217,6 +220,27 @@ struct guibux_keyboard {
 struct launcher_entry {
 	char *name;
 	char *exec;
+};
+
+struct guibux_switcher {
+	bool active;
+	int selection;
+	struct guibux_toplevel *wins[64];
+	int num_wins;
+	struct wlr_output *output;
+	struct wlr_scene_buffer *scene_node;
+	struct wlr_buffer *buffer;
+	int box_w, box_h, box_scale;
+};
+
+struct guibux_help {
+	bool active;
+	struct wlr_output *output;
+	struct wlr_scene_buffer *scene_node;
+	struct wlr_buffer *buffer;
+	int box_w, box_h, box_scale;
+	char lines[NUM_KEYBINDS][128];
+	int num_lines;
 };
 
 struct guibux_launcher {
@@ -299,8 +323,10 @@ struct guibux_server {
 	struct wl_event_source *keybind_test_timer;
 	struct wl_event_source *psel_test_timer;
 	bool psel_test_enter_sent;
-	struct guibux_launcher launcher;
-   struct guibux_sysinfo sysinfo;
+struct guibux_launcher launcher;
+    struct guibux_sysinfo sysinfo;
+	struct guibux_switcher switcher;
+	struct guibux_help help;
     uint32_t last_topbar_click_time;
     struct guibux_toplevel *last_topbar_click_win;
     struct guibux_output *cursor_topbar_output;
@@ -375,6 +401,17 @@ bool launcher_handle_key(struct guibux_server *server, xkb_keysym_t sym);
 int launcher_test_run(void *data);
 void launcher_free_commands(struct guibux_launcher *l);
 void launcher_filter(struct guibux_launcher *l);
+
+/* switcher.c */
+void switcher_show(struct guibux_server *server);
+void switcher_hide(struct guibux_server *server);
+bool switcher_handle_key(struct guibux_server *server, xkb_keysym_t sym);
+void switcher_on_modifier_release(struct guibux_server *server, uint32_t modifiers);
+
+/* help.c */
+void help_show(struct guibux_server *server);
+void help_hide(struct guibux_server *server);
+bool help_handle_key(struct guibux_server *server, xkb_keysym_t sym);
 
 /* keyboard.c */
 void server_new_input(struct wl_listener *listener, void *data);

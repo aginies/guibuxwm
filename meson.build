@@ -15,7 +15,8 @@ dbus_dep = dependency('dbus-1')
 
 executable('guibuxwm',
   ['src/main.c', 'src/guibuxwm.h', 'src/output.c', 'src/toplevel.c',
-    'src/window-layout.c', 'src/topbar.c', 'src/launcher.c', 'src/keyboard.c',
+    'src/window-layout.c', 'src/topbar.c', 'src/launcher.c', 'src/switcher.c', 'src/help.c',
+    'src/keyboard.c',
     'src/config.c', 'src/cursor.c', 'src/popup.c', 'src/wm-test.c',
     'src/sysinfo.c', 'src/background.c'],
   c_args: ['-DWLR_USE_UNSTABLE', '-Wno-unused-parameter'],

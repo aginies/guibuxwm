@@ -71,21 +71,9 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 	case GUIBUX_ACT_LAUNCHER:
 		launcher_show(server);
 		break;
-	case GUIBUX_ACT_FOCUS_NEXT: {
-		struct guibux_toplevel *next = NULL;
-		struct guibux_toplevel *t;
-		wl_list_for_each(t, &server->toplevels, link) {
-			if (t == toplevel) {
-				continue;
-			}
-			next = t;
-			break;
-		}
-		if (next != NULL) {
-			focus_toplevel(next);
-		}
+	case GUIBUX_ACT_FOCUS_NEXT:
+		switcher_show(server);
 		break;
-	}
 	case GUIBUX_ACT_QUIT:
 		wl_display_terminate(server->wl_display);
 		break;
@@ -164,6 +152,9 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 		}
 		break;
 	}
+	case GUIBUX_ACT_SHOW_HELP:
+		help_show(server);
+		break;
 	}
 }
 
@@ -201,7 +192,7 @@ void keybinds_defaults(struct guibux_server *server) {
 	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_f, GUIBUX_ACT_FULLSCREEN, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_t, GUIBUX_ACT_TILE, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_e, GUIBUX_ACT_LAUNCHER, 0);
-	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_Tab, GUIBUX_ACT_FOCUS_NEXT, 0);
+	keybind_add(server, WLR_MODIFIER_ALT, XKB_KEY_Tab, GUIBUX_ACT_FOCUS_NEXT, 0);
 	for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {
 		keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_1 + ws - 1,
 			GUIBUX_ACT_SWITCH_WS, ws);
@@ -228,6 +219,8 @@ void keybinds_defaults(struct guibux_server *server) {
 		GUIBUX_ACT_SNAP_BOTTOM, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_SHIFT, XKB_KEY_q,
 		GUIBUX_ACT_QUIT, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_h,
+		GUIBUX_ACT_SHOW_HELP, 0);
 }
 
 bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
@@ -276,12 +269,20 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 		for (int i = 0; i < nsyms; i++) {
 			if (server->launcher.active) {
 				handled = launcher_handle_key(server, syms[i]);
+			} else if (server->switcher.active) {
+				handled = switcher_handle_key(server, syms[i]);
+			} else if (server->help.active) {
+				handled = help_handle_key(server, syms[i]);
 			} else {
 				handled = handle_keybinding(server, syms[i], modifiers);
 			}
 			if (handled) {
 				break;
 			}
+		}
+	} else if (event->state == WL_KEYBOARD_KEY_STATE_RELEASED) {
+		if (server->switcher.active) {
+			switcher_on_modifier_release(server, modifiers);
 		}
 	}
 

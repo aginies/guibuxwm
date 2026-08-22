@@ -124,6 +124,8 @@ bool parse_keybind(struct guibux_server *server, const char *value) {
 		action = GUIBUX_ACT_SNAP_TOP;
 	} else if (!strcmp(action_str, "snap-bottom")) {
 		action = GUIBUX_ACT_SNAP_BOTTOM;
+	} else if (!strcmp(action_str, "show-help")) {
+		action = GUIBUX_ACT_SHOW_HELP;
 	} else {
 		wlr_log(WLR_ERROR, "config: bad keybind '%s' (unknown action '%s')",
 			value, action_str);
