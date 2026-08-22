@@ -120,6 +120,10 @@ bool parse_keybind(struct guibux_server *server, const char *value) {
 		action = GUIBUX_ACT_SNAP_LEFT;
 	} else if (!strcmp(action_str, "snap-right")) {
 		action = GUIBUX_ACT_SNAP_RIGHT;
+	} else if (!strcmp(action_str, "snap-top")) {
+		action = GUIBUX_ACT_SNAP_TOP;
+	} else if (!strcmp(action_str, "snap-bottom")) {
+		action = GUIBUX_ACT_SNAP_BOTTOM;
 	} else {
 		wlr_log(WLR_ERROR, "config: bad keybind '%s' (unknown action '%s')",
 			value, action_str);
