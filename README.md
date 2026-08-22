@@ -9,6 +9,8 @@ Derived from [tinywl](https://gitlab.freedesktop.org/wlroots/wlroots/-/tree/main
 - Tile modes (`Mod+t`): free / left-right split / main+stack, per monitor
 - Command box (`Mod+e`) to launch programs by typing a command, with
   `$PATH` command suggestions (Up/Down to select)
+- Topbar on each monitor: screen number on the left, date and time on the
+  right (updates every second); tiled windows are laid out below it
 - Starts a terminal automatically at launch (default: `alacritty`)
 - Configurable keyboard layout (e.g. French)
 - Multi-monitor support:
@@ -247,12 +249,21 @@ A tile test client used during development lives in `/tmp/opencode/tile-test/`
 for the given mode, closes one window and verifies the re-pack, then
 fullscreens a window and verifies it returns to its tile slot.
 
+`GUIBUX_TEST_TOPBAR=1` verifies the topbars shortly after start (one bar per
+output, screen number matches the left-to-right layout order, non-empty
+date/time string), logging `topbar-test: OK (N outputs)` on success:
+
+```sh
+GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_TOPBAR=1 GUIBUX_TERM=true \
+  WLR_RENDERER=gles2 ./build/guibuxwm
+```
+
 ## Project layout
 
 ```
 meson.build      build definition (wlroots-0.20, freetype2, cairo deps)
 build.sh         builds wlroots 0.20.2 if needed, then the WM
-src/main.c       the whole compositor (~1900 lines, incl. command box and tiling)
+src/main.c       the whole compositor (~2200 lines, incl. command box, topbar and tiling)
 ```
 
 ## License

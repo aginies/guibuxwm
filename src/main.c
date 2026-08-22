@@ -10,6 +10,8 @@
 //   - multi-monitor: new windows open on the output under the cursor,
 //     windows move between monitors with Mod+Shift+Left/Right,
 //     monitor arrangement via GUIBUX_OUTPUTS="NAME@XxY,NAME@XxY"
+//   - topbar per monitor: screen number on the left, date and time on the
+//     right (updates every second)
 //   - keybindings (Mod = Super):
 //       Mod+Return            start a new terminal
 //       Mod+q                 close focused window
@@ -69,6 +71,9 @@
 #define MAX_OUTPUT_PLACEMENTS 8
 #define LAUNCHER_MAX_MATCHES 8
 #define LAUNCHER_MAX_COMMANDS 4096
+#define TOPBAR_H 24
+#define TOPBAR_FONT_PX 14
+#define TOPBAR_PAD 8
 
 struct output_placement {
 	char name[64];
@@ -96,6 +101,10 @@ struct guibux_output {
 	struct guibux_server *server;
 	struct wlr_output *wlr_output;
 	int tile_mode;
+	struct wlr_scene_buffer *topbar_node;
+	struct wlr_buffer *topbar_buffer;
+	int topbar_number;
+	char topbar_right[64];
 	struct wl_listener frame;
 	struct wl_listener request_state;
 	struct wl_listener destroy;
@@ -196,8 +205,12 @@ struct guibux_server {
 	int num_placements;
 
 	struct wl_event_source *tile_test_timer;
+	struct wl_event_source *topbar_timer;
+	struct wl_event_source *topbar_test_timer;
 	struct guibux_launcher launcher;
 };
+
+static void topbar_raise_all(struct guibux_server *server);
 
 static void focus_toplevel(struct guibux_toplevel *toplevel) {
 	if (toplevel == NULL) {
@@ -219,6 +232,7 @@ static void focus_toplevel(struct guibux_toplevel *toplevel) {
 	}
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
 	wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
+	topbar_raise_all(server);
 	wl_list_remove(&toplevel->link);
 	wl_list_insert(&server->toplevels, &toplevel->link);
 	wlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, true);
@@ -770,6 +784,226 @@ static struct guibux_output *guibux_output_for(struct guibux_server *server,
 	return NULL;
 }
 
+// ---------------------------------------------------------------------------
+// Topbar: per-output bar at the top of each monitor, screen number on the
+// left, date and time on the right. reuses the launcher's shm allocator,
+// freetype face and text renderer
+// ---------------------------------------------------------------------------
+
+// width in px of text at the face's current pixel size
+static int guibux_text_width(FT_Face face, const char *text) {
+	int w = 0;
+	for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
+		if (FT_Load_Char(face, *p, FT_LOAD_RENDER) != 0) {
+			continue;
+		}
+		w += face->glyph->advance.x / 64;
+	}
+	return w;
+}
+
+// outputs sorted by layout x (same order as Mod+Shift+Left/Right moves)
+static int outputs_sorted_by_x(struct guibux_server *server,
+		struct wlr_output **sorted, struct wlr_box *boxes, int cap) {
+	int n = 0;
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (n >= cap) {
+			break;
+		}
+		sorted[n] = o->wlr_output;
+		wlr_output_layout_get_box(server->output_layout, sorted[n], &boxes[n]);
+		n++;
+	}
+	for (int i = 1; i < n; i++) {
+		struct wlr_output *so = sorted[i];
+		struct wlr_box sb = boxes[i];
+		int j = i - 1;
+		while (j >= 0 && boxes[j].x > sb.x) {
+			sorted[j + 1] = sorted[j];
+			boxes[j + 1] = boxes[j];
+			j--;
+		}
+		sorted[j + 1] = so;
+		boxes[j + 1] = sb;
+	}
+	return n;
+}
+
+static void topbar_render(struct guibux_output *o) {
+	struct guibux_server *server = o->server;
+	if (o->topbar_buffer == NULL || server->launcher.face == NULL) {
+		return;
+	}
+	void *data;
+	uint32_t format;
+	size_t stride;
+	if (!wlr_buffer_begin_data_ptr_access(o->topbar_buffer,
+			WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &stride)) {
+		wlr_log(WLR_ERROR, "topbar: cannot access buffer data");
+		return;
+	}
+	if (format != DRM_FORMAT_XRGB8888) {
+		wlr_log(WLR_ERROR, "topbar: unexpected buffer format 0x%x", format);
+		wlr_buffer_end_data_ptr_access(o->topbar_buffer);
+		return;
+	}
+
+	int ew, eh;
+	wlr_output_effective_resolution(o->wlr_output, &ew, &eh);
+	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+	int w = ew * scale;
+	int h = TOPBAR_H * scale;
+	cairo_surface_t *cs = cairo_image_surface_create_for_data(
+		data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
+	cairo_t *cr = cairo_create(cs);
+
+	// background + bottom border
+	cairo_set_source_rgb(cr, 0x1e / 255.0, 0x1e / 255.0, 0x2e / 255.0);
+	cairo_paint(cr);
+	cairo_set_source_rgb(cr, 0x45 / 255.0, 0x47 / 255.0, 0x5a / 255.0);
+	cairo_rectangle(cr, 0, h - scale, w, scale);
+	cairo_fill(cr);
+
+	int font_px = TOPBAR_FONT_PX * scale;
+	FT_Set_Pixel_Sizes(server->launcher.face, 0, font_px);
+	int baseline = TOPBAR_H / 2 * scale + font_px * 35 / 100;
+
+	// screen number on the left
+	char left[16];
+	snprintf(left, sizeof(left), "%d", o->topbar_number);
+	launcher_draw_text(cs, server->launcher.face, left,
+		TOPBAR_PAD * scale, baseline, 0xFFFFFF);
+
+	// date and time on the right
+	time_t now = time(NULL);
+	struct tm tm;
+	localtime_r(&now, &tm);
+	strftime(o->topbar_right, sizeof(o->topbar_right),
+		"%a %d %b %Y  %H:%M", &tm);
+	launcher_draw_text(cs, server->launcher.face, o->topbar_right,
+		w - TOPBAR_PAD * scale -
+			guibux_text_width(server->launcher.face, o->topbar_right),
+		baseline, 0xFFFFFF);
+
+	cairo_destroy(cr);
+	cairo_surface_destroy(cs);
+	wlr_buffer_end_data_ptr_access(o->topbar_buffer);
+	// the scene caches the buffer's texture: re-set the buffer so the new
+	// pixels are uploaded, and ask the output for a frame
+	if (o->topbar_node != NULL) {
+		wlr_scene_buffer_set_buffer(o->topbar_node, o->topbar_buffer);
+	}
+	wlr_output_schedule_frame(o->wlr_output);
+}
+
+static void topbar_create(struct guibux_output *o) {
+	struct guibux_server *server = o->server;
+	if (server->launcher.shm_alloc == NULL || server->launcher.face == NULL) {
+		wlr_log(WLR_ERROR, "topbar: disabled on %s (no allocator or font)",
+			o->wlr_output->name ? o->wlr_output->name : "(unknown)");
+		return;
+	}
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+	if (box.width <= 0 || box.height <= 0) {
+		return;
+	}
+	int ew, eh;
+	wlr_output_effective_resolution(o->wlr_output, &ew, &eh);
+	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+
+	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
+	struct wlr_drm_format format = {
+		.format = DRM_FORMAT_XRGB8888,
+		.len = 1,
+		.modifiers = mods,
+	};
+	o->topbar_buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
+		ew * scale, TOPBAR_H * scale, &format);
+	if (o->topbar_buffer == NULL) {
+		wlr_log(WLR_ERROR, "topbar: failed to create buffer on %s",
+			o->wlr_output->name ? o->wlr_output->name : "(unknown)");
+		return;
+	}
+	o->topbar_node = wlr_scene_buffer_create(&server->scene->tree, o->topbar_buffer);
+	wlr_scene_node_set_position(&o->topbar_node->node, box.x, box.y);
+	topbar_render(o);
+}
+
+static void topbar_destroy(struct guibux_output *o) {
+	if (o->topbar_node != NULL) {
+		wlr_scene_node_destroy(&o->topbar_node->node);
+		o->topbar_node = NULL;
+	}
+	if (o->topbar_buffer != NULL) {
+		wlr_buffer_drop(o->topbar_buffer);
+		o->topbar_buffer = NULL;
+	}
+}
+
+// number the outputs 1..n by layout x and re-render the bars
+static void topbar_renumber(struct guibux_server *server) {
+	struct wlr_output *sorted[16];
+	struct wlr_box boxes[16];
+	int n = outputs_sorted_by_x(server, sorted, boxes, 16);
+	for (int i = 0; i < n; i++) {
+		struct guibux_output *o = guibux_output_for(server, sorted[i]);
+		if (o != NULL && o->topbar_buffer != NULL) {
+			o->topbar_number = i + 1;
+			topbar_render(o);
+		}
+	}
+}
+
+// toplevels are raised to top on focus/fullscreen: keep the bars above them
+static void topbar_raise_all(struct guibux_server *server) {
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->topbar_node != NULL) {
+			wlr_scene_node_raise_to_top(&o->topbar_node->node);
+		}
+	}
+}
+
+// 1s tick: refresh the clock on every bar
+static int topbar_tick(void *data) {
+	struct guibux_server *server = data;
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		topbar_render(o);
+	}
+	wl_event_source_timer_update(server->topbar_timer, 1000);
+	return 0;
+}
+
+// test hook: GUIBUX_TEST_TOPBAR=1 verifies the topbars shortly after start
+static int topbar_test_run(void *data) {
+	struct guibux_server *server = data;
+	struct wlr_output *sorted[16];
+	struct wlr_box boxes[16];
+	int n = outputs_sorted_by_x(server, sorted, boxes, 16);
+	for (int i = 0; i < n; i++) {
+		struct guibux_output *o = guibux_output_for(server, sorted[i]);
+		if (o == NULL || o->topbar_buffer == NULL) {
+			wlr_log(WLR_ERROR, "topbar-test: FAIL no buffer on output %d", i + 1);
+			return 0;
+		}
+		if (o->topbar_number != i + 1) {
+			wlr_log(WLR_ERROR, "topbar-test: FAIL number (got %d, want %d)",
+				o->topbar_number, i + 1);
+			return 0;
+		}
+		if (strlen(o->topbar_right) < 10) {
+			wlr_log(WLR_ERROR, "topbar-test: FAIL time string '%s'",
+				o->topbar_right);
+			return 0;
+		}
+	}
+	wlr_log(WLR_INFO, "topbar-test: OK (%d outputs)", n);
+	return 0;
+}
+
 // re-layout all non-fullscreen windows of an output according to its tile
 // mode. window order = focus order (focused window first)
 static void retile_output(struct guibux_output *output) {
@@ -780,6 +1014,12 @@ static void retile_output(struct guibux_output *output) {
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, output->wlr_output, &box);
 	if (box.width <= 0 || box.height <= 0) {
+		return;
+	}
+	// windows tile below the topbar
+	box.y += TOPBAR_H;
+	box.height -= TOPBAR_H;
+	if (box.height <= 0) {
 		return;
 	}
 
@@ -873,6 +1113,7 @@ static void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen) {
 			wlr_xdg_toplevel_set_size(xdg_toplevel, ew, eh);
 		}
 		wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
+		topbar_raise_all(server);
 	} else {
 		wlr_scene_node_set_position(&toplevel->scene_tree->node,
 			toplevel->saved_x, toplevel->saved_y);
@@ -1375,6 +1616,10 @@ static void output_request_state(struct wl_listener *listener, void *data) {
 
 static void output_destroy(struct wl_listener *listener, void *data) {
 	struct guibux_output *output = wl_container_of(listener, output, destroy);
+	struct guibux_server *server = output->server;
+
+	topbar_destroy(output);
+	topbar_renumber(server);
 
 	wl_list_remove(&output->frame.link);
 	wl_list_remove(&output->request_state.link);
@@ -1457,6 +1702,8 @@ static void server_new_output(struct wl_listener *listener, void *data) {
 	} else {
 		wlr_scene_output_layout_add_output(server->scene_layout, l_output, scene_output);
 	}
+	topbar_create(output);
+	topbar_renumber(server);
 }
 
 static void place_toplevel(struct guibux_toplevel *toplevel) {
@@ -1902,6 +2149,21 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.tile_test_timer, 500);
 	}
 
+	// topbar clock: refresh the date/time on every bar once per second
+	server.topbar_timer = wl_event_loop_add_timer(
+		wl_display_get_event_loop(server.wl_display),
+		topbar_tick, &server);
+	wl_event_source_timer_update(server.topbar_timer, 1000);
+
+	// test hook: GUIBUX_TEST_TOPBAR verifies the topbars shortly after start
+	const char *topbar_test = getenv("GUIBUX_TEST_TOPBAR");
+	if (topbar_test != NULL) {
+		server.topbar_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			topbar_test_run, &server);
+		wl_event_source_timer_update(server.topbar_test_timer, 500);
+	}
+
 	spawn_terminal(&server);
 
 	wlr_log(WLR_INFO, "guibuxwm running on WAYLAND_DISPLAY=%s", socket);
@@ -1924,6 +2186,13 @@ int main(int argc, char *argv[]) {
 	wl_list_remove(&server.request_set_selection.link);
 
 	wl_list_remove(&server.new_output.link);
+
+	if (server.topbar_timer != NULL) {
+		wl_event_source_remove(server.topbar_timer);
+	}
+	if (server.topbar_test_timer != NULL) {
+		wl_event_source_remove(server.topbar_test_timer);
+	}
 
 	launcher_hide(&server);
 	launcher_free_commands(&server.launcher);
