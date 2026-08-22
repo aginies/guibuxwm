@@ -6,7 +6,8 @@ Derived from [tinywl](https://gitlab.freedesktop.org/wlroots/wlroots/-/tree/main
 ## Features
 
 - xdg-shell application windows: focus, move, resize, fullscreen
-- Command box (`Mod+e`) to launch programs by typing a command
+- Command box (`Mod+e`) to launch programs by typing a command, with
+  `$PATH` command suggestions (Up/Down to select)
 - Starts a terminal automatically at launch (default: `alacritty`)
 - Configurable keyboard layout (e.g. French)
 - Multi-monitor support:
@@ -81,6 +82,12 @@ Opens an input box centered on the monitor under the cursor. Type a command
 and press Enter to run it via `/bin/sh -c` (so pipes, redirections and
 environment variables work). Escape or a mouse click dismisses it without
 running anything.
+
+As you type, matching commands from `$PATH` are listed below the input line
+(up to 8, exact matches first). Navigate with Up/Down; Enter runs the
+selected command, with any arguments you typed after the first word appended
+(e.g. type `alac -w`, select `alacritty`, Enter runs `alacritty -w`). With
+no match, Enter runs exactly what you typed.
 
 ## Configuration
 

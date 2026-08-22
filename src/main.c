@@ -27,14 +27,17 @@
 
 #include <assert.h>
 #include <cairo.h>
+#include <dirent.h>
 #include <drm_fourcc.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include <getopt.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 #include <wayland-server-core.h>
@@ -63,6 +66,8 @@
 #define CASCADE_STEP 40
 #define CASCADE_MAX 6
 #define MAX_OUTPUT_PLACEMENTS 8
+#define LAUNCHER_MAX_MATCHES 8
+#define LAUNCHER_MAX_COMMANDS 4096
 
 struct output_placement {
 	char name[64];
@@ -132,6 +137,11 @@ struct guibux_launcher {
 	FT_Library ft;
 	FT_Face face;
 	struct wl_event_source *test_timer;
+	char **commands;
+	int num_commands;
+	char *matches[LAUNCHER_MAX_MATCHES];
+	int num_matches;
+	int selection;
 };
 
 struct guibux_server {
@@ -245,6 +255,7 @@ struct wlr_allocator *wlr_shm_allocator_create(void);
 #define LAUNCHER_BOX_W 480
 #define LAUNCHER_BOX_H 40
 #define LAUNCHER_FONT_PX 20
+#define LAUNCHER_LINE_H 28
 
 static const char *launcher_font_candidates[] = {
 	"/usr/share/fonts/truetype/LiberationMono-Regular.ttf",
@@ -271,9 +282,122 @@ static bool launcher_init_font(struct guibux_server *server) {
 	return false;
 }
 
-// draw text in white on an RGB24 cairo surface, returns width in px
+// collect executable names from $PATH (deduplicated, capped). called once at
+// startup; on failure the launcher simply has no candidates
+static void launcher_load_commands(struct guibux_launcher *l) {
+	const char *path = getenv("PATH");
+	if (path == NULL) {
+		return;
+	}
+	char *copy = strdup(path);
+	if (copy == NULL) {
+		return;
+	}
+	l->commands = calloc(1024, sizeof(char *));
+	if (l->commands == NULL) {
+		free(copy);
+		return;
+	}
+	int cap = 1024;
+	char *save = NULL;
+	for (char *dir = strtok_r(copy, ":", &save); dir != NULL;
+			dir = strtok_r(NULL, ":", &save)) {
+		if (*dir == '\0' || l->num_commands >= LAUNCHER_MAX_COMMANDS) {
+			break;
+		}
+		DIR *d = opendir(dir);
+		if (d == NULL) {
+			continue;
+		}
+		struct dirent *e;
+		while ((e = readdir(d)) != NULL) {
+			char full[PATH_MAX];
+			snprintf(full, sizeof(full), "%s/%s", dir, e->d_name);
+			struct stat st;
+			if (stat(full, &st) != 0 || !S_ISREG(st.st_mode)) {
+				continue;
+			}
+			if (access(full, X_OK) != 0) {
+				continue;
+			}
+			bool dup = false;
+			for (int i = 0; i < l->num_commands; i++) {
+				if (strcmp(l->commands[i], e->d_name) == 0) {
+					dup = true;
+					break;
+				}
+			}
+			if (dup) {
+				continue;
+			}
+			if (l->num_commands == cap) {
+				cap *= 2;
+				char **tmp = realloc(l->commands, (size_t)cap * sizeof(char *));
+				if (tmp == NULL) {
+					break;
+				}
+				l->commands = tmp;
+			}
+			l->commands[l->num_commands++] = strdup(e->d_name);
+			if (l->commands[l->num_commands - 1] == NULL) {
+				l->num_commands--;
+				break;
+			}
+		}
+		closedir(d);
+		if (l->num_commands >= LAUNCHER_MAX_COMMANDS) {
+			break;
+		}
+	}
+	free(copy);
+	wlr_log(WLR_INFO, "launcher: %d commands from $PATH", l->num_commands);
+}
+
+static void launcher_free_commands(struct guibux_launcher *l) {
+	for (int i = 0; i < l->num_commands; i++) {
+		free(l->commands[i]);
+	}
+	free(l->commands);
+	l->commands = NULL;
+	l->num_commands = 0;
+}
+
+// match the first word of the input against the command list
+// (case-insensitive); exact matches first, then substring matches.
+// results in l->matches, selection reset
+static void launcher_filter(struct guibux_launcher *l) {
+	l->num_matches = 0;
+	l->selection = 0;
+	if (l->text[0] == '\0' || l->num_commands == 0) {
+		return;
+	}
+	char first[128];
+	int n = 0;
+	for (const char *p = l->text;
+			*p != '\0' && *p != ' ' && n < (int)sizeof(first) - 1; p++) {
+		first[n++] = *p;
+	}
+	first[n] = '\0';
+	if (first[0] == '\0') {
+		return;
+	}
+	for (int pass = 0; pass < 2 &&
+			l->num_matches < LAUNCHER_MAX_MATCHES; pass++) {
+		for (int i = 0; i < l->num_commands &&
+				l->num_matches < LAUNCHER_MAX_MATCHES; i++) {
+			bool exact = strcasecmp(l->commands[i], first) == 0;
+			bool sub = strcasestr(l->commands[i], first) != NULL;
+			if ((pass == 0 && exact) || (pass == 1 && sub && !exact)) {
+				l->matches[l->num_matches++] = l->commands[i];
+			}
+		}
+	}
+}
+
+// draw text in the given 0xRRGGBB color on an RGB24 cairo surface,
+// returns width in px
 static int launcher_draw_text(cairo_surface_t *cs, FT_Face face,
-		const char *text, int x, int baseline) {
+		const char *text, int x, int baseline, uint32_t color) {
 	uint32_t *data = (uint32_t *)cairo_image_surface_get_data(cs);
 	int stride = cairo_image_surface_get_stride(cs) / 4;
 	int sw = cairo_image_surface_get_width(cs);
@@ -299,12 +423,15 @@ static int launcher_draw_text(cairo_surface_t *cs, FT_Face face,
 					continue;
 				}
 				uint32_t *dst = &data[py * stride + px];
-				uint8_t r = (*dst >> 16) & 0xFF;
-				uint8_t gg = (*dst >> 8) & 0xFF;
-				uint8_t b = *dst & 0xFF;
-				r = (255 * a + r * (255 - a)) / 255;
-				gg = (255 * a + gg * (255 - a)) / 255;
-				b = (255 * a + b * (255 - a)) / 255;
+				uint8_t r = (color >> 16) & 0xFF;
+				uint8_t gg = (color >> 8) & 0xFF;
+				uint8_t b = color & 0xFF;
+				uint8_t dr = (*dst >> 16) & 0xFF;
+				uint8_t dg = (*dst >> 8) & 0xFF;
+				uint8_t db = *dst & 0xFF;
+				r = (r * a + dr * (255 - a)) / 255;
+				gg = (gg * a + dg * (255 - a)) / 255;
+				b = (b * a + db * (255 - a)) / 255;
 				*dst = (r << 16) | (gg << 8) | b;
 			}
 		}
@@ -348,19 +475,33 @@ static void launcher_render(struct guibux_server *server) {
 		w - l->box_scale, h - l->box_scale);
 	cairo_stroke(cr);
 
-	// prompt + text + cursor
+	// prompt + text + cursor (input line = top LAUNCHER_BOX_H px)
 	int font_px = LAUNCHER_FONT_PX * l->box_scale;
 	FT_Set_Pixel_Sizes(l->face, 0, font_px);
 	int pad = 12 * l->box_scale;
-	int baseline = h / 2 + font_px * 35 / 100;
+	int baseline = LAUNCHER_BOX_H / 2 * l->box_scale + font_px * 35 / 100;
 	int x = pad;
-	x += launcher_draw_text(cs, l->face, "$ ", x, baseline)
+	x += launcher_draw_text(cs, l->face, "$ ", x, baseline, 0xFFFFFF)
 		+ 4 * l->box_scale;
-	x += launcher_draw_text(cs, l->face, l->text, x, baseline);
+	x += launcher_draw_text(cs, l->face, l->text, x, baseline, 0xFFFFFF);
 	cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
 	cairo_rectangle(cr, x + 2 * l->box_scale, baseline - font_px * 7 / 10,
 		font_px / 2, font_px * 8 / 10);
 	cairo_fill(cr);
+
+	// candidate list below the input line
+	for (int i = 0; i < l->num_matches; i++) {
+		int ly = (LAUNCHER_BOX_H + i * LAUNCHER_LINE_H) * l->box_scale;
+		int lh = LAUNCHER_LINE_H * l->box_scale;
+		if (i == l->selection) {
+			cairo_set_source_rgb(cr, 0x3a / 255.0, 0x3c / 255.0, 0x55 / 255.0);
+			cairo_rectangle(cr, l->box_scale, ly, w - 2 * l->box_scale, lh);
+			cairo_fill(cr);
+		}
+		int mb = ly + lh / 2 + font_px * 35 / 100;
+		uint32_t mc = (i == l->selection) ? 0xFFFFFF : 0x8888AA;
+		launcher_draw_text(cs, l->face, l->matches[i], pad, mb, mc);
+	}
 
 	cairo_destroy(cr);
 	cairo_surface_destroy(cs);
@@ -375,18 +516,17 @@ static void launcher_render(struct guibux_server *server) {
 	}
 }
 
-static void launcher_spawn(struct guibux_server *server) {
-	struct guibux_launcher *l = &server->launcher;
+static void launcher_spawn(struct guibux_server *server, const char *cmd) {
 	pid_t pid = fork();
 	if (pid < 0) {
 		wlr_log(WLR_ERROR, "launcher: fork failed: %m");
 		return;
 	}
 	if (pid == 0) {
-		execl("/bin/sh", "/bin/sh", "-c", l->text, (void *)NULL);
+		execl("/bin/sh", "/bin/sh", "-c", cmd, (void *)NULL);
 		_exit(127);
 	}
-	wlr_log(WLR_INFO, "launcher: running '%s' (pid %d)", l->text, pid);
+	wlr_log(WLR_INFO, "launcher: running '%s' (pid %d)", cmd, pid);
 }
 
 void launcher_show(struct guibux_server *server) {
@@ -410,7 +550,7 @@ void launcher_show(struct guibux_server *server) {
 		bw = ew - 20;
 	}
 	l->box_w = bw;
-	l->box_h = LAUNCHER_BOX_H;
+	l->box_h = LAUNCHER_BOX_H + LAUNCHER_MAX_MATCHES * LAUNCHER_LINE_H;
 	l->box_scale = scale;
 	l->output = output;
 
@@ -422,17 +562,19 @@ void launcher_show(struct guibux_server *server) {
 	};
 	// shm allocator: gbm/udmabuf buffers do not support data_ptr access
 	l->buffer = wlr_allocator_create_buffer(l->shm_alloc,
-		bw * scale, LAUNCHER_BOX_H * scale, &format);
+		bw * scale, l->box_h * scale, &format);
 	if (l->buffer == NULL) {
 		wlr_log(WLR_ERROR, "launcher: failed to create buffer");
 		return;
 	}
 	l->scene_node = wlr_scene_buffer_create(&server->scene->tree, l->buffer);
 	wlr_scene_node_set_position(&l->scene_node->node,
-		box.x + (ew - bw) / 2, box.y + (eh - LAUNCHER_BOX_H) / 2);
+		box.x + (ew - bw) / 2, box.y + (eh - l->box_h) / 2);
 
 	l->text[0] = '\0';
 	l->text_len = 0;
+	l->num_matches = 0;
+	l->selection = 0;
 	l->active = true;
 	wlr_log(WLR_INFO, "launcher: shown");
 	launcher_render(server);
@@ -466,15 +608,38 @@ bool launcher_handle_key(struct guibux_server *server, xkb_keysym_t sym) {
 		launcher_hide(server);
 		return true;
 	case XKB_KEY_Return:
-	case XKB_KEY_KP_Enter:
-		if (l->text_len > 0) {
-			launcher_spawn(server);
+	case XKB_KEY_KP_Enter: {
+		char cmd[512];
+		if (l->num_matches > 0 && l->selection < l->num_matches) {
+			// selected candidate + args typed after the first word
+			const char *space = strchr(l->text, ' ');
+			if (space != NULL) {
+				snprintf(cmd, sizeof(cmd), "%s%s",
+					l->matches[l->selection], space);
+			} else {
+				snprintf(cmd, sizeof(cmd), "%s", l->matches[l->selection]);
+			}
+		} else {
+			snprintf(cmd, sizeof(cmd), "%s", l->text);
+		}
+		if (cmd[0] != '\0') {
+			launcher_spawn(server, cmd);
 		}
 		launcher_hide(server);
+		return true;
+	}
+	case XKB_KEY_Up:
+	case XKB_KEY_Down:
+		if (l->num_matches > 0) {
+			l->selection = (l->selection + (sym == XKB_KEY_Down ? 1 :
+				l->num_matches - 1)) % l->num_matches;
+			launcher_render(server);
+		}
 		return true;
 	case XKB_KEY_BackSpace:
 		if (l->text_len > 0) {
 			l->text[--l->text_len] = '\0';
+			launcher_filter(l);
 			launcher_render(server);
 		}
 		return true;
@@ -495,6 +660,7 @@ bool launcher_handle_key(struct guibux_server *server, xkb_keysym_t sym) {
 	if (c != 0 && l->text_len < (int)sizeof(l->text) - 1) {
 		l->text[l->text_len++] = (char)c;
 		l->text[l->text_len] = '\0';
+		launcher_filter(l);
 		launcher_render(server);
 	}
 	return true;
@@ -509,6 +675,7 @@ static void launcher_init(struct guibux_server *server) {
 		wlr_log(WLR_ERROR, "launcher: disabled (no shm allocator)");
 		return;
 	}
+	launcher_load_commands(l);
 	if (!launcher_init_font(server)) {
 		wlr_log(WLR_ERROR, "launcher: disabled (no font)");
 	}
@@ -533,6 +700,13 @@ static int launcher_test_run(void *data) {
 		wlr_log(WLR_ERROR, "launcher-test: FAIL typing (got '%s')", l->text);
 		return 0;
 	}
+	if (l->num_matches < 1) {
+		wlr_log(WLR_ERROR, "launcher-test: FAIL matches "
+			"(num_matches=%d, commands=%d)", l->num_matches, l->num_commands);
+		return 0;
+	}
+	wlr_log(WLR_INFO, "launcher-test: MATCHES OK (%d matches, selected '%s')",
+		l->num_matches, l->matches[l->selection]);
 	launcher_handle_key(server, XKB_KEY_Return);
 	if (l->active) {
 		wlr_log(WLR_ERROR, "launcher-test: FAIL enter (still active)");
@@ -1585,6 +1759,7 @@ int main(int argc, char *argv[]) {
 	wl_list_remove(&server.new_output.link);
 
 	launcher_hide(&server);
+	launcher_free_commands(&server.launcher);
 	wlr_scene_node_destroy(&server.scene->tree.node);
 	wlr_xcursor_manager_destroy(server.cursor_mgr);
 	wlr_cursor_destroy(server.cursor);
