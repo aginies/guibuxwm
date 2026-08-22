@@ -1,7 +1,10 @@
 project('guibuxwm', 'c',
   version: '0.1.0',
-  default_options: ['c_std=gnu11', 'warning_level=2'],
+  default_options: ['c_std=gnu11', 'warning_level=2', 'buildtype=release', 'install_strip=true'],
 )
+
+add_project_arguments('-ffunction-sections', '-fdata-sections', language: 'c')
+add_project_link_arguments('-Wl,--gc-sections', language: 'c')
 
 wlroots_dep = dependency('wlroots-0.20')
 wayland_dep = dependency('wayland-server')

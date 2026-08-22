@@ -36,7 +36,7 @@ void focus_toplevel(struct guibux_toplevel *toplevel) {
 	struct guibux_output *fo = guibux_output_for(server,
 		toplevel_output_for(toplevel));
 	if (fo)
-		topbar_render(fo);
+		topbar_mark_dirty(fo);
 }
 
 // ---------------------------------------------------------------------------
@@ -175,7 +175,7 @@ void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	struct guibux_output *o2 = guibux_output_for(toplevel->server,
 		toplevel_output_for(toplevel));
 	if (o2)
-		topbar_render(o2);
+		topbar_mark_dirty(o2);
 }
 
 void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
@@ -192,7 +192,7 @@ void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
 		retile_output(o);
 	}
-	topbar_render(o);
+	topbar_mark_dirty(o);
 
 	if (!wl_list_empty(&server->toplevels)) {
 		struct guibux_toplevel *next =
@@ -235,7 +235,7 @@ void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	struct guibux_output *fo = guibux_output_for(toplevel->server,
 		toplevel_output_for(toplevel));
 	if (fo)
-		topbar_render(fo);
+		topbar_mark_dirty(fo);
 
 	free(toplevel);
 }

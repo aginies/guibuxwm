@@ -76,6 +76,10 @@ enum guibux_action {
 	GUIBUX_ACT_MOVE_MON_RIGHT,
 	GUIBUX_ACT_SNAP_LEFT,
 	GUIBUX_ACT_SNAP_RIGHT,
+	GUIBUX_ACT_SNAP_TOP,
+	GUIBUX_ACT_SNAP_BOTTOM,
+	GUIBUX_ACT_SWITCH_WS_LEFT,
+	GUIBUX_ACT_SWITCH_WS_RIGHT,
 };
 
 struct guibux_keybind {
@@ -98,6 +102,7 @@ struct guibux_sysinfo {
 void sysinfo_init(struct guibux_server *server);
 void sysinfo_destroy(struct guibux_server *server);
 void sysinfo_update(struct guibux_sysinfo *si);
+int sysinfo_tick(void *data);
 struct guibux_toplevel;
 
 // declared in wlr/render/allocator/shm.h (not installed with our wlroots build)
@@ -111,6 +116,7 @@ struct guibux_output {
 	int current_workspace;
 	struct wlr_scene_buffer *topbar_node;
 	struct wlr_buffer *topbar_buffer;
+	int topbar_buffer_w, topbar_buffer_h;
 	int topbar_number;
     char topbar_right[64];
     char topbar_network[64];
@@ -127,6 +133,7 @@ struct guibux_output {
 	int topbar_win_w[TOPBAR_WIN_MAX];
 	char topbar_win_titles[TOPBAR_WIN_MAX][64];
 	int topbar_win_count;
+	bool topbar_dirty;
 	struct wl_listener frame;
 	struct wl_listener request_state;
 	struct wl_listener destroy;
@@ -236,6 +243,7 @@ struct guibux_server {
 
 	struct wl_event_source *tile_test_timer;
 	struct wl_event_source *topbar_timer;
+	struct wl_event_source *sysinfo_timer;
 	struct wl_event_source *topbar_test_timer;
 	struct wl_event_source *workspace_test_timer;
 	struct wl_event_source *keybind_test_timer;
@@ -289,9 +297,12 @@ void move_toplevel_to_output(struct guibux_toplevel *toplevel, struct wlr_output
 void move_toplevel_to_adjacent_output(struct guibux_server *server, struct guibux_toplevel *toplevel, int dir);
 void snap_toplevel_left(struct guibux_toplevel *toplevel);
 void snap_toplevel_right(struct guibux_toplevel *toplevel);
+void snap_toplevel_top(struct guibux_toplevel *toplevel);
+void snap_toplevel_bottom(struct guibux_toplevel *toplevel);
 
 /* topbar.c */
 void topbar_render(struct guibux_output *o);
+void topbar_mark_dirty(struct guibux_output *o);
 bool topbar_workspace_at(struct guibux_server *server, double lx, double ly, struct guibux_output **output, int *ws);
 int topbar_tick(void *data);
 int topbar_test_run(void *data);

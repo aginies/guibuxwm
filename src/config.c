@@ -112,6 +112,10 @@ bool parse_keybind(struct guibux_server *server, const char *value) {
 		action = GUIBUX_ACT_MOVE_MON_LEFT;
 	} else if (!strcmp(action_str, "move-monitor-right")) {
 		action = GUIBUX_ACT_MOVE_MON_RIGHT;
+	} else if (!strcmp(action_str, "switch-ws-left")) {
+		action = GUIBUX_ACT_SWITCH_WS_LEFT;
+	} else if (!strcmp(action_str, "switch-ws-right")) {
+		action = GUIBUX_ACT_SWITCH_WS_RIGHT;
 	} else if (!strcmp(action_str, "snap-left")) {
 		action = GUIBUX_ACT_SNAP_LEFT;
 	} else if (!strcmp(action_str, "snap-right")) {

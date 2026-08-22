@@ -135,7 +135,7 @@ void switch_workspace(struct guibux_output *output, int ws) {
 			clear_keyboard_focus(server);
 		}
 	}
-	topbar_render(output);
+	topbar_mark_dirty(output);
 }
 
 void move_toplevel_to_workspace(struct guibux_toplevel *toplevel, int ws) {
@@ -151,7 +151,7 @@ void move_toplevel_to_workspace(struct guibux_toplevel *toplevel, int ws) {
 		o != NULL && ws == o->current_workspace);
 	if (o != NULL) {
 		retile_output(o);
-		topbar_render(o);
+		topbar_mark_dirty(o);
 	}
 }
 
@@ -264,19 +264,11 @@ void snap_toplevel_left(struct guibux_toplevel *toplevel) {
 	if (toplevel->is_fullscreen) {
 		set_fullscreen(toplevel, false);
 	}
-	int h = toplevel->xdg_toplevel->current.height > 0 ? toplevel->xdg_toplevel->current.height : 600;
-	int rx = 0;
-	int ry = (box.height - TOPBAR_H - h) / 2;
-	if (ry < 0) {
-		ry = 0;
-	}
+	int w = box.width / 2;
+	int h = box.height - TOPBAR_H;
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
-		box.x + rx, box.y + TOPBAR_H + ry);
-	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, box.width / 2, h);
-	struct guibux_output *o = guibux_output_for(server, output);
-	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
-		retile_output(o);
-	}
+		box.x, box.y + TOPBAR_H);
+	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, w, h);
 }
 
 void snap_toplevel_right(struct guibux_toplevel *toplevel) {
@@ -290,17 +282,47 @@ void snap_toplevel_right(struct guibux_toplevel *toplevel) {
 	if (toplevel->is_fullscreen) {
 		set_fullscreen(toplevel, false);
 	}
-	int h = toplevel->xdg_toplevel->current.height > 0 ? toplevel->xdg_toplevel->current.height : 600;
 	int rx = box.width / 2;
-	int ry = (box.height - TOPBAR_H - h) / 2;
-	if (ry < 0) {
-		ry = 0;
-	}
+	int w = box.width - box.width / 2;
+	int h = box.height - TOPBAR_H;
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
-		box.x + rx, box.y + TOPBAR_H + ry);
-	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, box.width - box.width / 2, h);
-	struct guibux_output *o = guibux_output_for(server, output);
-	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
-		retile_output(o);
+		box.x + rx, box.y + TOPBAR_H);
+	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, w, h);
+}
+
+void snap_toplevel_top(struct guibux_toplevel *toplevel) {
+	struct guibux_server *server = toplevel->server;
+	struct wlr_output *output = toplevel_output_for(toplevel);
+	if (output == NULL) {
+		return;
 	}
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, output, &box);
+	if (toplevel->is_fullscreen) {
+		set_fullscreen(toplevel, false);
+	}
+	int w = box.width;
+	int h = (box.height - TOPBAR_H) / 2;
+	wlr_scene_node_set_position(&toplevel->scene_tree->node,
+		box.x, box.y + TOPBAR_H);
+	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, w, h);
+}
+
+void snap_toplevel_bottom(struct guibux_toplevel *toplevel) {
+	struct guibux_server *server = toplevel->server;
+	struct wlr_output *output = toplevel_output_for(toplevel);
+	if (output == NULL) {
+		return;
+	}
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, output, &box);
+	if (toplevel->is_fullscreen) {
+		set_fullscreen(toplevel, false);
+	}
+	int w = box.width;
+	int h = (box.height - TOPBAR_H) - (box.height - TOPBAR_H) / 2;
+	int ry = TOPBAR_H + (box.height - TOPBAR_H) / 2;
+	wlr_scene_node_set_position(&toplevel->scene_tree->node,
+		box.x, box.y + ry);
+	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, w, h);
 }

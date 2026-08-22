@@ -78,10 +78,8 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 			if (t == toplevel) {
 				continue;
 			}
-			if (toplevel_visible(t)) {
-				next = t;
-				break;
-			}
+			next = t;
+			break;
 		}
 		if (next != NULL) {
 			focus_toplevel(next);
@@ -92,8 +90,10 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 		wl_display_terminate(server->wl_display);
 		break;
 	case GUIBUX_ACT_SWITCH_WS: {
-		struct wlr_output *out = toplevel != NULL
-			? toplevel_output_for(toplevel) : output_at_cursor(server);
+		struct wlr_output *out = output_at_cursor(server);
+		if (out == NULL && toplevel != NULL) {
+			out = toplevel_output_for(toplevel);
+		}
 		struct guibux_output *o = out != NULL
 			? guibux_output_for(server, out) : NULL;
 		if (o != NULL) {
@@ -126,6 +126,44 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 			snap_toplevel_right(toplevel);
 		}
 		break;
+	case GUIBUX_ACT_SNAP_TOP:
+		if (toplevel != NULL) {
+			snap_toplevel_top(toplevel);
+		}
+		break;
+	case GUIBUX_ACT_SNAP_BOTTOM:
+		if (toplevel != NULL) {
+			snap_toplevel_bottom(toplevel);
+		}
+		break;
+	case GUIBUX_ACT_SWITCH_WS_LEFT: {
+		struct wlr_output *out = output_at_cursor(server);
+		if (out == NULL && toplevel != NULL) {
+			out = toplevel_output_for(toplevel);
+		}
+		struct guibux_output *o = out != NULL
+			? guibux_output_for(server, out) : NULL;
+		if (o != NULL) {
+			int ws = o->current_workspace - 1;
+			if (ws < 1) ws = NUM_WORKSPACES;
+			switch_workspace(o, ws);
+		}
+		break;
+	}
+	case GUIBUX_ACT_SWITCH_WS_RIGHT: {
+		struct wlr_output *out = output_at_cursor(server);
+		if (out == NULL && toplevel != NULL) {
+			out = toplevel_output_for(toplevel);
+		}
+		struct guibux_output *o = out != NULL
+			? guibux_output_for(server, out) : NULL;
+		if (o != NULL) {
+			int ws = o->current_workspace + 1;
+			if (ws > NUM_WORKSPACES) ws = 1;
+			switch_workspace(o, ws);
+		}
+		break;
+	}
 	}
 }
 
@@ -180,6 +218,14 @@ void keybinds_defaults(struct guibux_server *server) {
 		GUIBUX_ACT_SNAP_RIGHT, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_Up,
 		GUIBUX_ACT_FULLSCREEN, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_CTRL, XKB_KEY_Left,
+		GUIBUX_ACT_SWITCH_WS_LEFT, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_CTRL, XKB_KEY_Right,
+		GUIBUX_ACT_SWITCH_WS_RIGHT, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_CTRL | WLR_MODIFIER_SHIFT, XKB_KEY_Up,
+		GUIBUX_ACT_SNAP_TOP, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_CTRL | WLR_MODIFIER_SHIFT, XKB_KEY_Down,
+		GUIBUX_ACT_SNAP_BOTTOM, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_SHIFT, XKB_KEY_q,
 		GUIBUX_ACT_QUIT, 0);
 }

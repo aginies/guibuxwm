@@ -121,6 +121,12 @@ void server_new_output(struct wl_listener *listener, void *data) {
 		}
 	}
 
+	if (server->num_placements > 0 && placement == NULL) {
+		wlr_log(WLR_INFO, "%s: not in GUIBUX_OUTPUTS, disabling", wlr_output->name);
+		wlr_output_destroy(wlr_output);
+		return;
+	}
+
 	struct wlr_output_state state;
 	wlr_output_state_init(&state);
 	wlr_output_state_set_enabled(&state, true);

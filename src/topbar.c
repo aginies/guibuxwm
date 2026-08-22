@@ -7,13 +7,38 @@
 #include <wlr/types/wlr_buffer.h>
 
 // width in px of text at the face's current pixel size
+// cache: store advance width per char for current font size
+static int char_width_cache[256];
+static bool char_width_cache_valid = false;
+static int char_width_cache_size = -1;
+
+static void invalidate_char_width_cache(void) {
+	char_width_cache_valid = false;
+	char_width_cache_size = -1;
+}
+
+static int char_advance_width(FT_Face face, unsigned char c, int font_size) {
+	if (font_size != char_width_cache_size) {
+		invalidate_char_width_cache();
+		char_width_cache_size = font_size;
+	}
+	if (char_width_cache_valid && char_width_cache[c] != 0) {
+		return char_width_cache[c];
+	}
+	if (FT_Load_Char(face, c, FT_LOAD_RENDER) != 0) {
+		return 0;
+	}
+	int w = face->glyph->advance.x / 64;
+	char_width_cache[c] = w;
+	char_width_cache_valid = true;
+	return w;
+}
+
 int guibux_text_width(FT_Face face, const char *text) {
 	int w = 0;
+	int font_size = face->size->metrics.height / 64;
 	for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
-		if (FT_Load_Char(face, *p, FT_LOAD_RENDER) != 0) {
-			continue;
-		}
-		w += face->glyph->advance.x / 64;
+		w += char_advance_width(face, *p, font_size);
 	}
 	return w;
 }
@@ -72,6 +97,41 @@ void topbar_render(struct guibux_output *o) {
 	if (o->topbar_buffer == NULL || server->launcher.face == NULL) {
 		return;
 	}
+	if (!o->topbar_dirty) {
+		return;
+	}
+	o->topbar_dirty = false;
+
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+	int w = box.width;
+	int h = TOPBAR_H * scale;
+
+	/* resize buffer if output dimensions changed */
+	if (o->topbar_buffer_w != w || o->topbar_buffer_h != h) {
+		wlr_buffer_drop(o->topbar_buffer);
+		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
+		struct wlr_drm_format format = {
+			.format = DRM_FORMAT_XRGB8888,
+			.len = 1,
+			.modifiers = mods,
+		};
+		o->topbar_buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
+			w, h, &format);
+		if (o->topbar_buffer == NULL) {
+			wlr_log(WLR_ERROR, "topbar: failed to recreate buffer on %s",
+				o->wlr_output->name ? o->wlr_output->name : "(unknown)");
+			return;
+		}
+		o->topbar_buffer_w = w;
+		o->topbar_buffer_h = h;
+		if (o->topbar_node != NULL) {
+			wlr_scene_buffer_set_buffer(o->topbar_node, o->topbar_buffer);
+		}
+		wlr_scene_node_set_position(&o->topbar_node->node, box.x, box.y);
+	}
+
 	void *data;
 	uint32_t format;
 	size_t stride;
@@ -86,11 +146,6 @@ void topbar_render(struct guibux_output *o) {
 		return;
 	}
 
-	int ew, eh;
-	wlr_output_effective_resolution(o->wlr_output, &ew, &eh);
-	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
-	int w = ew * scale;
-	int h = TOPBAR_H * scale;
 	cairo_surface_t *cs = cairo_image_surface_create_for_data(
 		data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
 	cairo_t *cr = cairo_create(cs);
@@ -165,7 +220,7 @@ void topbar_render(struct guibux_output *o) {
 	struct guibux_toplevel *wins[TOPBAR_WIN_MAX];
 	int nwins = 0;
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->is_fullscreen || !toplevel_visible(t))
+		if (t->is_fullscreen)
 			continue;
 		if (toplevel_output_for(t) != o->wlr_output)
 			continue;
@@ -190,7 +245,6 @@ void topbar_render(struct guibux_output *o) {
 		"%a %d %b %Y  %H:%M", &tm);
 
 	/* update sysinfo */
-	sysinfo_update(&o->server->sysinfo);
 
 	/* calculate indicator width */
 	int ind_w = 0;
@@ -321,6 +375,12 @@ void topbar_render(struct guibux_output *o) {
 	wlr_output_schedule_frame(o->wlr_output);
 }
 
+void topbar_mark_dirty(struct guibux_output *o) {
+	if (o != NULL) {
+		o->topbar_dirty = true;
+	}
+}
+
 struct guibux_toplevel *topbar_win_at(struct guibux_output *o,
 		double lx, double ly) {
 	struct guibux_server *server = o->server;
@@ -336,7 +396,7 @@ struct guibux_toplevel *topbar_win_at(struct guibux_output *o,
 	int nwins = 0;
 	struct guibux_toplevel *t;
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->is_fullscreen || !toplevel_visible(t))
+		if (t->is_fullscreen)
 			continue;
 		if (toplevel_output_for(t) != o->wlr_output)
 			continue;
@@ -416,8 +476,6 @@ void topbar_create(struct guibux_output *o) {
 	if (box.width <= 0 || box.height <= 0) {
 		return;
 	}
-	int ew, eh;
-	wlr_output_effective_resolution(o->wlr_output, &ew, &eh);
 	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
 
 	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
@@ -427,14 +485,17 @@ void topbar_create(struct guibux_output *o) {
 		.modifiers = mods,
 	};
 	o->topbar_buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-		ew * scale, TOPBAR_H * scale, &format);
+		box.width, TOPBAR_H * scale, &format);
 	if (o->topbar_buffer == NULL) {
 		wlr_log(WLR_ERROR, "topbar: failed to create buffer on %s",
 			o->wlr_output->name ? o->wlr_output->name : "(unknown)");
 		return;
 	}
+	o->topbar_buffer_w = box.width;
+	o->topbar_buffer_h = TOPBAR_H * scale;
 	o->topbar_node = wlr_scene_buffer_create(&server->scene->tree, o->topbar_buffer);
 	wlr_scene_node_set_position(&o->topbar_node->node, box.x, box.y);
+	o->topbar_dirty = true;
 	topbar_render(o);
 }
 
@@ -457,6 +518,7 @@ void topbar_renumber(struct guibux_server *server) {
 		struct guibux_output *o = guibux_output_for(server, sorted[i]);
 		if (o != NULL && o->topbar_buffer != NULL) {
 			o->topbar_number = i + 1;
+			o->topbar_dirty = true;
 			topbar_render(o);
 		}
 	}
@@ -466,9 +528,11 @@ int topbar_tick(void *data) {
 	struct guibux_server *server = data;
 	struct guibux_output *o;
 	wl_list_for_each(o, &server->outputs, link) {
-		topbar_render(o);
+		if (o->topbar_dirty) {
+			topbar_render(o);
+		}
 	}
-	wl_event_source_timer_update(server->topbar_timer, 1000);
+	wl_event_source_timer_update(server->topbar_timer, 500);
 	return 0;
 }
 

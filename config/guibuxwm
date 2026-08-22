@@ -8,7 +8,7 @@
 term = gnome-terminal
 
 # keyboard (xkb names; leave unset for the system default)
-#xkb_layout = fr
+xkb_layout = fr
 #xkb_variant = osd
 #xkb_options = caps:swapscape
 
@@ -17,7 +17,8 @@ term = gnome-terminal
 # actions: terminal, close, fullscreen, tile, launcher, focus-next,
 #          quit, workspace:N, move-workspace:N,
 #          move-monitor-left, move-monitor-right,
-#          snap-left, snap-right
+#          snap-left, snap-right, snap-top, snap-bottom,
+#          switch-ws-left, switch-ws-right
 keybind = Mod+Return: terminal
 keybind = Mod+q: close
 keybind = Mod+f: fullscreen
@@ -40,6 +41,8 @@ keybind = Mod+Up: fullscreen
 keybind = Mod+Shift+q: quit
 keybind = Alt+Escape: quit
 keybind = Mod+Alt+Escape: quit
+keybind = Ctrl+Alt+Left: switch-ws-left
+keybind = Ctrl+Alt+Right: switch-ws-right
 
 # colors (#rrggbb)
 color_bg = #1e1e2e

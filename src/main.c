@@ -253,7 +253,12 @@ int main(int argc, char *argv[]) {
 	server.topbar_timer = wl_event_loop_add_timer(
 		wl_display_get_event_loop(server.wl_display),
 		topbar_tick, &server);
-	wl_event_source_timer_update(server.topbar_timer, 1000);
+	wl_event_source_timer_update(server.topbar_timer, 500);
+
+	server.sysinfo_timer = wl_event_loop_add_timer(
+		wl_display_get_event_loop(server.wl_display),
+		sysinfo_tick, &server);
+	wl_event_source_timer_update(server.sysinfo_timer, 5000);
 
 	const char *topbar_test = getenv("GUIBUX_TEST_TOPBAR");
 	if (topbar_test != NULL) {
@@ -316,6 +321,9 @@ int main(int argc, char *argv[]) {
 
 	if (server.topbar_timer != NULL) {
 		wl_event_source_remove(server.topbar_timer);
+	}
+	if (server.sysinfo_timer != NULL) {
+		wl_event_source_remove(server.sysinfo_timer);
 	}
 	if (server.topbar_test_timer != NULL) {
 		wl_event_source_remove(server.topbar_test_timer);

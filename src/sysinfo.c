@@ -363,6 +363,15 @@ sysinfo_update(struct guibux_sysinfo *si)
     sysinfo_update_battery(si);
 }
 
+int
+sysinfo_tick(void *data)
+{
+    struct guibux_server *server = data;
+    sysinfo_update(&server->sysinfo);
+    wl_event_source_timer_update(server->sysinfo_timer, 5000);
+    return 0;
+}
+
 void
 sysinfo_init(struct guibux_server *server)
 {
