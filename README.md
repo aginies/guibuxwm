@@ -11,6 +11,9 @@ Derived from [tinywl](https://gitlab.freedesktop.org/wlroots/wlroots/-/tree/main
   `$PATH` command suggestions (Up/Down to select)
 - Topbar on each monitor: screen number on the left, date and time on the
   right (updates every second); tiled windows are laid out below it
+- Workspaces per monitor (4, named A B C D): `Mod+a..d` switch,
+  `Mod+Shift+A..D` move the focused window; workspace letters shown in the
+  topbar with the current one highlighted (clickable to switch)
 - Starts a terminal automatically at launch (default: `alacritty`)
 - Configurable keyboard layout (e.g. French)
 - Multi-monitor support:
@@ -39,6 +42,9 @@ builds wlroots 0.20.2 from source (see [Build](#build)).
 ```sh
 ./build.sh
 ```
+
+`./build.sh clean` removes the `build/` directory (including the binary)
+without touching the wlroots installation.
 
 The script:
 
@@ -73,6 +79,8 @@ Run:
 | `Mod+f` | Toggle fullscreen |
 | `Mod+t` | Cycle tile mode of the focused window's monitor (free / split / main+stack) |
 | `Mod+Tab` | Cycle window focus |
+| `Mod+a..d` | Switch to workspace A..D on the focused window's monitor |
+| `Mod+Shift+A..D` | Move focused window to workspace A..D (same monitor) |
 | `Mod+Shift+Left` / `Mod+Shift+Right` | Move focused window to previous/next monitor |
 | `Mod+Shift+q` | Quit |
 | `Alt+Escape` | Quit |
@@ -207,7 +215,27 @@ from the log, or use `xrandr --query | grep connected` (X11/XWayland) or
 
 ## Testing
 
-The compositor can run headless (no real display) for smoke testing:
+Tests live in `tests/` and run headless (no real display). Each is a
+compositor-side hook (a `GUIBUX_TEST_*` env var) driven by a runner script;
+some also use a small Wayland client (built by the main build) that maps
+real toplevels. The compositor log / client output is the verdict.
+
+Run everything:
+
+```sh
+tests/run-all.sh
+```
+
+Or individually:
+
+```sh
+tests/run-ws-test.sh [ws]        # workspace state machine (default ws 2)
+tests/run-tile-test.sh <mode>    # tiling: 0=free, 1=split, 2=main+stack
+tests/run-topbar-test.sh         # per-output topbar (number + time)
+tests/run-launcher-test.sh       # command box (show/type/enter/escape)
+```
+
+The compositor can also be run headless directly for smoke testing:
 
 ```sh
 WLR_BACKENDS=headless WLR_RENDERER=gles2 ./build/guibuxwm
@@ -220,11 +248,6 @@ useful to exercise the multi-monitor code paths:
 ```sh
 GUIBUX_TEST_EXTRA_OUTPUTS=1 WLR_RENDERER=gles2 ./build/guibuxwm
 ```
-
-A fullscreen test client used during development lives in
-`/tmp/opencode/fs-test/` (not part of the repo): it maps a toplevel,
-requests fullscreen on the second output, and verifies the compositor
-configures it with that output's size.
 
 `GUIBUX_TEST_LAUNCHER_CMD="command"` drives the command box headlessly:
 shortly after start it shows the box, types the command, presses Enter
@@ -244,10 +267,10 @@ GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_TILE_MODE=1 GUIBUX_TERM=true \
   WLR_RENDERER=gles2 ./build/guibuxwm
 ```
 
-A tile test client used during development lives in `/tmp/opencode/tile-test/`
-(not part of the repo): it maps 3 toplevels, verifies the configured sizes
-for the given mode, closes one window and verifies the re-pack, then
-fullscreens a window and verifies it returns to its tile slot.
+The `tile-test` client (in `tests/`, built by the main build) maps 3
+toplevels, verifies the configured sizes for the given mode, closes one
+window and verifies the re-pack, then fullscreens a window and verifies it
+returns to its tile slot.
 
 `GUIBUX_TEST_TOPBAR=1` verifies the topbars shortly after start (one bar per
 output, screen number matches the left-to-right layout order, non-empty
@@ -258,12 +281,28 @@ GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_TOPBAR=1 GUIBUX_TERM=true \
   WLR_RENDERER=gles2 ./build/guibuxwm
 ```
 
+`GUIBUX_TEST_WORKSPACES=N` (default 2) exercises the workspace state machine
+~2s after start: all outputs start on workspace 1 with every window visible,
+then every output switches to N (windows hide, keyboard focus clears), a
+window is moved to N and back, and switching back restores visibility. Logs
+`workspace-test: OK (N outputs, ws M, K toplevels)` on
+success. The `ws-test` client (in `tests/`, built by the main build) maps
+2 toplevels and idles, giving the test real windows:
+
+```sh
+GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_WORKSPACES=2 GUIBUX_TERM=true \
+  WLR_RENDERER=gles2 ./build/guibuxwm &
+# in another shell:
+./build/tests/ws-test
+```
+
 ## Project layout
 
 ```
 meson.build      build definition (wlroots-0.20, freetype2, cairo deps)
 build.sh         builds wlroots 0.20.2 if needed, then the WM
-src/main.c       the whole compositor (~2200 lines, incl. command box, topbar and tiling)
+src/main.c       the whole compositor (~2500 lines, incl. command box, topbar, workspaces and tiling)
+tests/           headless test clients (ws-test, tile-test) + runner scripts (run-all.sh)
 ```
 
 ## License

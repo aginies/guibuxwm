@@ -15,3 +15,5 @@ executable('guibuxwm',
   dependencies: [wlroots_dep, wayland_dep, xkbcommon_dep, freetype_dep, cairo_dep],
   install: true,
 )
+
+subdir('tests')
