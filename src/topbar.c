@@ -169,8 +169,6 @@ void topbar_render(struct guibux_output *o) {
 			continue;
 		if (toplevel_output_for(t) != o->wlr_output)
 			continue;
-		if (t->workspace != o->current_workspace)
-			continue;
 		if (nwins < TOPBAR_WIN_MAX)
 			wins[nwins++] = t;
 	}
