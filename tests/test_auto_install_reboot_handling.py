@@ -7,11 +7,11 @@ Verifies that:
 3. SECURE VMs keep on_reboot as "destroy" even after installation
 """
 
-import unittest
-import xml.etree.ElementTree as ET
-from unittest.mock import MagicMock, patch
 import os
 import sys
+import unittest
+import xml.etree.ElementTree as ET
+from unittest.mock import MagicMock
 
 # Add the source directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
