@@ -2557,9 +2557,14 @@ int main(int argc, char *argv[]) {
 
 	launcher_hide(&server);
 	launcher_free_commands(&server.launcher);
-	wlr_scene_node_destroy(&server.scene->tree.node);
 	wlr_xcursor_manager_destroy(server.cursor_mgr);
 	wlr_cursor_destroy(server.cursor);
+	// destroy the backend before the scene tree: destroying it destroys the
+	// outputs, whose destroy handler tears down each output's topbar scene
+	// node and re-renders the remaining bars. the scene tree and the
+	// renderer/allocator/layout the topbars rely on must still be alive.
+	wlr_backend_destroy(server.backend);
+	wlr_scene_node_destroy(&server.scene->tree.node);
 	wlr_output_layout_destroy(server.output_layout);
 	wlr_allocator_destroy(server.allocator);
 	if (server.launcher.shm_alloc != NULL) {
@@ -2569,7 +2574,6 @@ int main(int argc, char *argv[]) {
 		FT_Done_FreeType(server.launcher.ft);
 	}
 	wlr_renderer_destroy(server.renderer);
-	wlr_backend_destroy(server.backend);
 	wl_display_destroy(server.wl_display);
 	free(server.term_cmd);
 	return 0;
