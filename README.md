@@ -1,0 +1,221 @@
+# guibuxwm
+
+A simple Wayland window manager built on [wlroots 0.20](https://gitlab.freedesktop.org/wlroots/wlroots).
+Derived from [tinywl](https://gitlab.freedesktop.org/wlroots/wlroots/-/tree/main/tinywl) (MIT).
+
+## Features
+
+- xdg-shell application windows: focus, move, resize, fullscreen
+- Command box (`Mod+e`) to launch programs by typing a command
+- Starts a terminal automatically at launch (default: `alacritty`)
+- Configurable keyboard layout (e.g. French)
+- Multi-monitor support:
+  - new windows open on the output under the mouse cursor
+  - move windows between monitors with a keybind
+  - optional manual monitor arrangement
+- Cascading window placement
+
+## Requirements
+
+Tested on openSUSE. All development packages are expected to be preinstalled:
+
+- `gcc` (or `clang`), `meson`, `ninja`
+- `wayland-devel`, `wayland-protocols`
+- `libdrm-devel`, `libinput-devel`, `libxkbcommon-devel`
+- `freetype-devel`, `cairo-devel`
+- `pixman-devel`, `libegl-devel` / `libgles-devel` (Mesa)
+- `libudev-devel`, `libdisplay-info-devel`, `lcms2-devel`, `libliftoff-devel`, `libseat-devel`
+- a Wayland terminal for the startup terminal (e.g. `alacritty`)
+
+wlroots itself is **not** taken from the distribution package: `build.sh`
+builds wlroots 0.20.2 from source (see [Build](#build)).
+
+## Build
+
+```sh
+./build.sh
+```
+
+The script:
+
+1. checks for wlroots 0.20.2 via `pkg-config` (module `wlroots-0.20`)
+2. if missing: downloads the [wlroots 0.20.2 tarball](https://gitlab.freedesktop.org/wlroots/wlroots/-/archive/0.20.2/wlroots-0.20.2.tar.gz),
+   builds it and installs it to `~/.local` (override with `WLR_PREFIX`)
+3. runs `meson setup build` + `ninja -C build`
+
+Manual build (if wlroots is already installed):
+
+```sh
+export PKG_CONFIG_PATH=$HOME/.local/lib64/pkgconfig:$PKG_CONFIG_PATH
+meson setup build
+ninja -C build
+```
+
+Run:
+
+```sh
+./build/guibuxwm
+```
+
+## Keybindings
+
+`Mod` is the Super key.
+
+| Shortcut | Action |
+|---|---|
+| `Mod+Return` | Start a new terminal |
+| `Mod+e` | Command box: type a command, Enter runs it via `sh -c` |
+| `Mod+q` | Close focused window |
+| `Mod+f` | Toggle fullscreen |
+| `Mod+Tab` | Cycle window focus |
+| `Mod+Shift+Left` / `Mod+Shift+Right` | Move focused window to previous/next monitor |
+| `Mod+Shift+q` | Quit |
+| `Alt+Escape` | Quit |
+
+Mouse: click a window to focus it, drag its titlebar to move, drag its
+edges to resize. Dragging or resizing a fullscreen window leaves fullscreen.
+
+### Command box (`Mod+e`)
+
+Opens an input box centered on the monitor under the cursor. Type a command
+and press Enter to run it via `/bin/sh -c` (so pipes, redirections and
+environment variables work). Escape or a mouse click dismisses it without
+running anything.
+
+## Configuration
+
+All configuration is via command-line flags and environment variables.
+There is no config file.
+
+### Command-line flags
+
+```
+guibuxwm [-t terminal command] [-k keyboard layout]
+```
+
+| Flag | Meaning | Example |
+|---|---|---|
+| `-t` | Terminal command started at launch (and by `Mod+Return`) | `-t "gnome-terminal"` |
+| `-k` | Keyboard layout (xkb layout name) | `-k fr` |
+
+### Environment variables
+
+| Variable | Meaning | Example |
+|---|---|---|
+| `GUIBUX_TERM` | Terminal command (overridden by `-t`) | `GUIBUX_TERM="foot"` |
+| `GUIBUX_XKB_LAYOUT` | Keyboard layout (overridden by `-k`) | `GUIBUX_XKB_LAYOUT="fr"` |
+| `XKB_DEFAULT_LAYOUT` | Keyboard layout, standard xkb env (lowest priority) | `XKB_DEFAULT_LAYOUT="fr,us"` |
+| `GUIBUX_OUTPUTS` | Manual monitor arrangement, see below | see below |
+| `GUIBUX_TEST_EXTRA_OUTPUTS` | Test-only, see [Testing](#testing) | `GUIBUX_TEST_EXTRA_OUTPUTS=1` |
+
+Priority: command-line flag > `GUIBUX_*` env > standard env > default.
+
+Terminal default: `alacritty`. Keyboard layout default: system default
+(usually `us`).
+
+### Multi-monitor arrangement (`GUIBUX_OUTPUTS`)
+
+By default monitors are arranged automatically (left to right, in the order
+they appear). To place them manually:
+
+```
+GUIBUX_OUTPUTS="NAME@XxY,NAME@XxY,..."
+```
+
+ - `NAME` is the output name reported by wlroots (e.g. `DP-1`, `HDMI-A-1`,
+   `eDP-1`). Find yours in the compositor log or with `wlr-randr`/`weston-info`.
+ - `XxY` is the top-left position of the monitor in the virtual layout.
+ - `:ROT` (optional) sets the rotation: `normal`, `90`, `180` or `270`
+   (degrees clockwise). Example: `HDMI-A-1@0x0:90`.
+
+Example — two monitors side by side, `HDMI-A-1` to the right of `DP-1`:
+
+```sh
+GUIBUX_OUTPUTS="DP-1@0x0,HDMI-A-1@1920x0" ./build/guibuxwm
+```
+
+Example — stacked vertically:
+
+```sh
+GUIBUX_OUTPUTS="DP-1@0x0,HDMI-A-1@0x1080" ./build/guibuxwm
+```
+
+Outputs not listed are still auto-arranged. Malformed entries are logged and
+ignored. Up to 8 outputs can be placed manually.
+
+Note: `GUIBUX_OUTPUTS` controls the position and rotation of monitors in the
+virtual layout — the video mode always comes from the monitor's preferred
+mode.
+
+### Example based on a real session
+
+A laptop with an external portrait monitor on the left and a landscape
+monitor on the right (as reported by `xrandr --query | grep connected`):
+
+```
+HDMI-1 connected 1440x2560+0+0 right (normal left inverted right x axis y axis)
+DP-8 connected primary 2560x1440+1440+414 (normal left inverted right x axis y axis)
+```
+
+reproduces with (wlroots uses the full DRM connector names, so `HDMI-1`
+becomes `HDMI-A-1`; xrandr's `right` rotation is 90 degrees clockwise):
+
+```sh
+GUIBUX_OUTPUTS="HDMI-A-1@0x0:90,DP-8@1440x414" ./build/guibuxwm
+```
+
+To find your own layout, run the compositor once and read the output names
+from the log, or use `xrandr --query | grep connected` (X11/XWayland) or
+`wlr-randr` (under a wlroots compositor).
+
+### Multi-monitor behavior
+
+- **New windows** open on the monitor under the mouse cursor (cascaded).
+- **`Mod+Shift+Left` / `Mod+Shift+Right`** moves the focused window to the
+  previous/next monitor (monitors ordered left to right by layout position),
+  centered on the target monitor.
+- **Fullscreen** fills the monitor the window is on. A client that requests
+  fullscreen on a specific monitor (e.g. some terminals) is honored.
+
+## Testing
+
+The compositor can run headless (no real display) for smoke testing:
+
+```sh
+WLR_BACKENDS=headless WLR_RENDERER=gles2 ./build/guibuxwm
+```
+
+`GUIBUX_TEST_EXTRA_OUTPUTS=N` forces the headless backend and creates
+N+1 virtual 1280x720 monitors (the headless backend has no default output),
+useful to exercise the multi-monitor code paths:
+
+```sh
+GUIBUX_TEST_EXTRA_OUTPUTS=1 WLR_RENDERER=gles2 ./build/guibuxwm
+```
+
+A fullscreen test client used during development lives in
+`/tmp/opencode/fs-test/` (not part of the repo): it maps a toplevel,
+requests fullscreen on the second output, and verifies the compositor
+configures it with that output's size.
+
+`GUIBUX_TEST_LAUNCHER_CMD="command"` drives the command box headlessly:
+shortly after start it shows the box, types the command, presses Enter
+(then shows and Escapes again), logging `launcher-test: ENTER OK` /
+`ESCAPE OK` on success:
+
+```sh
+GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_LAUNCHER_CMD="echo ok > /tmp/x" \
+  WLR_RENDERER=gles2 ./build/guibuxwm
+```
+
+## Project layout
+
+```
+meson.build      build definition (wlroots-0.20, freetype2, cairo deps)
+build.sh         builds wlroots 0.20.2 if needed, then the WM
+src/main.c       the whole compositor (~1500 lines, incl. command box)
+```
+
+## License
+
+MIT. Derived from tinywl, part of wlroots (MIT).
