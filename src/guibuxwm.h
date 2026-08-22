@@ -243,6 +243,8 @@ struct guibux_server {
 	bool psel_test_enter_sent;
 	struct guibux_launcher launcher;
 	struct guibux_sysinfo sysinfo;
+	uint32_t last_topbar_click_time;
+	struct guibux_toplevel *last_topbar_click_win;
 };
 
 /* output.c */

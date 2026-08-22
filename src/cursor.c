@@ -130,7 +130,14 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 					server->cursor->x,
 					server->cursor->y);
 			if (win) {
-				focus_toplevel(win);
+				uint32_t dt = event->time_msec - server->last_topbar_click_time;
+				if (dt < 300 && server->last_topbar_click_win == win) {
+					set_fullscreen(win, !win->is_fullscreen);
+				} else {
+					focus_toplevel(win);
+				}
+				server->last_topbar_click_time = event->time_msec;
+				server->last_topbar_click_win = win;
 				return;
 			}
 			if (ws != 0) {
