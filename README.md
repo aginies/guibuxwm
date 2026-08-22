@@ -6,6 +6,7 @@ Derived from [tinywl](https://gitlab.freedesktop.org/wlroots/wlroots/-/tree/main
 ## Features
 
 - xdg-shell application windows: focus, move, resize, fullscreen
+- Tile modes (`Mod+t`): free / left-right split / main+stack, per monitor
 - Command box (`Mod+e`) to launch programs by typing a command, with
   `$PATH` command suggestions (Up/Down to select)
 - Starts a terminal automatically at launch (default: `alacritty`)
@@ -68,6 +69,7 @@ Run:
 | `Mod+e` | Command box: type a command, Enter runs it via `sh -c` |
 | `Mod+q` | Close focused window |
 | `Mod+f` | Toggle fullscreen |
+| `Mod+t` | Cycle tile mode of the focused window's monitor (free / split / main+stack) |
 | `Mod+Tab` | Cycle window focus |
 | `Mod+Shift+Left` / `Mod+Shift+Right` | Move focused window to previous/next monitor |
 | `Mod+Shift+q` | Quit |
@@ -88,6 +90,23 @@ As you type, matching commands from `$PATH` are listed below the input line
 selected command, with any arguments you typed after the first word appended
 (e.g. type `alac -w`, select `alacritty`, Enter runs `alacritty -w`). With
 no match, Enter runs exactly what you typed.
+
+### Tile modes (`Mod+t`)
+
+`Mod+t` cycles the tile mode of the monitor holding the focused window.
+Each monitor keeps its own mode.
+
+| Mode | Layout |
+|---|---|
+| free | default: cascading placement, free move/resize |
+| split | windows fill two 50% columns round-robin, stacked vertically within a column |
+| main+stack | focused window takes the left 50%, remaining windows stack vertically in the right 50% |
+
+In tile modes, new windows are placed into the layout (instead of cascading),
+closing a window repacks the remaining ones, and leaving fullscreen returns
+the window to its slot. Dragging or resizing a window takes it out of the
+layout until the next retiling (`Mod+t`, window map/close, fullscreen off,
+or moving a window between monitors).
 
 ## Configuration
 
@@ -215,12 +234,25 @@ GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_LAUNCHER_CMD="echo ok > /tmp/x" \
   WLR_RENDERER=gles2 ./build/guibuxwm
 ```
 
+`GUIBUX_TEST_TILE_MODE=N` sets the tile mode of all outputs shortly after
+start (0=free, 1=split, 2=main+stack), to exercise the tiling code paths:
+
+```sh
+GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_TILE_MODE=1 GUIBUX_TERM=true \
+  WLR_RENDERER=gles2 ./build/guibuxwm
+```
+
+A tile test client used during development lives in `/tmp/opencode/tile-test/`
+(not part of the repo): it maps 3 toplevels, verifies the configured sizes
+for the given mode, closes one window and verifies the re-pack, then
+fullscreens a window and verifies it returns to its tile slot.
+
 ## Project layout
 
 ```
 meson.build      build definition (wlroots-0.20, freetype2, cairo deps)
 build.sh         builds wlroots 0.20.2 if needed, then the WM
-src/main.c       the whole compositor (~1500 lines, incl. command box)
+src/main.c       the whole compositor (~1900 lines, incl. command box and tiling)
 ```
 
 ## License

@@ -14,6 +14,7 @@
 //       Mod+Return            start a new terminal
 //       Mod+q                 close focused window
 //       Mod+f                 toggle fullscreen
+//       Mod+t                 cycle tile mode (free / split / main+stack)
 //       Mod+e                 command box: type a command, Enter runs it
 //       Mod+Tab               cycle focus
 //       Mod+Shift+Left/Right  move window to previous/next monitor
@@ -81,6 +82,12 @@ enum guibux_cursor_mode {
 	GUIBUX_CURSOR_RESIZE,
 };
 
+enum guibux_tile_mode {
+	GUIBUX_TILE_FREE,
+	GUIBUX_TILE_SPLIT,
+	GUIBUX_TILE_MAIN_STACK,
+};
+
 struct guibux_server;
 struct guibux_toplevel;
 
@@ -88,6 +95,7 @@ struct guibux_output {
 	struct wl_list link;
 	struct guibux_server *server;
 	struct wlr_output *wlr_output;
+	int tile_mode;
 	struct wl_listener frame;
 	struct wl_listener request_state;
 	struct wl_listener destroy;
@@ -187,6 +195,7 @@ struct guibux_server {
 	struct output_placement placements[MAX_OUTPUT_PLACEMENTS];
 	int num_placements;
 
+	struct wl_event_source *tile_test_timer;
 	struct guibux_launcher launcher;
 };
 
@@ -750,6 +759,96 @@ static struct wlr_output *toplevel_output_for(struct guibux_toplevel *toplevel) 
 	return NULL;
 }
 
+static struct guibux_output *guibux_output_for(struct guibux_server *server,
+		struct wlr_output *wlr_output) {
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->wlr_output == wlr_output) {
+			return o;
+		}
+	}
+	return NULL;
+}
+
+// re-layout all non-fullscreen windows of an output according to its tile
+// mode. window order = focus order (focused window first)
+static void retile_output(struct guibux_output *output) {
+	struct guibux_server *server = output->server;
+	if (output->tile_mode == GUIBUX_TILE_FREE) {
+		return;
+	}
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, output->wlr_output, &box);
+	if (box.width <= 0 || box.height <= 0) {
+		return;
+	}
+
+	struct guibux_toplevel *wins[64];
+	int n = 0;
+	struct guibux_toplevel *t;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->is_fullscreen) {
+			continue;
+		}
+		if (toplevel_output_for(t) != output->wlr_output) {
+			continue;
+		}
+		if (n < 64) {
+			wins[n++] = t;
+		}
+	}
+	if (n == 0) {
+		return;
+	}
+
+	for (int i = 0; i < n; i++) {
+		int rx, ry, rw, rh;
+		if (output->tile_mode == GUIBUX_TILE_SPLIT) {
+			// two 50% columns, filled round-robin, stacked within a column
+			int col = i % 2;
+			int row = i / 2;
+			int per_col = (col == 0) ? (n + 1) / 2 : n / 2;
+			rx = (box.width / 2) * col;
+			rw = (col == 0) ? box.width / 2 : box.width - box.width / 2;
+			ry = (box.height * row) / per_col;
+			rh = (box.height * (row + 1)) / per_col - ry;
+		} else { // GUIBUX_TILE_MAIN_STACK
+			// focused window: left 50%; the rest: right 50% stacked
+			if (i == 0) {
+				rx = 0;
+				ry = 0;
+				rw = box.width / 2;
+				rh = box.height;
+			} else {
+				int stack = n - 1;
+				int row = i - 1;
+				rx = box.width / 2;
+				rw = box.width - box.width / 2;
+				ry = (box.height * row) / stack;
+				rh = (box.height * (row + 1)) / stack - ry;
+			}
+		}
+		wlr_scene_node_set_position(&wins[i]->scene_tree->node,
+			box.x + rx, box.y + ry);
+		wlr_xdg_toplevel_set_size(wins[i]->xdg_toplevel, rw, rh);
+	}
+}
+
+// test hook: GUIBUX_TEST_TILE_MODE=N sets the tile mode of all outputs
+// shortly after start (0=free, 1=split, 2=main+stack)
+static int tile_test_run(void *data) {
+	struct guibux_server *server = data;
+	int mode = atoi(getenv("GUIBUX_TEST_TILE_MODE"));
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		o->tile_mode = mode;
+		retile_output(o);
+		wlr_log(WLR_INFO, "tile-test: mode %d on %s", mode,
+			o->wlr_output->name ? o->wlr_output->name : "(unknown)");
+	}
+	return 0;
+}
+
 static void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen) {
 	if (fullscreen == toplevel->is_fullscreen) {
 		return;
@@ -783,6 +882,14 @@ static void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen) {
 
 	toplevel->is_fullscreen = fullscreen;
 	wlr_xdg_toplevel_set_fullscreen(xdg_toplevel, fullscreen);
+	if (!fullscreen) {
+		// window returns to its tile slot, if any
+		struct guibux_output *o = guibux_output_for(server,
+			toplevel_output_for(toplevel));
+		if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+			retile_output(o);
+		}
+	}
 }
 
 static void move_toplevel_to_output(struct guibux_toplevel *toplevel,
@@ -791,6 +898,7 @@ static void move_toplevel_to_output(struct guibux_toplevel *toplevel,
 	if (toplevel->is_fullscreen) {
 		set_fullscreen(toplevel, false);
 	}
+	struct wlr_output *src = toplevel_output_for(toplevel);
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, output, &box);
 	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
@@ -804,6 +912,15 @@ static void move_toplevel_to_output(struct guibux_toplevel *toplevel,
 	wlr_log(WLR_INFO, "moved '%s' to output %s",
 		toplevel->xdg_toplevel->title ? toplevel->xdg_toplevel->title : "(untitled)",
 		output->name ? output->name : "(unknown)");
+	struct guibux_output *o;
+	if ((o = guibux_output_for(server, src)) != NULL &&
+			o->tile_mode != GUIBUX_TILE_FREE) {
+		retile_output(o);
+	}
+	if ((o = guibux_output_for(server, output)) != NULL &&
+			o->tile_mode != GUIBUX_TILE_FREE) {
+		retile_output(o);
+	}
 }
 
 static void move_toplevel_to_adjacent_output(struct guibux_server *server,
@@ -893,6 +1010,21 @@ static bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
 	case XKB_KEY_f:
 		if (toplevel != NULL) {
 			set_fullscreen(toplevel, !toplevel->is_fullscreen);
+		}
+		return true;
+	case XKB_KEY_t:
+		if (toplevel != NULL) {
+			struct guibux_output *o = guibux_output_for(server,
+				toplevel_output_for(toplevel));
+			if (o != NULL) {
+				o->tile_mode = (o->tile_mode + 1) % 3;
+				retile_output(o);
+				wlr_log(WLR_INFO, "tile mode on %s: %s",
+					o->wlr_output->name ? o->wlr_output->name : "(unknown)",
+					o->tile_mode == GUIBUX_TILE_FREE ? "free"
+					: o->tile_mode == GUIBUX_TILE_SPLIT ? "split"
+					: "main+stack");
+			}
 		}
 		return true;
 	case XKB_KEY_Tab:
@@ -1353,7 +1485,19 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 
 	wl_list_insert(&toplevel->server->toplevels, &toplevel->link);
 
-	place_toplevel(toplevel);
+	struct wlr_output *output = output_at_cursor(toplevel->server);
+	struct guibux_output *o = output != NULL
+		? guibux_output_for(toplevel->server, output) : NULL;
+	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+		// park the node on its target output so retile_output picks it up
+		struct wlr_box box;
+		wlr_output_layout_get_box(toplevel->server->output_layout,
+			output, &box);
+		wlr_scene_node_set_position(&toplevel->scene_tree->node, box.x, box.y);
+		retile_output(o);
+	} else {
+		place_toplevel(toplevel);
+	}
 	focus_toplevel(toplevel);
 }
 
@@ -1365,7 +1509,12 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 		reset_cursor_mode(server);
 	}
 
+	struct guibux_output *o = guibux_output_for(server,
+		toplevel_output_for(toplevel));
 	wl_list_remove(&toplevel->link);
+	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+		retile_output(o);
+	}
 
 	if (!wl_list_empty(&server->toplevels)) {
 		struct guibux_toplevel *next =
@@ -1378,7 +1527,16 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, commit);
 
 	if (toplevel->xdg_toplevel->base->initial_commit) {
-		wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, 0, 0);
+		struct guibux_output *o = guibux_output_for(toplevel->server,
+			toplevel_output_for(toplevel));
+		if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+			// the window is tiled on map (it is not in the toplevels list
+			// yet); send an initial configure so the client can commit its
+			// first buffer
+			wlr_xdg_surface_schedule_configure(toplevel->xdg_toplevel->base);
+		} else {
+			wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, 0, 0);
+		}
 	}
 }
 
@@ -1733,6 +1891,15 @@ int main(int argc, char *argv[]) {
 			wl_display_get_event_loop(server.wl_display),
 			launcher_test_run, &server);
 		wl_event_source_timer_update(server.launcher.test_timer, 500);
+	}
+
+	// test hook: GUIBUX_TEST_TILE_MODE sets the tile mode of all outputs
+	const char *tile_test_mode = getenv("GUIBUX_TEST_TILE_MODE");
+	if (tile_test_mode != NULL) {
+		server.tile_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			tile_test_run, &server);
+		wl_event_source_timer_update(server.tile_test_timer, 500);
 	}
 
 	spawn_terminal(&server);
