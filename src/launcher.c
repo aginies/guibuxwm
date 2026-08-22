@@ -1,6 +1,8 @@
 #include "guibuxwm.h"
 #include <wlr/types/wlr_scene.h>
 #include <dirent.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -34,88 +36,154 @@ static bool launcher_init_font(struct guibux_server *server) {
 	return false;
 }
 
+static void launcher_add_entry(struct guibux_launcher *l, const char *name, const char *exec) {
+	bool dup = false;
+	for (int i = 0; i < l->num_entries; i++) {
+		if (strcasecmp(l->entries[i].name, name) == 0) {
+			dup = true;
+			break;
+		}
+	}
+	if (dup) return;
+	if (l->num_entries >= LAUNCHER_MAX_COMMANDS) return;
+
+	if (l->num_entries % 256 == 0) {
+		int newcap = l->num_entries + 256;
+		l->entries = realloc(l->entries ? l->entries : 0,
+			(size_t)newcap * sizeof(struct launcher_entry));
+	}
+	l->entries[l->num_entries].name = strdup(name);
+	l->entries[l->num_entries].exec = strdup(exec);
+	l->num_entries++;
+}
+
 static void launcher_load_commands(struct guibux_launcher *l) {
 	const char *path = getenv("PATH");
-	if (path == NULL) {
-		return;
-	}
+	if (path == NULL) return;
 	char *copy = strdup(path);
-	if (copy == NULL) {
-		return;
-	}
-	l->commands = calloc(1024, sizeof(char *));
-	if (l->commands == NULL) {
-		free(copy);
-		return;
-	}
-	int cap = 1024;
+	if (copy == NULL) return;
+
+	int saved_num = l->num_entries;
 	char *save = NULL;
 	for (char *dir = strtok_r(copy, ":", &save); dir != NULL;
 			dir = strtok_r(NULL, ":", &save)) {
-		if (*dir == '\0' || l->num_commands >= LAUNCHER_MAX_COMMANDS) {
-			break;
-		}
+		if (*dir == '\0') break;
 		DIR *d = opendir(dir);
-		if (d == NULL) {
-			continue;
-		}
+		if (d == NULL) continue;
 		struct dirent *e;
 		while ((e = readdir(d)) != NULL) {
 			char full[PATH_MAX];
 			snprintf(full, sizeof(full), "%s/%s", dir, e->d_name);
 			struct stat st;
-			if (stat(full, &st) != 0 || !S_ISREG(st.st_mode)) {
-				continue;
-			}
-			if (access(full, X_OK) != 0) {
-				continue;
-			}
-			bool dup = false;
-			for (int i = 0; i < l->num_commands; i++) {
-				if (strcmp(l->commands[i], e->d_name) == 0) {
-					dup = true;
-					break;
-				}
-			}
-			if (dup) {
-				continue;
-			}
-			if (l->num_commands == cap) {
-				cap *= 2;
-				char **tmp = realloc(l->commands, (size_t)cap * sizeof(char *));
-				if (tmp == NULL) {
-					break;
-				}
-				l->commands = tmp;
-			}
-			l->commands[l->num_commands++] = strdup(e->d_name);
-			if (l->commands[l->num_commands - 1] == NULL) {
-				l->num_commands--;
-				break;
-			}
+			if (stat(full, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+			if (access(full, X_OK) != 0) continue;
+			launcher_add_entry(l, e->d_name, e->d_name);
+			if (l->num_entries >= LAUNCHER_MAX_COMMANDS) break;
 		}
 		closedir(d);
-		if (l->num_commands >= LAUNCHER_MAX_COMMANDS) {
-			break;
-		}
+		if (l->num_entries >= LAUNCHER_MAX_COMMANDS) break;
 	}
 	free(copy);
-	wlr_log(WLR_INFO, "launcher: %d commands from $PATH", l->num_commands);
+	wlr_log(WLR_INFO, "launcher: %d entries from $PATH", l->num_entries - saved_num);
+}
+
+static void launcher_parse_desktop(const char *filepath, struct guibux_launcher *l) {
+	FILE *f = fopen(filepath, "r");
+	if (!f) return;
+	char line[512];
+	char *name = NULL, *exec = NULL;
+	bool in_main = false;
+	while (fgets(line, sizeof(line), f)) {
+		if (strcmp(line, "[Desktop Entry]\n") == 0 ||
+			strcmp(line, "[DesktopEntry]\n") == 0) {
+			in_main = true;
+			continue;
+		}
+		if (in_main && line[0] == '[') break;
+		if (!in_main) continue;
+
+		char *val = NULL;
+		if (strncmp(line, "Name=", 5) == 0) {
+			val = line + 5;
+		} else if (strncmp(line, "Exec=", 5) == 0) {
+			val = line + 5;
+		} else continue;
+
+		int len = strlen(val);
+		while (len > 0 && (val[len-1] == '\n' || val[len-1] == '\r'))
+			val[--len] = '\0';
+
+		if (val[0] == '\0') continue;
+		if (!name) name = strdup(val);
+		else if (!exec) exec = strdup(val);
+		if (name && exec) break;
+	}
+	fclose(f);
+
+	if (name && exec) {
+		char *cleaned = strdup(exec);
+		for (int i = 0; cleaned[i]; i++) {
+			if (cleaned[i] == '%') {
+				memmove(cleaned + i, cleaned + i + 1, strlen(cleaned + i));
+				i--;
+			}
+		}
+		launcher_add_entry(l, name, cleaned);
+		free(cleaned);
+	}
+	free(name);
+	free(exec);
+}
+
+static void launcher_load_desktop_files(struct guibux_launcher *l) {
+	const char *dirs[3] = {
+		"/usr/share/applications",
+		"/usr/local/share/applications",
+		NULL,
+	};
+	int saved_num = l->num_entries;
+
+	char homedir[PATH_MAX];
+	const char *home = getenv("HOME");
+	if (home) {
+		snprintf(homedir, sizeof(homedir), "%s/.local/share/applications", home);
+		dirs[2] = homedir;
+	}
+
+	for (int d = 0; d < 3; d++) {
+		if (!dirs[d]) continue;
+		DIR *dir = opendir(dirs[d]);
+		if (!dir) continue;
+		struct dirent *e;
+		while ((e = readdir(dir)) != NULL) {
+			size_t len = strlen(e->d_name);
+			if (len < 9 || strcmp(e->d_name + len - 8, ".desktop") != 0)
+				continue;
+			char path[PATH_MAX];
+			snprintf(path, sizeof(path), "%s/%s", dirs[d], e->d_name);
+			launcher_parse_desktop(path, l);
+			if (l->num_entries >= LAUNCHER_MAX_COMMANDS) break;
+		}
+		closedir(dir);
+		if (l->num_entries >= LAUNCHER_MAX_COMMANDS) break;
+	}
+	wlr_log(WLR_INFO, "launcher: %d entries from .desktop", l->num_entries - saved_num);
 }
 
 void launcher_free_commands(struct guibux_launcher *l) {
-	for (int i = 0; i < l->num_commands; i++) {
-		free(l->commands[i]);
+	for (int i = 0; i < l->num_entries; i++) {
+		free(l->entries[i].name);
+		free(l->entries[i].exec);
 	}
-	free(l->commands);
-	l->commands = NULL;
-	l->num_commands = 0;
+	free(l->entries);
+	l->entries = NULL;
+	l->num_entries = 0;
 }
 
 void launcher_filter(struct guibux_launcher *l) {
 	l->num_matches = 0;
 	l->selection = 0;
-	if (l->text[0] == '\0' || l->num_commands == 0) {
+	if (l->text[0] == '\0' || l->num_entries == 0) {
 		return;
 	}
 	char first[128];
@@ -130,12 +198,12 @@ void launcher_filter(struct guibux_launcher *l) {
 	}
 	for (int pass = 0; pass < 2 &&
 			l->num_matches < LAUNCHER_MAX_MATCHES; pass++) {
-		for (int i = 0; i < l->num_commands &&
+		for (int i = 0; i < l->num_entries &&
 				l->num_matches < LAUNCHER_MAX_MATCHES; i++) {
-			bool exact = strcasecmp(l->commands[i], first) == 0;
-			bool sub = strcasestr(l->commands[i], first) != NULL;
+			bool exact = strcasecmp(l->entries[i].name, first) == 0;
+			bool sub = strcasestr(l->entries[i].name, first) != NULL;
 			if ((pass == 0 && exact) || (pass == 1 && sub && !exact)) {
-				l->matches[l->num_matches++] = l->commands[i];
+				l->matches[l->num_matches++] = i;
 			}
 		}
 	}
@@ -198,7 +266,7 @@ static void launcher_render(struct guibux_server *server) {
 		int mb = ly + lh / 2 + font_px * 35 / 100;
 		uint32_t mc = (i == l->selection) ? server->color_text :
 			server->color_dim;
-		launcher_draw_text_on_surface(cs, l->face, l->matches[i], pad, mb, mc);
+		launcher_draw_text_on_surface(cs, l->face, l->entries[l->matches[i]].name, pad, mb, mc);
 	}
 
 	cairo_destroy(cr);
@@ -306,12 +374,12 @@ bool launcher_handle_key(struct guibux_server *server, xkb_keysym_t sym) {
 	case XKB_KEY_KP_Enter: {
 		char cmd[512];
 		if (l->num_matches > 0 && l->selection < l->num_matches) {
+			const char *exec = l->entries[l->matches[l->selection]].exec;
 			const char *space = strchr(l->text, ' ');
 			if (space != NULL) {
-				snprintf(cmd, sizeof(cmd), "%s%s",
-					l->matches[l->selection], space);
+				snprintf(cmd, sizeof(cmd), "%s%s", exec, space);
 			} else {
-				snprintf(cmd, sizeof(cmd), "%s", l->matches[l->selection]);
+				snprintf(cmd, sizeof(cmd), "%s", exec);
 			}
 		} else {
 			snprintf(cmd, sizeof(cmd), "%s", l->text);
@@ -368,6 +436,7 @@ void launcher_init(struct guibux_server *server) {
 		wlr_log(WLR_ERROR, "launcher: disabled (no shm allocator)");
 		return;
 	}
+	launcher_load_desktop_files(l);
 	launcher_load_commands(l);
 	if (!launcher_init_font(server)) {
 		wlr_log(WLR_ERROR, "launcher: disabled (no font)");
@@ -393,11 +462,11 @@ int launcher_test_run(void *data) {
 	}
 	if (l->num_matches < 1) {
 		wlr_log(WLR_ERROR, "launcher-test: FAIL matches "
-			"(num_matches=%d, commands=%d)", l->num_matches, l->num_commands);
+			"(num_matches=%d, entries=%d)", l->num_matches, l->num_entries);
 		return 0;
 	}
 	wlr_log(WLR_INFO, "launcher-test: MATCHES OK (%d matches, selected '%s')",
-		l->num_matches, l->matches[l->selection]);
+		l->num_matches, l->entries[l->matches[l->selection]].name);
 	launcher_handle_key(server, XKB_KEY_Return);
 	if (l->active) {
 		wlr_log(WLR_ERROR, "launcher-test: FAIL enter (still active)");

@@ -305,8 +305,7 @@ void topbar_render(struct guibux_output *o) {
 		int cell_w = tw + 16;
 		if (cell_w > max_w)
 			cell_w = max_w;
-		strncpy(o->topbar_win_titles[i], buf, 63);
-		o->topbar_win_titles[i][63] = '\0';
+		snprintf(o->topbar_win_titles[i], sizeof(o->topbar_win_titles[i]), "%s", buf);
 		o->topbar_win_x[i] = win_x;
 		o->topbar_win_w[i] = cell_w;
 

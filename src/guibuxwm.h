@@ -172,6 +172,11 @@ struct guibux_keyboard {
 	struct wl_listener destroy;
 };
 
+struct launcher_entry {
+	char *name;
+	char *exec;
+};
+
 struct guibux_launcher {
 	bool active;
 	char text[512];
@@ -184,9 +189,9 @@ struct guibux_launcher {
 	FT_Library ft;
 	FT_Face face;
 	struct wl_event_source *test_timer;
-	char **commands;
-	int num_commands;
-	char *matches[LAUNCHER_MAX_MATCHES];
+	struct launcher_entry *entries;
+	int num_entries;
+	int matches[LAUNCHER_MAX_MATCHES];
 	int num_matches;
 	int selection;
 };
