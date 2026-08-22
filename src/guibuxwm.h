@@ -73,6 +73,8 @@ enum guibux_action {
 	GUIBUX_ACT_MOVE_WS,
 	GUIBUX_ACT_MOVE_MON_LEFT,
 	GUIBUX_ACT_MOVE_MON_RIGHT,
+	GUIBUX_ACT_SNAP_LEFT,
+	GUIBUX_ACT_SNAP_RIGHT,
 };
 
 struct guibux_keybind {
@@ -100,6 +102,14 @@ struct guibux_output {
 	char topbar_right[64];
 	int topbar_ws_x[NUM_WORKSPACES + 1];
 	int topbar_ws_cell_w;
+#define TOPBAR_WIN_W 100
+#define TOPBAR_WIN_GAP 8
+#define TOPBAR_WIN_MAX 64
+
+	int topbar_win_x[TOPBAR_WIN_MAX];
+	int topbar_win_w[TOPBAR_WIN_MAX];
+	char topbar_win_titles[TOPBAR_WIN_MAX][64];
+	int topbar_win_count;
 	struct wl_listener frame;
 	struct wl_listener request_state;
 	struct wl_listener destroy;
@@ -232,6 +242,8 @@ void topbar_destroy(struct guibux_output *o);
 void topbar_renumber(struct guibux_server *server);
 int outputs_sorted_by_x(struct guibux_server *server, struct wlr_output **sorted, struct wlr_box *boxes, int cap);
 
+struct guibux_toplevel *topbar_win_at(struct guibux_output *o, double lx, double ly);
+
 /* toplevel.c */
 void focus_toplevel(struct guibux_toplevel *toplevel);
 void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen);
@@ -254,6 +266,8 @@ void move_toplevel_to_workspace(struct guibux_toplevel *toplevel, int ws);
 void place_toplevel(struct guibux_toplevel *toplevel);
 void move_toplevel_to_output(struct guibux_toplevel *toplevel, struct wlr_output *output);
 void move_toplevel_to_adjacent_output(struct guibux_server *server, struct guibux_toplevel *toplevel, int dir);
+void snap_toplevel_left(struct guibux_toplevel *toplevel);
+void snap_toplevel_right(struct guibux_toplevel *toplevel);
 
 /* topbar.c */
 void topbar_render(struct guibux_output *o);

@@ -248,3 +248,59 @@ void move_toplevel_to_adjacent_output(struct guibux_server *server,
 	}
 	move_toplevel_to_output(toplevel, sorted[next]);
 }
+
+// ---------------------------------------------------------------------------
+// Snap (half-screen positioning)
+// ---------------------------------------------------------------------------
+
+void snap_toplevel_left(struct guibux_toplevel *toplevel) {
+	struct guibux_server *server = toplevel->server;
+	struct wlr_output *output = toplevel_output_for(toplevel);
+	if (output == NULL) {
+		return;
+	}
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, output, &box);
+	if (toplevel->is_fullscreen) {
+		set_fullscreen(toplevel, false);
+	}
+	int h = toplevel->xdg_toplevel->current.height > 0 ? toplevel->xdg_toplevel->current.height : 600;
+	int rx = 0;
+	int ry = (box.height - TOPBAR_H - h) / 2;
+	if (ry < 0) {
+		ry = 0;
+	}
+	wlr_scene_node_set_position(&toplevel->scene_tree->node,
+		box.x + rx, box.y + TOPBAR_H + ry);
+	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, box.width / 2, h);
+	struct guibux_output *o = guibux_output_for(server, output);
+	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+		retile_output(o);
+	}
+}
+
+void snap_toplevel_right(struct guibux_toplevel *toplevel) {
+	struct guibux_server *server = toplevel->server;
+	struct wlr_output *output = toplevel_output_for(toplevel);
+	if (output == NULL) {
+		return;
+	}
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, output, &box);
+	if (toplevel->is_fullscreen) {
+		set_fullscreen(toplevel, false);
+	}
+	int h = toplevel->xdg_toplevel->current.height > 0 ? toplevel->xdg_toplevel->current.height : 600;
+	int rx = box.width / 2;
+	int ry = (box.height - TOPBAR_H - h) / 2;
+	if (ry < 0) {
+		ry = 0;
+	}
+	wlr_scene_node_set_position(&toplevel->scene_tree->node,
+		box.x + rx, box.y + TOPBAR_H + ry);
+	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, box.width - box.width / 2, h);
+	struct guibux_output *o = guibux_output_for(server, output);
+	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+		retile_output(o);
+	}
+}

@@ -33,6 +33,10 @@ void focus_toplevel(struct guibux_toplevel *toplevel) {
 		wlr_seat_keyboard_notify_enter(seat, surface,
 			keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
 	}
+	struct guibux_output *fo = guibux_output_for(server,
+		toplevel_output_for(toplevel));
+	if (fo)
+		topbar_render(fo);
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +172,10 @@ void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 		place_toplevel(toplevel);
 	}
 	focus_toplevel(toplevel);
+	struct guibux_output *o2 = guibux_output_for(toplevel->server,
+		toplevel_output_for(toplevel));
+	if (o2)
+		topbar_render(o2);
 }
 
 void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
@@ -184,6 +192,7 @@ void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
 		retile_output(o);
 	}
+	topbar_render(o);
 
 	if (!wl_list_empty(&server->toplevels)) {
 		struct guibux_toplevel *next =
@@ -222,6 +231,11 @@ void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	wl_list_remove(&toplevel->request_resize.link);
 	wl_list_remove(&toplevel->request_maximize.link);
 	wl_list_remove(&toplevel->request_fullscreen.link);
+
+	struct guibux_output *fo = guibux_output_for(toplevel->server,
+		toplevel_output_for(toplevel));
+	if (fo)
+		topbar_render(fo);
 
 	free(toplevel);
 }

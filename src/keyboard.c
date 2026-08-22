@@ -99,6 +99,16 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 			move_toplevel_to_adjacent_output(server, toplevel, 1);
 		}
 		break;
+	case GUIBUX_ACT_SNAP_LEFT:
+		if (toplevel != NULL) {
+			snap_toplevel_left(toplevel);
+		}
+		break;
+	case GUIBUX_ACT_SNAP_RIGHT:
+		if (toplevel != NULL) {
+			snap_toplevel_right(toplevel);
+		}
+		break;
 	}
 }
 
@@ -147,6 +157,12 @@ void keybinds_defaults(struct guibux_server *server) {
 		GUIBUX_ACT_MOVE_MON_LEFT, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_SHIFT, XKB_KEY_Right,
 		GUIBUX_ACT_MOVE_MON_RIGHT, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_Left,
+		GUIBUX_ACT_SNAP_LEFT, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_Right,
+		GUIBUX_ACT_SNAP_RIGHT, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_Up,
+		GUIBUX_ACT_FULLSCREEN, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_SHIFT, XKB_KEY_q,
 		GUIBUX_ACT_QUIT, 0);
 }

@@ -112,8 +112,18 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 	if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
 		struct guibux_output *o = NULL;
 		int ws = 0;
-		if (topbar_workspace_at(server, server->cursor->x, server->cursor->y,
-				&o, &ws)) {
+		if (topbar_workspace_at(server, server->cursor->x,
+				server->cursor->y, &o, &ws)) {
+			/* check window labels first */
+			struct guibux_toplevel *win = NULL;
+			if (o)
+				win = topbar_win_at(o,
+					server->cursor->x,
+					server->cursor->y);
+			if (win) {
+				focus_toplevel(win);
+				return;
+			}
 			if (ws != 0) {
 				switch_workspace(o, ws);
 			}

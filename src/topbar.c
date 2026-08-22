@@ -131,14 +131,142 @@ void topbar_render(struct guibux_output *o) {
 		x += cell_w;
 	}
 
+	/* vertical separator after workspaces */
+	int sep_gap = 12;
+	cairo_set_source_rgb(cr,
+		((server->color_border >> 16) & 0xFF) / 255.0,
+		((server->color_border >> 8) & 0xFF) / 255.0,
+		(server->color_border & 0xFF) / 255.0);
+	cairo_rectangle(cr, (int)((x + sep_gap / 2) * scale) - (int)(scale / 2.f),
+		(TOPBAR_H / 4) * scale, 1 * scale,
+		(TOPBAR_H / 2) * scale);
+	cairo_fill(cr);
+
+	/* render window titles between workspaces and date */
+	int win_x = x + sep_gap;
+	o->topbar_win_count = 0;
+	struct guibux_toplevel *t;
+	struct wlr_seat *seat = server->seat;
+	struct wlr_surface *kb_focus = seat->keyboard_state.focused_surface;
+	struct guibux_toplevel *kb_focus_t = NULL;
+	if (kb_focus) {
+		struct wlr_xdg_toplevel *kb_xdg =
+			wlr_xdg_toplevel_try_from_wlr_surface(kb_focus);
+		if (kb_xdg) {
+			wl_list_for_each(t, &server->toplevels, link) {
+				if (t->xdg_toplevel == kb_xdg) {
+					kb_focus_t = t;
+					break;
+				}
+			}
+		}
+	}
+
+	struct guibux_toplevel *wins[TOPBAR_WIN_MAX];
+	int nwins = 0;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->is_fullscreen || !toplevel_visible(t))
+			continue;
+		if (toplevel_output_for(t) != o->wlr_output)
+			continue;
+		if (t->workspace != o->current_workspace)
+			continue;
+		if (nwins < TOPBAR_WIN_MAX)
+			wins[nwins++] = t;
+	}
+
+	/* put focused first */
+	for (int i = 0; i < nwins; i++) {
+		if (wins[i] == kb_focus_t) {
+			struct guibux_toplevel *f = wins[i];
+			memmove(&wins[1], &wins[0], i * sizeof(*wins));
+			wins[0] = f;
+			break;
+		}
+	}
+
 	time_t now = time(NULL);
 	struct tm tm;
 	localtime_r(&now, &tm);
 	strftime(o->topbar_right, sizeof(o->topbar_right),
 		"%a %d %b %Y  %H:%M", &tm);
+	int date_w = guibux_text_width(server->launcher.face, o->topbar_right);
+	int date_x = w / scale - TOPBAR_PAD - date_w;
+	int win_end = date_x - sep_gap;
+	if (win_end < win_x)
+		win_end = win_x;
+
+	/* vertical separator before date */
+	if (win_x < date_x - sep_gap) {
+		cairo_set_source_rgb(cr,
+			((server->color_border >> 16) & 0xFF) / 255.0,
+			((server->color_border >> 8) & 0xFF) / 255.0,
+			(server->color_border & 0xFF) / 255.0);
+		cairo_rectangle(cr, (int)((date_x - sep_gap / 2) * scale) - (int)(scale / 2.f),
+			(TOPBAR_H / 4) * scale, 1 * scale,
+			(TOPBAR_H / 2) * scale);
+		cairo_fill(cr);
+	}
+
+	/* calculate max width per window to fit all in available space */
+	int avail = win_end - win_x;
+	int max_w = 30;
+	if (nwins > 0) {
+		int per = (avail - (nwins - 1) * TOPBAR_WIN_GAP) / nwins;
+		if (per < 30)
+			per = 30;
+		max_w = per;
+	}
+
+	int rendered = 0;
+	for (int i = 0; i < nwins && win_x < win_end; i++) {
+		char *title = wins[i]->xdg_toplevel->title ?
+			wins[i]->xdg_toplevel->title : "(untitled)";
+		char buf[64];
+		int tw = guibux_text_width(server->launcher.face, title);
+		if (tw > max_w - 16) {
+			snprintf(buf, sizeof(buf), "%.20s...", title);
+			tw = guibux_text_width(server->launcher.face, buf);
+			while (tw > max_w - 16 && strlen(buf) > 4) {
+				buf[strlen(buf) - 4] = '\0';
+				strcat(buf, "...");
+				tw = guibux_text_width(server->launcher.face, buf);
+			}
+		} else {
+			snprintf(buf, sizeof(buf), "%s", title);
+		}
+		int cell_w = tw + 16;
+		if (cell_w > max_w)
+			cell_w = max_w;
+		strncpy(o->topbar_win_titles[i], buf, 63);
+		o->topbar_win_titles[i][63] = '\0';
+		o->topbar_win_x[i] = win_x;
+		o->topbar_win_w[i] = cell_w;
+
+		if (wins[i] == kb_focus_t) {
+			set_color(cr, server->color_highlight);
+			cairo_rectangle(cr, win_x * scale,
+				(TOPBAR_H / 4) * scale,
+				cell_w * scale,
+				(TOPBAR_H / 2) * scale);
+			cairo_fill(cr);
+			launcher_draw_text_on_surface(cs,
+				server->launcher.face, buf,
+				(win_x + 8) * scale, baseline,
+				server->color_text);
+		} else {
+			launcher_draw_text_on_surface(cs,
+				server->launcher.face, buf,
+				(win_x + 8) * scale, baseline,
+				server->color_dim);
+		}
+		win_x += cell_w + TOPBAR_WIN_GAP;
+		rendered++;
+	}
+	o->topbar_win_count = rendered;
+
 	launcher_draw_text_on_surface(cs, server->launcher.face, o->topbar_right,
-		w - TOPBAR_PAD * scale -
-			guibux_text_width(server->launcher.face, o->topbar_right),
+		date_x * scale,
 		baseline, server->color_topbar_text);
 
 	cairo_destroy(cr);
@@ -148,6 +276,36 @@ void topbar_render(struct guibux_output *o) {
 		wlr_scene_buffer_set_buffer(o->topbar_node, o->topbar_buffer);
 	}
 	wlr_output_schedule_frame(o->wlr_output);
+}
+
+struct guibux_toplevel *topbar_win_at(struct guibux_output *o,
+		double lx, double ly) {
+	struct guibux_server *server = o->server;
+	if (o->topbar_buffer == NULL)
+		return NULL;
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+	if (lx < box.x || lx >= box.x + box.width ||
+			ly < box.y || ly >= box.y + TOPBAR_H)
+		return NULL;
+	double rel = lx - box.x;
+	struct guibux_toplevel *wins[TOPBAR_WIN_MAX];
+	int nwins = 0;
+	struct guibux_toplevel *t;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->is_fullscreen || !toplevel_visible(t))
+			continue;
+		if (toplevel_output_for(t) != o->wlr_output)
+			continue;
+		if (nwins < TOPBAR_WIN_MAX)
+			wins[nwins++] = t;
+	}
+	for (int i = 0; i < o->topbar_win_count && i < nwins; i++) {
+		if (rel >= o->topbar_win_x[i] &&
+				rel < o->topbar_win_x[i] + o->topbar_win_w[i])
+			return wins[i];
+	}
+	return NULL;
 }
 
 bool topbar_workspace_at(struct guibux_server *server, double lx,

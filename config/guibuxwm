@@ -16,7 +16,8 @@ term = gnome-terminal
 # modifiers: Mod (Super), Shift, Alt, Ctrl
 # actions: terminal, close, fullscreen, tile, launcher, focus-next,
 #          quit, workspace:N, move-workspace:N,
-#          move-monitor-left, move-monitor-right
+#          move-monitor-left, move-monitor-right,
+#          snap-left, snap-right
 keybind = Mod+Return: terminal
 keybind = Mod+q: close
 keybind = Mod+f: fullscreen
@@ -33,6 +34,9 @@ keybind = Mod+Shift+3: move-workspace:3
 keybind = Mod+Shift+4: move-workspace:4
 keybind = Mod+Shift+Left: move-monitor-left
 keybind = Mod+Shift+Right: move-monitor-right
+keybind = Mod+Left: snap-left
+keybind = Mod+Right: snap-right
+keybind = Mod+Up: fullscreen
 keybind = Mod+Shift+q: quit
 keybind = Alt+Escape: quit
 keybind = Mod+Alt+Escape: quit

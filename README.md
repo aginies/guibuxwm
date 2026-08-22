@@ -7,6 +7,7 @@ Derived from [tinywl](https://gitlab.freedesktop.org/wlroots/wlroots/-/tree/main
 
 - xdg-shell application windows: focus, move, resize, fullscreen
 - Tile modes (`Mod+t`): free / left-right split / main+stack, per monitor
+- Snap to half-screen (`Mod+Left` / `Mod+Right`): left or right 50% of monitor
 - Command box (`Mod+e`) to launch programs by typing a command, with
   `$PATH` command suggestions (Up/Down to select)
 - Topbar on each monitor: monitor letter (A, B, C, ...) on the left, date
@@ -85,6 +86,9 @@ Run:
 | `Mod+1..4` | Switch to workspace 1..4 on the focused window's monitor |
 | `Mod+Shift+1..4` | Move focused window to workspace 1..4 (same monitor) |
 | `Mod+Shift+Left` / `Mod+Shift+Right` | Move focused window to previous/next monitor |
+| `Mod+Left` | Snap focused window to left half of its monitor |
+| `Mod+Right` | Snap focused window to right half of its monitor |
+| `Mod+Up` | Fullscreen focused window |
 | `Mod+Shift+q` | Quit |
 | `Alt+Escape` | Quit |
 | `Mod+Alt+Escape` | Quit |
@@ -181,6 +185,8 @@ Syntax: `keybind = MODS+key: action`. At least one modifier is required:
 | `workspace:N` | Switch to workspace N (1..4) |
 | `move-workspace:N` | Move the focused window to workspace N (1..4) |
 | `move-monitor-left` / `move-monitor-right` | Move the focused window to the previous/next monitor |
+| `snap-left` | Snap the focused window to the left half of its monitor |
+| `snap-right` | Snap the focused window to the right half of its monitor |
 
 A config keybind with the same modifiers+key as a default replaces it,
 otherwise it is added. Defaults are listed in [Keybindings](#keybindings).
