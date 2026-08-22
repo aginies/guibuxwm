@@ -8,7 +8,7 @@ ROOT="$SCRIPT_DIR/.."
 COMP="$ROOT/build/guibuxwm"
 log=$(mktemp)
 GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_LAUNCHER_CMD="echo ok > /tmp/guibux-launcher-test" \
-  WLR_RENDERER=gles2 "$COMP" >"$log" 2>&1 &
+  GUIBUX_TERM=true WLR_RENDERER=gles2 "$COMP" >"$log" 2>&1 &
 comp=$!
 sleep 4
 kill $comp 2>/dev/null
