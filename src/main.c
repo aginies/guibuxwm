@@ -557,10 +557,10 @@ static struct wlr_output *toplevel_output_for(struct guibux_toplevel *toplevel) 
 	if (output != NULL) {
 		return output;
 	}
-	// output containing the window center
+	// output containing the window center (logical size, scale aware)
 	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
-	int w = surface->buffer ? surface->buffer->base.width : 0;
-	int h = surface->buffer ? surface->buffer->base.height : 0;
+	int w = surface->buffer ? surface->current.width : 0;
+	int h = surface->buffer ? surface->current.height : 0;
 	int cx = toplevel->scene_tree->node.x + w / 2;
 	int cy = toplevel->scene_tree->node.y + h / 2;
 	struct guibux_output *o;
@@ -620,10 +620,10 @@ static void move_toplevel_to_output(struct guibux_toplevel *toplevel,
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, output, &box);
 	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
-	int32_t w = (surface->buffer && surface->buffer->base.width > 0)
-		? surface->buffer->base.width : 800;
-	int32_t h = (surface->buffer && surface->buffer->base.height > 0)
-		? surface->buffer->base.height : 600;
+	int32_t w = (surface->buffer && surface->current.width > 0)
+		? surface->current.width : 800;
+	int32_t h = (surface->buffer && surface->current.height > 0)
+		? surface->current.height : 600;
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
 		box.x + (box.width - w) / 2,
 		box.y + (box.height - h) / 2);
@@ -811,6 +811,7 @@ static void server_new_keyboard(struct guibux_server *server,
 		wlr_log(WLR_ERROR, "failed to compile keymap for layout '%s'",
 			server->xkb_layout ? server->xkb_layout : "default");
 		xkb_context_unref(context);
+		free(keyboard);
 		return;
 	}
 	wlr_log(WLR_INFO, "keyboard layout: %s",
@@ -1144,7 +1145,12 @@ static void server_new_output(struct wl_listener *listener, void *data) {
 	}
 	struct wlr_scene_output *scene_output =
 		wlr_scene_output_create(server->scene, wlr_output);
-	wlr_scene_output_layout_add_output(server->scene_layout, l_output, scene_output);
+	if (l_output == NULL) {
+		wlr_log(WLR_ERROR, "%s: failed to add output to layout",
+			wlr_output->name);
+	} else {
+		wlr_scene_output_layout_add_output(server->scene_layout, l_output, scene_output);
+	}
 }
 
 static void place_toplevel(struct guibux_toplevel *toplevel) {
@@ -1578,10 +1584,18 @@ int main(int argc, char *argv[]) {
 
 	wl_list_remove(&server.new_output.link);
 
+	launcher_hide(&server);
 	wlr_scene_node_destroy(&server.scene->tree.node);
 	wlr_xcursor_manager_destroy(server.cursor_mgr);
 	wlr_cursor_destroy(server.cursor);
+	wlr_output_layout_destroy(server.output_layout);
 	wlr_allocator_destroy(server.allocator);
+	if (server.launcher.shm_alloc != NULL) {
+		wlr_allocator_destroy(server.launcher.shm_alloc);
+	}
+	if (server.launcher.ft != NULL) {
+		FT_Done_FreeType(server.launcher.ft);
+	}
 	wlr_renderer_destroy(server.renderer);
 	wlr_backend_destroy(server.backend);
 	wl_display_destroy(server.wl_display);
