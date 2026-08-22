@@ -191,17 +191,18 @@ void move_toplevel_to_output(struct guibux_toplevel *toplevel, struct wlr_output
 	wlr_log(WLR_INFO, "moved '%s' to output %s",
 		toplevel->xdg_toplevel->title ? toplevel->xdg_toplevel->title : "(untitled)",
 		output->name ? output->name : "(unknown)");
-	struct guibux_output *o;
-	if ((o = guibux_output_for(server, output)) != NULL) {
+	struct guibux_output *o = guibux_output_for(server, output);
+	if (o != NULL) {
 		toplevel->workspace = o->current_workspace;
+		if (o->tile_mode != GUIBUX_TILE_FREE) {
+			retile_output(o);
+		}
 	}
-	if ((o = guibux_output_for(server, src)) != NULL &&
-			o->tile_mode != GUIBUX_TILE_FREE) {
-		retile_output(o);
-	}
-	if ((o = guibux_output_for(server, output)) != NULL &&
-			o->tile_mode != GUIBUX_TILE_FREE) {
-		retile_output(o);
+	if (src != output) {
+		struct guibux_output *so = guibux_output_for(server, src);
+		if (so != NULL && so->tile_mode != GUIBUX_TILE_FREE) {
+			retile_output(so);
+		}
 	}
 }
 
@@ -209,30 +210,9 @@ void move_toplevel_to_adjacent_output(struct guibux_server *server,
 		struct guibux_toplevel *toplevel, int dir) {
 	struct wlr_output *sorted[16];
 	struct wlr_box boxes[16];
-	int n = 0;
-	struct guibux_output *o;
-	wl_list_for_each(o, &server->outputs, link) {
-		if (n >= 16) {
-			break;
-		}
-		sorted[n] = o->wlr_output;
-		wlr_output_layout_get_box(server->output_layout, o->wlr_output, &boxes[n]);
-		n++;
-	}
+	int n = outputs_sorted_by_x(server, sorted, boxes, 16);
 	if (n < 2) {
 		return;
-	}
-	for (int i = 1; i < n; i++) {
-		struct wlr_output *so = sorted[i];
-		struct wlr_box sb = boxes[i];
-		int j = i - 1;
-		while (j >= 0 && boxes[j].x > sb.x) {
-			sorted[j + 1] = sorted[j];
-			boxes[j + 1] = boxes[j];
-			j--;
-		}
-		sorted[j + 1] = so;
-		boxes[j + 1] = sb;
 	}
 	struct wlr_output *cur_output = toplevel_output_for(toplevel);
 	int cur = 0;
@@ -284,9 +264,9 @@ void snap_toplevel_right(struct guibux_toplevel *toplevel) {
 	}
 	int rx = box.width / 2;
 	int w = box.width - box.width / 2;
-	int h = box.height - TOPBAR_H;
+	int h = box.height - server->topbar_height;
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
-		box.x + rx, box.y + TOPBAR_H);
+		box.x + rx, box.y + server->topbar_height);
 	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, w, h);
 }
 

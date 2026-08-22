@@ -250,6 +250,12 @@ void load_config(struct guibux_server *server, const char *path) {
 				server->topbar_height = DEFAULT_TOPBAR_H;
 			}
 			wlr_log(WLR_INFO, "config: topbar_height = %d", server->topbar_height);
+		} else if (!strcmp(key, "topbar_font_size")) {
+			server->topbar_font_size = atoi(val);
+			if (server->topbar_font_size <= 0) {
+				server->topbar_font_size = DEFAULT_TOPBAR_FONT_SIZE;
+			}
+			wlr_log(WLR_INFO, "config: topbar_font_size = %d", server->topbar_font_size);
 		} else if (!strcmp(key, "background")) {
 			free(server->background_path);
 			server->background_path = strdup(val);
@@ -267,6 +273,9 @@ void load_config(struct guibux_server *server, const char *path) {
 				wlr_log(WLR_ERROR, "config: %s:%d: bad background_scale '%s' (expected stretch|fit|fill|tile)", path, lineno, val);
 			}
 			wlr_log(WLR_INFO, "config: background_scale = %s", val);
+		} else if (!strcmp(key, "screensaver_timeout")) {
+			screensaver_set_timeout(&server->screensaver, atoi(val));
+			wlr_log(WLR_INFO, "config: screensaver_timeout = %d", server->screensaver.timeout);
 		} else {
 			wlr_log(WLR_ERROR, "config: %s:%d: unknown key '%s'", path, lineno, key);
 		}

@@ -45,6 +45,7 @@ keybind = Alt+Escape: quit
 keybind = Mod+Alt+Escape: quit
 keybind = Ctrl+Alt+Left: switch-ws-left
 keybind = Ctrl+Alt+Right: switch-ws-right
+keybind = Mod+h: show-help
 
 # colors (#rrggbb)
 color_bg = #1e1e2e
@@ -59,8 +60,14 @@ topbar_text = #1e1e2e
 # topbar height in pixels (default: 24)
 topbar_height = 30
 
+# topbar font size in pixels (default: 16)
+#topbar_font_size = 16
+
 # desktop background image (PNG or JPEG)
 background = /home/aginies/Pictures/Emission_nebulae_in_Cassiopeia.jpg
 
 # background scale mode: stretch, fit, fill, tile (default: fill)
 #background_scale = fill
+
+# screensaver timeout in seconds (0 = disabled, default: 300)
+screensaver_timeout = 300

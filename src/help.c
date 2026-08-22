@@ -64,7 +64,7 @@ static void help_render(struct guibux_server *server) {
 	uint32_t format;
 	size_t stride;
 	if (!wlr_buffer_begin_data_ptr_access(h->buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &stride)) return;
+			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) return;
 	if (format != DRM_FORMAT_XRGB8888) {
 		wlr_buffer_end_data_ptr_access(h->buffer);
 		return;

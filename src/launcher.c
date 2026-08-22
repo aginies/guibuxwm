@@ -49,8 +49,10 @@ static void launcher_add_entry(struct guibux_launcher *l, const char *name, cons
 
 	if (l->num_entries % 256 == 0) {
 		int newcap = l->num_entries + 256;
-		l->entries = realloc(l->entries ? l->entries : 0,
+		struct launcher_entry *new_entries = realloc(l->entries ? l->entries : 0,
 			(size_t)newcap * sizeof(struct launcher_entry));
+		if (!new_entries) return;
+		l->entries = new_entries;
 	}
 	l->entries[l->num_entries].name = strdup(name);
 	l->entries[l->num_entries].exec = strdup(exec);
@@ -228,7 +230,7 @@ static void launcher_render(struct guibux_server *server) {
 	uint32_t format;
 	size_t stride;
 	if (!wlr_buffer_begin_data_ptr_access(l->buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &stride)) {
+			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) {
 		wlr_log(WLR_ERROR, "launcher: cannot access buffer data");
 		return;
 	}

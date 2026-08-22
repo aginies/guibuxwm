@@ -4,7 +4,6 @@
 #include <time.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/render/allocator.h>
-#include <wlr/types/wlr_buffer.h>
 
 // width in px of text at the face's current pixel size
 // cache: store advance width per char for current font size
@@ -136,7 +135,7 @@ void topbar_render(struct guibux_output *o) {
 	uint32_t format;
 	size_t stride;
 	if (!wlr_buffer_begin_data_ptr_access(o->topbar_buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &stride)) {
+			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) {
 		wlr_log(WLR_ERROR, "topbar: cannot access buffer data");
 		return;
 	}
@@ -156,7 +155,7 @@ void topbar_render(struct guibux_output *o) {
 	cairo_rectangle(cr, 0, h - scale, w, scale);
 	cairo_fill(cr);
 
-	int font_px = TOPBAR_FONT_PX * scale;
+	int font_px = server->topbar_font_size * scale;
 	FT_Set_Pixel_Sizes(server->launcher.face, 0, font_px);
 	int baseline = o->server->topbar_height / 2 * scale + font_px * 35 / 100;
 
@@ -292,12 +291,16 @@ void topbar_render(struct guibux_output *o) {
 		char buf[64];
 		int tw = guibux_text_width(server->launcher.face, title);
 		if (tw > max_w - 16) {
-			snprintf(buf, sizeof(buf), "%.20s...", title);
-			tw = guibux_text_width(server->launcher.face, buf);
-			while (tw > max_w - 16 && strlen(buf) > 4) {
-				buf[strlen(buf) - 4] = '\0';
-				strcat(buf, "...");
+			int max_len = (int)strlen(title);
+			for (int trunc = max_len; trunc >= 4; trunc--) {
+				snprintf(buf, sizeof(buf), "%.*s...", trunc - 3, title);
 				tw = guibux_text_width(server->launcher.face, buf);
+				if (tw <= max_w - 16) {
+					break;
+				}
+			}
+			if (tw > max_w - 16) {
+				snprintf(buf, sizeof(buf), "%.2s...", title);
 			}
 		} else {
 			snprintf(buf, sizeof(buf), "%s", title);

@@ -22,6 +22,11 @@
 #include FT_FREETYPE_H
 #include <dbus/dbus.h>
 
+#ifdef WLR_USE_UNSTABLE
+#include <wlr/types/wlr_idle_inhibit_v1.h>
+#include <wlr/types/wlr_idle_notify_v1.h>
+#endif
+
 #define CASCADE_STEP 40
 #define CASCADE_MAX 6
 #define MAX_OUTPUT_PLACEMENTS 8
@@ -29,7 +34,7 @@
 #define LAUNCHER_MAX_COMMANDS 4096
 #define TOPBAR_H 24
 #define DEFAULT_TOPBAR_H 24
-#define TOPBAR_FONT_PX 14
+#define DEFAULT_TOPBAR_FONT_SIZE 16
 #define TOPBAR_PAD 8
 #define NUM_WORKSPACES 4
 #define NUM_KEYBINDS 64
@@ -306,6 +311,7 @@ struct guibux_server {
 	char *xkb_variant;
 	char *xkb_options;
 	int topbar_height;
+	int topbar_font_size;
 	char *background_path;
 	enum guibux_bg_scale background_scale;
 	struct guibux_keybind keybinds[NUM_KEYBINDS];
@@ -327,6 +333,16 @@ struct guibux_launcher launcher;
     struct guibux_sysinfo sysinfo;
 	struct guibux_switcher switcher;
 	struct guibux_help help;
+	struct guibux_screensaver {
+		struct guibux_server *server;
+		int timeout;
+		bool active;
+		bool dpms_off;
+		struct wl_event_source *timer;
+		struct wlr_idle_inhibit_manager_v1 *idle_inhibit;
+		struct wl_listener inhibit_new;
+		struct wlr_idle_notifier_v1 *idle_notify;
+	} screensaver;
     uint32_t last_topbar_click_time;
     struct guibux_toplevel *last_topbar_click_win;
     struct guibux_output *cursor_topbar_output;
@@ -460,5 +476,14 @@ int workspace_test_run(void *data);
 int tile_test_run(void *data);
 int keybind_test_run(void *data);
 int psel_test_run(void *data);
+
+/* screensaver.c */
+void screensaver_init(struct guibux_server *server);
+void screensaver_destroy(struct guibux_server *server);
+void screensaver_set_timeout(struct guibux_screensaver *ss, int seconds);
+void screensaver_notify_activity(struct guibux_server *server);
+void screensaver_turn_off(struct guibux_server *server);
+void screensaver_turn_on(struct guibux_server *server);
+void screensaver_update_inhibited(struct guibux_server *server);
 
 #endif /* GUIBUXWM_H */

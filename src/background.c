@@ -53,9 +53,11 @@ void background_render(struct guibux_output *o) {
 	int w = box.width * scale;
 	int h = box.height * scale;
 
-	if (o->bg_buffer && (o->bg_w != w || o->bg_h != h)) {
+	if (o->bg_buffer && (o->bg_w != box.width || o->bg_h != box.height)) {
 		wlr_buffer_drop(o->bg_buffer);
 		o->bg_buffer = NULL;
+		o->bg_w = 0;
+		o->bg_h = 0;
 	}
 
 	if (!o->bg_buffer) {
@@ -72,15 +74,15 @@ void background_render(struct guibux_output *o) {
 				o->wlr_output->name ? o->wlr_output->name : "(unknown)");
 			return;
 		}
-		o->bg_w = w;
-		o->bg_h = h;
+		o->bg_w = box.width;
+		o->bg_h = box.height;
 	}
 
 	void *data;
 	uint32_t format;
 	size_t stride;
 	if (!wlr_buffer_begin_data_ptr_access(o->bg_buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &stride)) {
+			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) {
 		wlr_log(WLR_ERROR, "background: cannot access buffer data");
 		return;
 	}

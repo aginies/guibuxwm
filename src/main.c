@@ -39,6 +39,7 @@
 
 #include "guibuxwm.h"
 #include <getopt.h>
+#include <limits.h>
 #include <wlr/backend.h>
 #include <wlr/backend/headless.h>
 #include <wlr/render/allocator.h>
@@ -87,7 +88,9 @@ int main(int argc, char *argv[]) {
 	server.color_topbar_bg = DEFAULT_COLOR_TOPBAR_BG;
 	server.color_topbar_text = DEFAULT_COLOR_TOPBAR_TEXT;
 	server.topbar_height = DEFAULT_TOPBAR_H;
+	server.topbar_font_size = DEFAULT_TOPBAR_FONT_SIZE;
 	server.background_scale = BG_FILL;
+	server.screensaver.timeout = 300;
 	keybinds_defaults(&server);
 
 	if (config_path == NULL) {
@@ -106,7 +109,7 @@ int main(int argc, char *argv[]) {
 		load_config(&server, config_path);
 	}
 	if (server.background_path == NULL) {
-		server.background_path = strdup("/home/aginies/Pictures/Emission_nebulae_in_Cassiopeia.jpg");
+		// no default background; user must set via config or env
 	}
 
 	if (server.term_cmd == NULL) {
@@ -174,6 +177,8 @@ int main(int argc, char *argv[]) {
 	server.scene_layout = wlr_scene_attach_output_layout(server.scene, server.output_layout);
 
 	launcher_init(&server);
+	screensaver_init(&server);
+	server.screensaver.active = server.screensaver.timeout > 0;
 
 	wl_list_init(&server.toplevels);
 	server.xdg_shell = wlr_xdg_shell_create(server.wl_display, 3);
@@ -258,7 +263,7 @@ int main(int argc, char *argv[]) {
 	server.topbar_timer = wl_event_loop_add_timer(
 		wl_display_get_event_loop(server.wl_display),
 		topbar_tick, &server);
-	wl_event_source_timer_update(server.topbar_timer, 1000);
+	wl_event_source_timer_update(server.topbar_timer, 500);
 
 	server.sysinfo_timer = wl_event_loop_add_timer(
 		wl_display_get_event_loop(server.wl_display),

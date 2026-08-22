@@ -159,6 +159,7 @@ it to `~/.config/guibuxwm/config` and edit.
 | `topbar_bg` | Topbar background (default: openSUSE green) | `topbar_bg = #73ba25` |
 | `topbar_text` | Topbar text (monitor letter, workspaces, date/time) | `topbar_text = #1e1e2e` |
 | `topbar_height` | Topbar height in pixels (default: 24) | `topbar_height = 28` |
+| `topbar_font_size` | Topbar font size in pixels (default: 16) | `topbar_font_size = 18` |
 | `background` | Desktop background image path (PNG or JPEG) | `background = ~/wallpaper.jpg` |
 | `background_scale` | Background scale mode: `stretch`, `fit`, `fill`, `tile` (default: `fill`) | `background_scale = fill` |
 

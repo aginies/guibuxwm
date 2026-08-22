@@ -1,6 +1,6 @@
 project('guibuxwm', 'c',
   version: '0.1.0',
-  default_options: ['c_std=gnu11', 'warning_level=2', 'buildtype=release', 'install_strip=true'],
+  default_options: ['c_std=gnu11', 'warning_level=2', 'buildtype=release'],
 )
 
 add_project_arguments('-ffunction-sections', '-fdata-sections', language: 'c')
@@ -18,7 +18,7 @@ executable('guibuxwm',
     'src/window-layout.c', 'src/topbar.c', 'src/launcher.c', 'src/switcher.c', 'src/help.c',
     'src/keyboard.c',
     'src/config.c', 'src/cursor.c', 'src/popup.c', 'src/wm-test.c',
-    'src/sysinfo.c', 'src/background.c'],
+    'src/sysinfo.c', 'src/background.c', 'src/screensaver.c'],
   c_args: ['-DWLR_USE_UNSTABLE', '-Wno-unused-parameter'],
   dependencies: [wlroots_dep, wayland_dep, xkbcommon_dep, freetype_dep, cairo_dep, dbus_dep],
   install: true,

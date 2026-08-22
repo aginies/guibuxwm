@@ -20,7 +20,7 @@ static void switcher_render(struct guibux_server *server) {
 	uint32_t format;
 	size_t stride;
 	if (!wlr_buffer_begin_data_ptr_access(s->buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &stride)) {
+			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) {
 		return;
 	}
 	if (format != DRM_FORMAT_XRGB8888) {

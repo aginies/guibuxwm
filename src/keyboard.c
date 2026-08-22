@@ -19,7 +19,7 @@ void spawn_terminal(struct guibux_server *server) {
 void spawn_network_info(struct guibux_server *server) {
 	char cmd[512];
 	snprintf(cmd, sizeof(cmd),
-		"sh -c '%s -- bash -c \"nmcli -t -f DEVICE,TYPE,STATE,CONNECTION,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS device show 2>/dev/null || nmcli device show; read -p \\\"\\nPress enter\\\"\"'",
+		"%s -- bash -c \"nmcli -t -f DEVICE,TYPE,STATE,CONNECTION,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS device show 2>/dev/null || nmcli device show; read -p '\\nPress enter'\"",
 		server->term_cmd);
 	pid_t pid = fork();
 	if (pid < 0) {
@@ -256,6 +256,8 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 		wl_container_of(listener, keyboard, key);
 	struct guibux_server *server = keyboard->server;
 	struct wlr_seat *seat = server->seat;
+
+	screensaver_notify_activity(server);
 
 	struct wlr_keyboard_key_event *event = data;
 	uint32_t keycode = event->keycode + 8;

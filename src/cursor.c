@@ -93,6 +93,7 @@ void server_cursor_motion(struct wl_listener *listener, void *data) {
 	struct guibux_server *server =
 		wl_container_of(listener, server, cursor_motion);
 	struct wlr_pointer_motion_event *event = data;
+	screensaver_notify_activity(server);
 	wlr_cursor_move(server->cursor, &event->pointer->base,
 		event->delta_x, event->delta_y);
 	process_cursor_motion(server, event->time_msec);
@@ -102,6 +103,7 @@ void server_cursor_motion_absolute(struct wl_listener *listener, void *data) {
 	struct guibux_server *server =
 		wl_container_of(listener, server, cursor_motion_absolute);
 	struct wlr_pointer_motion_absolute_event *event = data;
+	screensaver_notify_activity(server);
 	wlr_cursor_warp_absolute(server->cursor, &event->pointer->base, event->x,
 		event->y);
 	process_cursor_motion(server, event->time_msec);
@@ -111,6 +113,7 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 	struct guibux_server *server =
 		wl_container_of(listener, server, cursor_button);
 	struct wlr_pointer_button_event *event = data;
+	screensaver_notify_activity(server);
 	if (server->launcher.active &&
 			event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
 		launcher_hide(server);
@@ -166,6 +169,7 @@ void server_cursor_axis(struct wl_listener *listener, void *data) {
 	struct guibux_server *server =
 		wl_container_of(listener, server, cursor_axis);
 	struct wlr_pointer_axis_event *event = data;
+	screensaver_notify_activity(server);
 	wlr_seat_pointer_notify_axis(server->seat,
 		event->time_msec, event->orientation, event->delta,
 		event->delta_discrete, event->source, event->relative_direction);
