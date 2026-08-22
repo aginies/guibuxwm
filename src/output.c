@@ -184,6 +184,7 @@ void server_new_output(struct wl_listener *listener, void *data) {
 		wlr_scene_output_layout_add_output(server->scene_layout, l_output, scene_output);
 	}
 	topbar_create(output);
+	background_create(output);
 	topbar_renumber(server);
 }
 
@@ -212,6 +213,7 @@ void output_destroy(struct wl_listener *listener, void *data) {
 	struct guibux_server *server = output->server;
 
 	topbar_destroy(output);
+	background_destroy(output);
 	topbar_renumber(server);
 
 	wl_list_remove(&output->frame.link);

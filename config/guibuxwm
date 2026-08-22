@@ -55,3 +55,12 @@ color_dim = #8888aa
 # topbar (openSUSE green)
 topbar_bg = #73ba25
 topbar_text = #1e1e2e
+
+# topbar height in pixels (default: 24)
+#topbar_height = 28
+
+# desktop background image (PNG or JPEG)
+background = /home/aginies/Pictures/Emission_nebulae_in_Cassiopeia.jpg
+
+# background scale mode: stretch, fit, fill, tile (default: fill)
+#background_scale = fill

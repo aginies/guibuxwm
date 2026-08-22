@@ -106,7 +106,7 @@ void topbar_render(struct guibux_output *o) {
 	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
 	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
 	int w = box.width;
-	int h = TOPBAR_H * scale;
+	int h = o->server->topbar_height * scale;
 
 	/* resize buffer if output dimensions changed */
 	if (o->topbar_buffer_w != w || o->topbar_buffer_h != h) {
@@ -158,7 +158,7 @@ void topbar_render(struct guibux_output *o) {
 
 	int font_px = TOPBAR_FONT_PX * scale;
 	FT_Set_Pixel_Sizes(server->launcher.face, 0, font_px);
-	int baseline = TOPBAR_H / 2 * scale + font_px * 35 / 100;
+	int baseline = o->server->topbar_height / 2 * scale + font_px * 35 / 100;
 
 	char left[16];
 	snprintf(left, sizeof(left), "%c", 'A' + (o->topbar_number - 1));
@@ -174,8 +174,8 @@ void topbar_render(struct guibux_output *o) {
 		snprintf(num, sizeof(num), "%d", ws);
 		if (ws == o->current_workspace) {
 			set_color(cr, server->color_highlight);
-			cairo_rectangle(cr, x * scale, (TOPBAR_H / 4) * scale,
-				cell_w * scale, (TOPBAR_H / 2) * scale);
+			cairo_rectangle(cr, x * scale, (o->server->topbar_height / 4) * scale,
+				cell_w * scale, (o->server->topbar_height / 2) * scale);
 			cairo_fill(cr);
 			launcher_draw_text_on_surface(cs, server->launcher.face, num,
 				(x + 4) * scale, baseline, server->color_text);
@@ -193,8 +193,8 @@ void topbar_render(struct guibux_output *o) {
 		((server->color_border >> 8) & 0xFF) / 255.0,
 		(server->color_border & 0xFF) / 255.0);
 	cairo_rectangle(cr, (int)((x + sep_gap / 2) * scale) - (int)(scale / 2.f),
-		(TOPBAR_H / 4) * scale, 1 * scale,
-		(TOPBAR_H / 2) * scale);
+		(o->server->topbar_height / 4) * scale, 1 * scale,
+		(o->server->topbar_height / 2) * scale);
 	cairo_fill(cr);
 
 	/* render window titles between workspaces and date */
@@ -270,8 +270,8 @@ void topbar_render(struct guibux_output *o) {
 			((server->color_border >> 8) & 0xFF) / 255.0,
 			(server->color_border & 0xFF) / 255.0);
 		cairo_rectangle(cr, (int)((win_end + sep_gap / 2) * scale) - (int)(scale / 2.f),
-			(TOPBAR_H / 4) * scale, 1 * scale,
-			(TOPBAR_H / 2) * scale);
+			(o->server->topbar_height / 4) * scale, 1 * scale,
+			(o->server->topbar_height / 2) * scale);
 		cairo_fill(cr);
 	}
 
@@ -312,9 +312,9 @@ void topbar_render(struct guibux_output *o) {
 		if (wins[i] == kb_focus_t) {
 			set_color(cr, server->color_highlight);
 			cairo_rectangle(cr, win_x * scale,
-				(TOPBAR_H / 4) * scale,
+				(o->server->topbar_height / 4) * scale,
 				cell_w * scale,
-				(TOPBAR_H / 2) * scale);
+				(o->server->topbar_height / 2) * scale);
 			cairo_fill(cr);
 			launcher_draw_text_on_surface(cs,
 				server->launcher.face, buf,
@@ -343,8 +343,8 @@ void topbar_render(struct guibux_output *o) {
 			((server->color_border >> 8) & 0xFF) / 255.0,
 			(server->color_border & 0xFF) / 255.0);
 		cairo_rectangle(cr, (int)((date_x - 2) * scale) - (int)(scale / 2.f),
-			(TOPBAR_H / 4) * scale, 1 * scale,
-			(TOPBAR_H / 2) * scale);
+			(o->server->topbar_height / 4) * scale, 1 * scale,
+			(o->server->topbar_height / 2) * scale);
 		cairo_fill(cr);
 	}
 
@@ -388,7 +388,7 @@ struct guibux_toplevel *topbar_win_at(struct guibux_output *o,
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
 	if (lx < box.x || lx >= box.x + box.width ||
-			ly < box.y || ly >= box.y + TOPBAR_H)
+			ly < box.y || ly >= box.y + o->server->topbar_height)
 		return NULL;
 	double rel = lx - box.x;
 	struct guibux_toplevel *wins[TOPBAR_WIN_MAX];
@@ -420,7 +420,7 @@ bool topbar_workspace_at(struct guibux_server *server, double lx,
 		struct wlr_box box;
 		wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
 		if (lx < box.x || lx >= box.x + box.width ||
-				ly < box.y || ly >= box.y + TOPBAR_H) {
+				ly < box.y || ly >= box.y + o->server->topbar_height) {
 			continue;
 		}
 		if (output != NULL) {
@@ -451,7 +451,7 @@ bool topbar_network_at(struct guibux_server *server, double lx, double ly) {
 		struct wlr_box box;
 		wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
 		if (lx < box.x || lx >= box.x + box.width ||
-				ly < box.y || ly >= box.y + TOPBAR_H) {
+				ly < box.y || ly >= box.y + o->server->topbar_height) {
 			continue;
 		}
 		double rel = lx - box.x;
@@ -484,14 +484,14 @@ void topbar_create(struct guibux_output *o) {
 		.modifiers = mods,
 	};
 	o->topbar_buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-		box.width, TOPBAR_H * scale, &format);
+		box.width, o->server->topbar_height * scale, &format);
 	if (o->topbar_buffer == NULL) {
 		wlr_log(WLR_ERROR, "topbar: failed to create buffer on %s",
 			o->wlr_output->name ? o->wlr_output->name : "(unknown)");
 		return;
 	}
 	o->topbar_buffer_w = box.width;
-	o->topbar_buffer_h = TOPBAR_H * scale;
+	o->topbar_buffer_h = o->server->topbar_height * scale;
 	o->topbar_node = wlr_scene_buffer_create(&server->scene->tree, o->topbar_buffer);
 	wlr_scene_node_set_position(&o->topbar_node->node, box.x, box.y);
 	o->topbar_dirty = true;

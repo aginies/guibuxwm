@@ -86,6 +86,8 @@ int main(int argc, char *argv[]) {
 	server.color_dim = DEFAULT_COLOR_DIM;
 	server.color_topbar_bg = DEFAULT_COLOR_TOPBAR_BG;
 	server.color_topbar_text = DEFAULT_COLOR_TOPBAR_TEXT;
+	server.topbar_height = DEFAULT_TOPBAR_H;
+	server.background_scale = BG_FILL;
 	keybinds_defaults(&server);
 
 	if (config_path == NULL) {
@@ -102,6 +104,9 @@ int main(int argc, char *argv[]) {
 	}
 	if (config_path != NULL) {
 		load_config(&server, config_path);
+	}
+	if (server.background_path == NULL) {
+		server.background_path = strdup("/home/aginies/Pictures/Emission_nebulae_in_Cassiopeia.jpg");
 	}
 
 	if (server.term_cmd == NULL) {
@@ -358,5 +363,6 @@ int main(int argc, char *argv[]) {
 	free(server.xkb_layout);
 	free(server.xkb_variant);
 	free(server.xkb_options);
+	free(server.background_path);
 	return 0;
 }

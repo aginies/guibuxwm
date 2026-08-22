@@ -136,21 +136,31 @@ static void launcher_parse_desktop(const char *filepath, struct guibux_launcher 
 }
 
 static void launcher_load_desktop_files(struct guibux_launcher *l) {
-	const char *dirs[3] = {
+	const char *dirs[5] = {
 		"/usr/share/applications",
 		"/usr/local/share/applications",
+		"/var/lib/flatpak/exports/share/applications",
+		NULL,
 		NULL,
 	};
+	int dir_count = 3;
 	int saved_num = l->num_entries;
 
 	char homedir[PATH_MAX];
 	const char *home = getenv("HOME");
 	if (home) {
 		snprintf(homedir, sizeof(homedir), "%s/.local/share/applications", home);
-		dirs[2] = homedir;
+		dirs[3] = homedir;
+		dir_count++;
+
+		char flatpak_home[PATH_MAX];
+		snprintf(flatpak_home, sizeof(flatpak_home),
+			"%s/.local/share/flatpak/exports/share/applications", home);
+		dirs[4] = flatpak_home;
+		dir_count++;
 	}
 
-	for (int d = 0; d < 3; d++) {
+	for (int d = 0; d < dir_count; d++) {
 		if (!dirs[d]) continue;
 		DIR *dir = opendir(dirs[d]);
 		if (!dir) continue;

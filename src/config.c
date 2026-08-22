@@ -242,6 +242,29 @@ void load_config(struct guibux_server *server, const char *path) {
 			} else {
 				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
 			}
+		} else if (!strcmp(key, "topbar_height")) {
+			server->topbar_height = atoi(val);
+			if (server->topbar_height <= 0) {
+				server->topbar_height = DEFAULT_TOPBAR_H;
+			}
+			wlr_log(WLR_INFO, "config: topbar_height = %d", server->topbar_height);
+		} else if (!strcmp(key, "background")) {
+			free(server->background_path);
+			server->background_path = strdup(val);
+			wlr_log(WLR_INFO, "config: background = %s", val);
+		} else if (!strcmp(key, "background_scale")) {
+			if (!strcmp(val, "stretch")) {
+				server->background_scale = BG_STRETCH;
+			} else if (!strcmp(val, "fit")) {
+				server->background_scale = BG_FIT;
+			} else if (!strcmp(val, "fill")) {
+				server->background_scale = BG_FILL;
+			} else if (!strcmp(val, "tile")) {
+				server->background_scale = BG_TILE;
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad background_scale '%s' (expected stretch|fit|fill|tile)", path, lineno, val);
+			}
+			wlr_log(WLR_INFO, "config: background_scale = %s", val);
 		} else {
 			wlr_log(WLR_ERROR, "config: %s:%d: unknown key '%s'", path, lineno, key);
 		}

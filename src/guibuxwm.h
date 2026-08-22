@@ -2,6 +2,7 @@
 #define GUIBUXWM_H
 
 #include <cairo.h>
+#include <cairo-svg.h>
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_scene.h>
@@ -27,6 +28,7 @@
 #define LAUNCHER_MAX_MATCHES 8
 #define LAUNCHER_MAX_COMMANDS 4096
 #define TOPBAR_H 24
+#define DEFAULT_TOPBAR_H 24
 #define TOPBAR_FONT_PX 14
 #define TOPBAR_PAD 8
 #define NUM_WORKSPACES 4
@@ -60,6 +62,13 @@ enum guibux_tile_mode {
 	GUIBUX_TILE_FREE,
 	GUIBUX_TILE_SPLIT,
 	GUIBUX_TILE_MAIN_STACK,
+};
+
+enum guibux_bg_scale {
+	BG_STRETCH,
+	BG_FIT,
+	BG_FILL,
+	BG_TILE,
 };
 
 enum guibux_action {
@@ -125,6 +134,10 @@ struct guibux_output {
     int topbar_net_w;
     int topbar_ws_x[NUM_WORKSPACES + 1];
 	int topbar_ws_cell_w;
+	struct wlr_scene_buffer *bg_node;
+	struct wlr_buffer *bg_buffer;
+	int bg_w, bg_h;
+	cairo_surface_t *bg_surface;
 #define TOPBAR_WIN_W 100
 #define TOPBAR_WIN_GAP 8
 #define TOPBAR_WIN_MAX 64
@@ -239,6 +252,9 @@ struct guibux_server {
 	char *xkb_layout;
 	char *xkb_variant;
 	char *xkb_options;
+	int topbar_height;
+	char *background_path;
+	enum guibux_bg_scale background_scale;
 	struct guibux_keybind keybinds[NUM_KEYBINDS];
 	int num_keybinds;
 	uint32_t color_bg, color_border, color_highlight, color_text, color_dim;
@@ -315,6 +331,11 @@ int guibux_text_width(FT_Face face, const char *text);
 int launcher_draw_text_on_surface(cairo_surface_t *cs, FT_Face face,
 	const char *text, int x, int baseline, uint32_t color);
 void set_color(cairo_t *cr, uint32_t c);
+
+/* background.c */
+void background_create(struct guibux_output *o);
+void background_destroy(struct guibux_output *o);
+void background_render(struct guibux_output *o);
 
 /* launcher.c */
 void launcher_init(struct guibux_server *server);
