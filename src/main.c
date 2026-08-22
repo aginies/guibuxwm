@@ -28,6 +28,7 @@
 //       Mod+Shift+Left/Right  move window to previous/next monitor
 //       Mod+Shift+q           quit
 //       Alt+Escape            quit
+//       Mod+Alt+Escape        quit
 //   - config file: -c flag, GUIBUX_CONFIG env or ~/.config/guibuxwm/config
 //     (keybinds, terminal, keyboard layout/variant/options, colors)
 //
@@ -2419,6 +2420,8 @@ static void keybind_add(struct guibux_server *server, uint32_t modifiers,
 
 static void keybinds_defaults(struct guibux_server *server) {
 	keybind_add(server, WLR_MODIFIER_ALT, XKB_KEY_Escape, GUIBUX_ACT_QUIT, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_ALT, XKB_KEY_Escape,
+		GUIBUX_ACT_QUIT, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_Return, GUIBUX_ACT_TERMINAL, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_q, GUIBUX_ACT_CLOSE, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_f, GUIBUX_ACT_FULLSCREEN, 0);

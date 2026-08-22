@@ -35,6 +35,7 @@ keybind = Mod+Shift+Left: move-monitor-left
 keybind = Mod+Shift+Right: move-monitor-right
 keybind = Mod+Shift+q: quit
 keybind = Alt+Escape: quit
+keybind = Mod+Alt+Escape: quit
 
 # colors (#rrggbb)
 color_bg = #1e1e2e

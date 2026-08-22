@@ -87,6 +87,7 @@ Run:
 | `Mod+Shift+Left` / `Mod+Shift+Right` | Move focused window to previous/next monitor |
 | `Mod+Shift+q` | Quit |
 | `Alt+Escape` | Quit |
+| `Mod+Alt+Escape` | Quit |
 
 Mouse: click a window to focus it, drag its titlebar to move, drag its
 edges to resize. Dragging or resizing a fullscreen window leaves fullscreen.
