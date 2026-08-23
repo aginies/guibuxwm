@@ -277,11 +277,16 @@ void launcher_free_commands(struct guibux_launcher *l) {
 	free(l->entries);
 	l->entries = NULL;
 	l->num_entries = 0;
+	for (int i = 0; i < l->num_preferred; i++) {
+		free(l->preferred[i].name);
+		free(l->preferred[i].exec);
+	}
+	l->num_preferred = 0;
 }
 
 void launcher_filter(struct guibux_launcher *l) {
 	l->num_matches = 0;
-	l->selection = 0;
+	l->selection = -1;
 	if (l->text[0] == '\0' || l->num_entries == 0) {
 		return;
 	}
@@ -305,6 +310,9 @@ void launcher_filter(struct guibux_launcher *l) {
 				l->matches[l->num_matches++] = i;
 			}
 		}
+	}
+	if (l->num_matches > 0) {
+		l->selection = l->num_preferred;
 	}
 }
 
@@ -344,7 +352,33 @@ static void launcher_render(struct guibux_server *server) {
 	int font_px = LAUNCHER_FONT_PX * l->box_scale;
 	FT_Set_Pixel_Sizes(l->face, 0, font_px);
 	int pad = 12 * l->box_scale;
-	int baseline = LAUNCHER_BOX_H / 2 * l->box_scale + font_px * 35 / 100;
+	int np = l->num_preferred;
+
+	for (int i = 0; i < np; i++) {
+		int ly = i * LAUNCHER_LINE_H * l->box_scale;
+		int lh = LAUNCHER_LINE_H * l->box_scale;
+		if (i == l->selection) {
+			set_color(cr, server->color_highlight);
+			cairo_rectangle(cr, l->box_scale, ly, w - 2 * l->box_scale, lh);
+			cairo_fill(cr);
+		}
+		int mb = ly + lh / 2 + font_px * 35 / 100;
+		uint32_t mc = (i == l->selection) ? server->color_text :
+			server->color_dim;
+		launcher_draw_text_on_surface(cs, l->face, l->preferred[i].name, pad, mb, mc);
+	}
+
+	if (np > 0) {
+		set_color(cr, server->color_border);
+		cairo_set_line_width(cr, l->box_scale);
+		double sy = np * LAUNCHER_LINE_H * l->box_scale;
+		cairo_move_to(cr, l->box_scale, sy);
+		cairo_line_to(cr, w - l->box_scale, sy);
+		cairo_stroke(cr);
+	}
+
+	int prompt_y = np * LAUNCHER_LINE_H * l->box_scale;
+	int baseline = prompt_y + LAUNCHER_BOX_H / 2 * l->box_scale + font_px * 35 / 100;
 	int x = pad;
 	x += launcher_draw_text_on_surface(cs, l->face, "$ ", x, baseline, server->color_text)
 		+ 4 * l->box_scale;
@@ -355,15 +389,15 @@ static void launcher_render(struct guibux_server *server) {
 	cairo_fill(cr);
 
 	for (int i = 0; i < l->num_matches; i++) {
-		int ly = (LAUNCHER_BOX_H + i * LAUNCHER_LINE_H) * l->box_scale;
+		int ly = (LAUNCHER_BOX_H + (np + i) * LAUNCHER_LINE_H) * l->box_scale;
 		int lh = LAUNCHER_LINE_H * l->box_scale;
-		if (i == l->selection) {
+		if (np + i == l->selection) {
 			set_color(cr, server->color_highlight);
 			cairo_rectangle(cr, l->box_scale, ly, w - 2 * l->box_scale, lh);
 			cairo_fill(cr);
 		}
 		int mb = ly + lh / 2 + font_px * 35 / 100;
-		uint32_t mc = (i == l->selection) ? server->color_text :
+		uint32_t mc = (np + i == l->selection) ? server->color_text :
 			server->color_dim;
 		launcher_draw_text_on_surface(cs, l->face, l->entries[l->matches[i]].name, pad, mb, mc);
 	}
@@ -413,7 +447,7 @@ void launcher_show(struct guibux_server *server) {
 		bw = ew - 20;
 	}
 	l->box_w = bw;
-	l->box_h = LAUNCHER_BOX_H + LAUNCHER_MAX_MATCHES * LAUNCHER_LINE_H;
+	l->box_h = LAUNCHER_BOX_H + (LAUNCHER_MAX_MATCHES + l->num_preferred) * LAUNCHER_LINE_H;
 	l->box_scale = scale;
 	l->output = output;
 
@@ -436,7 +470,7 @@ void launcher_show(struct guibux_server *server) {
 	l->text[0] = '\0';
 	l->text_len = 0;
 	l->num_matches = 0;
-	l->selection = 0;
+	l->selection = -1;
 	l->active = true;
 	wlr_log(WLR_INFO, "launcher: shown");
 	launcher_render(server);
@@ -472,8 +506,14 @@ bool launcher_handle_key(struct guibux_server *server, xkb_keysym_t sym) {
 	case XKB_KEY_Return:
 	case XKB_KEY_KP_Enter: {
 		char cmd[512];
-		if (l->num_matches > 0 && l->selection < l->num_matches) {
-			const char *exec = l->entries[l->matches[l->selection]].exec;
+		const char *exec = NULL;
+		if (l->selection >= 0 && l->selection < l->num_preferred) {
+			exec = l->preferred[l->selection].exec;
+		} else if (l->selection >= l->num_preferred &&
+				l->selection - l->num_preferred < l->num_matches) {
+			exec = l->entries[l->matches[l->selection - l->num_preferred]].exec;
+		}
+		if (exec != NULL) {
 			const char *space = strchr(l->text, ' ');
 			if (space != NULL) {
 				snprintf(cmd, sizeof(cmd), "%s%s", exec, space);
@@ -490,13 +530,19 @@ bool launcher_handle_key(struct guibux_server *server, xkb_keysym_t sym) {
 		return true;
 	}
 	case XKB_KEY_Up:
-	case XKB_KEY_Down:
-		if (l->num_matches > 0) {
-			l->selection = (l->selection + (sym == XKB_KEY_Down ? 1 :
-				l->num_matches - 1)) % l->num_matches;
+	case XKB_KEY_Down: {
+		int total = l->num_preferred + l->num_matches;
+		if (total > 0) {
+			if (l->selection < 0) {
+				l->selection = (sym == XKB_KEY_Up) ? total - 1 : 0;
+			} else {
+				l->selection = (l->selection + (sym == XKB_KEY_Down ? 1 :
+					total - 1)) % total;
+			}
 			launcher_render(server);
 		}
 		return true;
+	}
 	case XKB_KEY_BackSpace:
 		if (l->text_len > 0) {
 			l->text[--l->text_len] = '\0';
@@ -565,9 +611,10 @@ int launcher_test_run(void *data) {
 		return 0;
 	}
 	wlr_log(WLR_INFO, "launcher-test: MATCHES OK (%d matches, selected '%s')",
-		l->num_matches, l->entries[l->matches[l->selection]].name);
+		l->num_matches,
+		l->entries[l->matches[l->selection - l->num_preferred]].name);
 	wlr_log(WLR_INFO, "launcher-test: EXEC '%s'",
-		l->entries[l->matches[l->selection]].exec);
+		l->entries[l->matches[l->selection - l->num_preferred]].exec);
 	launcher_handle_key(server, XKB_KEY_Return);
 	if (l->active) {
 		wlr_log(WLR_ERROR, "launcher-test: FAIL enter (still active)");
@@ -583,5 +630,28 @@ int launcher_test_run(void *data) {
 		return 0;
 	}
 	wlr_log(WLR_INFO, "launcher-test: ESCAPE OK");
+
+	if (l->num_preferred > 0) {
+		/* no Enter here: the configured command is a real app,
+		 * only verify Up selects the preferred app closest to the prompt */
+		launcher_show(server);
+		if (!l->active) {
+			wlr_log(WLR_ERROR, "launcher-test: FAIL preferred show");
+			return 0;
+		}
+		launcher_handle_key(server, XKB_KEY_Up);
+		if (l->selection != l->num_preferred - 1) {
+			wlr_log(WLR_ERROR, "launcher-test: FAIL preferred up (selection=%d, expected %d)",
+				l->selection, l->num_preferred - 1);
+			return 0;
+		}
+		wlr_log(WLR_INFO, "launcher-test: PREFERRED UP OK (selected '%s')",
+			l->preferred[l->selection].name);
+		launcher_handle_key(server, XKB_KEY_Escape);
+		if (l->active) {
+			wlr_log(WLR_ERROR, "launcher-test: FAIL preferred escape (still active)");
+			return 0;
+		}
+	}
 	return 0;
 }

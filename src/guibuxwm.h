@@ -32,6 +32,7 @@
 #define CASCADE_MAX 6
 #define MAX_OUTPUT_PLACEMENTS 8
 #define LAUNCHER_MAX_MATCHES 8
+#define LAUNCHER_MAX_PREFERRED 5
 #define LAUNCHER_MAX_COMMANDS 4096
 #define TOPBAR_H 24
 #define DEFAULT_TOPBAR_H 24
@@ -292,6 +293,8 @@ struct guibux_launcher {
 	struct wl_event_source *test_timer;
 	struct launcher_entry *entries;
 	int num_entries;
+	struct launcher_entry preferred[LAUNCHER_MAX_PREFERRED];
+	int num_preferred;
 	int matches[LAUNCHER_MAX_MATCHES];
 	int num_matches;
 	int selection;

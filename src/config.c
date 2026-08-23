@@ -139,6 +139,53 @@ bool parse_keybind(struct guibux_server *server, const char *value) {
 	return true;
 }
 
+static char *trim(char *s) {
+	while (*s == ' ' || *s == '\t') {
+		s++;
+	}
+	char *end = s + strlen(s);
+	while (end > s && (end[-1] == ' ' || end[-1] == '\t')) {
+		*--end = '\0';
+	}
+	return s;
+}
+
+// preferred_appN = Name;command : split at the first ';', both
+// parts must be non-empty after trimming
+static void parse_preferred_app(struct guibux_server *server, int idx,
+		const char *val, const char *path, int lineno) {
+	char *copy = strdup(val);
+	if (copy == NULL) {
+		return;
+	}
+	char *semi = strchr(copy, ';');
+	if (semi == NULL) {
+		wlr_log(WLR_ERROR, "config: %s:%d: bad preferred_app%d '%s' (expected 'Name;command')",
+			path, lineno, idx + 1, val);
+		free(copy);
+		return;
+	}
+	*semi = '\0';
+	char *name = trim(copy);
+	char *exec = trim(semi + 1);
+	if (name[0] == '\0' || exec[0] == '\0') {
+		wlr_log(WLR_ERROR, "config: %s:%d: bad preferred_app%d '%s' (empty name or command)",
+			path, lineno, idx + 1, val);
+		free(copy);
+		return;
+	}
+	struct guibux_launcher *l = &server->launcher;
+	free(l->preferred[idx].name);
+	free(l->preferred[idx].exec);
+	l->preferred[idx].name = strdup(name);
+	l->preferred[idx].exec = strdup(exec);
+	if (idx + 1 > l->num_preferred) {
+		l->num_preferred = idx + 1;
+	}
+	wlr_log(WLR_INFO, "config: preferred_app%d = %s;%s", idx + 1, name, exec);
+	free(copy);
+}
+
 void load_config(struct guibux_server *server, const char *path) {
 	FILE *f = fopen(path, "r");
 	if (f == NULL) {
@@ -292,6 +339,10 @@ void load_config(struct guibux_server *server, const char *path) {
 		} else if (!strcmp(key, "focus_follow_mouse")) {
 			server->focus_follow_mouse = !strcmp(val, "true");
 			wlr_log(WLR_INFO, "config: focus_follow_mouse = %s", val);
+		} else if (!strncmp(key, "preferred_app", 13) &&
+				key[13] >= '1' && key[13] <= '0' + LAUNCHER_MAX_PREFERRED &&
+				key[14] == '\0') {
+			parse_preferred_app(server, key[13] - '1', val, path, lineno);
 		} else {
 			wlr_log(WLR_ERROR, "config: %s:%d: unknown key '%s'", path, lineno, key);
 		}

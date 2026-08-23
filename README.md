@@ -17,7 +17,8 @@ Derived from [tinywl](https://gitlab.freedesktop.org/wlroots/wlroots/-/tree/main
 - Tile modes (`Mod+t`): free / left-right split / main+stack, per monitor
 - Snap to half-screen (`Mod+Left` / `Mod+Right`): left or right 50% of monitor
 - Command box (`Mod+e`) to launch programs by typing a command, with
-  `$PATH` command suggestions (Up/Down to select)
+  `$PATH` command suggestions (Up/Down to select) and up to 5 configurable
+  preferred apps listed above the input line
 - Topbar on each monitor: monitor letter (A, B, C, ...) on the left, date
   and time on the right (updates every second); tiled windows are laid out
   below it
@@ -120,6 +121,13 @@ selected command, with any arguments you typed after the first word appended
 (e.g. type `alac -w`, select `alacritty`, Enter runs `alacritty -w`). With
 no match, Enter runs exactly what you typed.
 
+Preferred apps configured with `preferred_app1..5` (see [Config file](#config-file))
+are always listed above the input line, up to 5. With nothing selected, the
+first Up selects the preferred app closest to the input line; further Up/Down
+moves through the preferred apps and the matches. Enter on a selected
+preferred app runs its command (typed arguments after the first word are
+appended, same as for matches).
+
 ### Tile modes (`Mod+t`)
 
 `Mod+t` cycles the tile mode of the monitor holding the focused window.
@@ -159,6 +167,7 @@ it to `~/.config/guibuxwm/config` and edit.
 | `xkb_variant` | Keyboard variant | `xkb_variant = osd` |
 | `xkb_options` | xkb options (comma-separated) | `xkb_options = caps:swapscape` |
 | `keybind` | Keybinding, repeatable, see [Keybinds](#keybinds) | `keybind = Mod+g: launcher` |
+| `preferred_app1..5` | Preferred apps in the command box, `Name;command`, up to 5 | `preferred_app1 = Firefox;firefox` |
 | `color_bg` | Topbar/launcher background, `#rrggbb` | `color_bg = #1e1e2e` |
 | `color_border` | Topbar bottom border / launcher border | `color_border = #45475a` |
 | `color_highlight` | Highlight (launcher selection, current workspace cell) | `color_highlight = #3a3c55` |
@@ -317,7 +326,7 @@ Or individually:
 tests/run-ws-test.sh [ws]        # workspace state machine (default ws 2)
 tests/run-tile-test.sh <mode>    # tiling: 0=free, 1=split, 2=main+stack
 tests/run-topbar-test.sh         # per-output topbar (number + time)
-tests/run-launcher-test.sh       # command box (show/type/enter/escape)
+tests/run-launcher-test.sh       # command box (show/type/enter/escape, preferred apps)
 tests/run-config-test.sh         # config file (term, keybind, colors)
 ```
 
@@ -338,7 +347,9 @@ GUIBUX_TEST_EXTRA_OUTPUTS=1 WLR_RENDERER=gles2 ./build/guibuxwm
 `GUIBUX_TEST_LAUNCHER_CMD="command"` drives the command box headlessly:
 shortly after start it shows the box, types the command, presses Enter
 (then shows and Escapes again), logging `launcher-test: ENTER OK` /
-`ESCAPE OK` on success:
+`ESCAPE OK` on success. If the config defines preferred apps, it also
+verifies that Up selects the one closest to the input line
+(`launcher-test: PREFERRED UP OK`):
 
 ```sh
 GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_LAUNCHER_CMD="echo ok > /tmp/x" \

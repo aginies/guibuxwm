@@ -14,7 +14,8 @@ sleep 4
 kill $comp 2>/dev/null
 wait $comp 2>/dev/null
 grep -E "launcher-test" "$log"
-if grep -q "launcher-test: ENTER OK" "$log" && grep -q "launcher-test: ESCAPE OK" "$log"; then
+if grep -q "launcher-test: ENTER OK" "$log" && grep -q "launcher-test: ESCAPE OK" "$log" \
+  && ! grep -q "launcher-test: FAIL" "$log"; then
   rm -f "$log" /tmp/guibux-launcher-test
   exit 0
 fi
