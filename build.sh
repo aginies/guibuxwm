@@ -13,11 +13,14 @@ SRC_DIR="${WLR_SRC_DIR:-/tmp/opencode}"
 export PKG_CONFIG_PATH="${PREFIX}/lib64/pkgconfig:${PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH}"
 
 have_wlroots() {
-	pkg-config --exists wlroots-0.20
+	pkg-config --exists wlroots-0.20 || return 1
+	# a wlroots built with -Dxwayland=disabled lacks the xwayland symbols;
+	# the .pc file records that, so rebuild instead of failing at link
+	[ "$(pkg-config --variable=have_xwayland wlroots-0.20)" = "true" ]
 }
 
 build_wlroots() {
-	echo ">> wlroots ${WLR_VERSION} not found, building to ${PREFIX}"
+	echo ">> wlroots ${WLR_VERSION} with xwayland not found, building to ${PREFIX}"
 	mkdir -p "${SRC_DIR}"
 	tarball="${SRC_DIR}/wlroots-${WLR_VERSION}.tar.gz"
 	if [ ! -f "${tarball}" ]; then
