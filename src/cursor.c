@@ -84,8 +84,18 @@ void process_cursor_motion(struct guibux_server *server, uint32_t time) {
 	if (surface) {
 		wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
 		wlr_seat_pointer_notify_motion(seat, time, sx, sy);
+		if (server->focus_follow_mouse && toplevel &&
+		    toplevel != server->last_ffm_toplevel &&
+		    !server->launcher.active &&
+		    !server->switcher.active &&
+		    !server->overview.active &&
+		    !server->help.active) {
+			focus_toplevel(toplevel);
+			server->last_ffm_toplevel = toplevel;
+		}
 	} else {
 		wlr_seat_pointer_clear_focus(seat);
+		server->last_ffm_toplevel = NULL;
 	}
 }
 
@@ -117,6 +127,14 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 	if (server->launcher.active &&
 			event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
 		launcher_hide(server);
+		return;
+	}
+	if (server->overview.active) {
+		if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
+			overview_click(server, server->cursor->x, server->cursor->y);
+		} else {
+			reset_cursor_mode(server);
+		}
 		return;
 	}
 	if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
@@ -162,6 +180,7 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 		struct guibux_toplevel *toplevel = desktop_toplevel_at(server,
 			server->cursor->x, server->cursor->y, &surface, &sx, &sy);
 		focus_toplevel(toplevel);
+		server->last_ffm_toplevel = NULL;
 	}
 }
 

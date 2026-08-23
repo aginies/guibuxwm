@@ -35,6 +35,7 @@
 #define TOPBAR_H 24
 #define DEFAULT_TOPBAR_H 24
 #define DEFAULT_TOPBAR_FONT_SIZE 16
+#define DEFAULT_TOPBAR_WIN_PAD 2
 #define TOPBAR_PAD 8
 #define NUM_WORKSPACES 4
 #define NUM_KEYBINDS 64
@@ -173,9 +174,9 @@ struct guibux_output {
     struct wlr_scene_buffer *bg_node;
     struct wlr_buffer *bg_buffer;
     int bg_w, bg_h;
-    cairo_surface_t *bg_surface;
+    struct wlr_scene_rect *overview_dim;
 #define TOPBAR_WIN_W 100
-#define TOPBAR_WIN_GAP 8
+#define TOPBAR_WIN_GAP 10
 #define TOPBAR_WIN_MAX 64
 
     int topbar_win_x[TOPBAR_WIN_MAX];
@@ -236,6 +237,19 @@ struct guibux_switcher {
 	struct wlr_scene_buffer *scene_node;
 	struct wlr_buffer *buffer;
 	int box_w, box_h, box_scale;
+};
+
+struct guibux_overview {
+	bool active;
+	struct guibux_toplevel *wins[64];
+	struct wlr_output *win_output[64];
+	int num_wins;
+	double saved_x[64], saved_y[64];
+	int32_t saved_w[64], saved_h[64];
+	struct wlr_scene_buffer *label_node[64];
+	struct wlr_buffer *label_buf[64];
+	int label_w[64], label_h[64], label_scale[64];
+	char label_text[64][128];
 };
 
 struct guibux_help {
@@ -312,8 +326,11 @@ struct guibux_server {
 	char *xkb_options;
 	int topbar_height;
 	int topbar_font_size;
+	int topbar_win_pad;
 	char *background_path;
 	enum guibux_bg_scale background_scale;
+	char *bg_paths[NUM_WORKSPACES];
+	cairo_surface_t *bg_surfaces[NUM_WORKSPACES];
 	struct guibux_keybind keybinds[NUM_KEYBINDS];
 	int num_keybinds;
 	uint32_t color_bg, color_border, color_highlight, color_text, color_dim;
@@ -327,11 +344,13 @@ struct guibux_server {
 	struct wl_event_source *topbar_test_timer;
 	struct wl_event_source *workspace_test_timer;
 	struct wl_event_source *keybind_test_timer;
+	struct wl_event_source *overview_test_timer;
 	struct wl_event_source *psel_test_timer;
 	bool psel_test_enter_sent;
 struct guibux_launcher launcher;
     struct guibux_sysinfo sysinfo;
 	struct guibux_switcher switcher;
+	struct guibux_overview overview;
 	struct guibux_help help;
 	struct guibux_screensaver {
 		struct guibux_server *server;
@@ -346,6 +365,8 @@ struct guibux_launcher launcher;
     uint32_t last_topbar_click_time;
     struct guibux_toplevel *last_topbar_click_win;
     struct guibux_output *cursor_topbar_output;
+    bool focus_follow_mouse;
+    struct guibux_toplevel *last_ffm_toplevel;
 };
 
 /* output.c */
@@ -405,6 +426,8 @@ int launcher_draw_text_on_surface(cairo_surface_t *cs, FT_Face face,
 void set_color(cairo_t *cr, uint32_t c);
 
 /* background.c */
+void background_load_images(struct guibux_server *server);
+void background_destroy_images(struct guibux_server *server);
 void background_create(struct guibux_output *o);
 void background_destroy(struct guibux_output *o);
 void background_render(struct guibux_output *o);
@@ -423,6 +446,12 @@ void switcher_show(struct guibux_server *server);
 void switcher_hide(struct guibux_server *server);
 bool switcher_handle_key(struct guibux_server *server, xkb_keysym_t sym);
 void switcher_on_modifier_release(struct guibux_server *server, uint32_t modifiers);
+
+/* overview.c */
+void overview_show(struct guibux_server *server);
+void overview_hide(struct guibux_server *server);
+bool overview_handle_key(struct guibux_server *server, xkb_keysym_t sym);
+void overview_click(struct guibux_server *server, double lx, double ly);
 
 /* help.c */
 void help_show(struct guibux_server *server);
@@ -474,6 +503,7 @@ void end_seat_grabs(struct guibux_server *server);
 void test_seat_add_keyboard(struct guibux_server *server);
 int workspace_test_run(void *data);
 int tile_test_run(void *data);
+int overview_test_run(void *data);
 int keybind_test_run(void *data);
 int psel_test_run(void *data);
 

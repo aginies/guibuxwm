@@ -275,6 +275,15 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 				handled = switcher_handle_key(server, syms[i]);
 			} else if (server->help.active) {
 				handled = help_handle_key(server, syms[i]);
+			} else if (syms[i] == XKB_KEY_F12) {
+				if (server->overview.active) {
+					overview_hide(server);
+				} else {
+					overview_show(server);
+				}
+				handled = true;
+			} else if (server->overview.active) {
+				handled = overview_handle_key(server, syms[i]);
 			} else {
 				handled = handle_keybinding(server, syms[i], modifiers);
 			}

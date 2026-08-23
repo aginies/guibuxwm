@@ -22,6 +22,7 @@ run() {
 
 run "workspace (ws 2)" ./run-ws-test.sh 2
 run "workspace (ws 4)" ./run-ws-test.sh 4
+run "overview" ./run-overview-test.sh
 run "tile mode 1 (split)" ./run-tile-test.sh 1
 run "tile mode 2 (main+stack)" ./run-tile-test.sh 2
 run "topbar" ./run-topbar-test.sh

@@ -9,6 +9,9 @@
 
 void retile_output(struct guibux_output *output) {
 	struct guibux_server *server = output->server;
+	if (server->overview.active) {
+		return;
+	}
 	if (output->tile_mode == GUIBUX_TILE_FREE) {
 		return;
 	}
@@ -95,6 +98,7 @@ void switch_workspace(struct guibux_output *output, int ws) {
 	}
 	struct guibux_server *server = output->server;
 	output->current_workspace = ws;
+	background_render(output);
 
 	end_seat_grabs(server);
 
@@ -180,11 +184,9 @@ void move_toplevel_to_output(struct guibux_toplevel *toplevel, struct wlr_output
 	struct wlr_output *src = toplevel_output_for(toplevel);
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, output, &box);
-	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
-	int32_t w = (surface->buffer && surface->current.width > 0)
-		? surface->current.width : 800;
-	int32_t h = (surface->buffer && surface->current.height > 0)
-		? surface->current.height : 600;
+	struct wlr_box geo = toplevel->xdg_toplevel->base->geometry;
+	int32_t w = geo.width > 0 ? geo.width : 800;
+	int32_t h = geo.height > 0 ? geo.height : 600;
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
 		box.x + (box.width - w) / 2,
 		box.y + (box.height - h) / 2);

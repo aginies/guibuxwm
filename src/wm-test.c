@@ -130,6 +130,95 @@ int tile_test_run(void *data) {
 	return 0;
 }
 
+int overview_test_run(void *data) {
+	struct guibux_server *server = data;
+	struct guibux_toplevel *t;
+	int n_outputs = 0, n_toplevels = 0;
+	wl_list_for_each(t, &server->toplevels, link) {
+		n_toplevels++;
+	}
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		n_outputs++;
+	}
+	if (n_outputs == 0 || n_toplevels == 0) {
+		wlr_log(WLR_ERROR, "overview-test: FAIL no outputs/toplevels (%d/%d)",
+			n_outputs, n_toplevels);
+		return 0;
+	}
+
+	double ox[64], oy[64];
+	int n = 0;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (n >= 64) {
+			break;
+		}
+		ox[n] = t->scene_tree->node.x;
+		oy[n] = t->scene_tree->node.y;
+		n++;
+	}
+
+	overview_show(server);
+	if (!server->overview.active) {
+		wlr_log(WLR_ERROR, "overview-test: FAIL not active after show");
+		return 0;
+	}
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (!t->scene_tree->node.enabled) {
+			wlr_log(WLR_ERROR, "overview-test: FAIL window not enabled in overview");
+			return 0;
+		}
+		struct guibux_output *oo = guibux_output_for(server,
+			toplevel_output_for(t));
+		if (oo == NULL) {
+			wlr_log(WLR_ERROR, "overview-test: FAIL window has no output in overview");
+			return 0;
+		}
+		struct wlr_box box;
+		wlr_output_layout_get_box(server->output_layout,
+			oo->wlr_output, &box);
+		double x = t->scene_tree->node.x;
+		double y = t->scene_tree->node.y;
+		int area_y = box.y + server->topbar_height;
+		int area_h = box.height - server->topbar_height;
+		int row_h = area_h / NUM_WORKSPACES;
+		bool on_row = false;
+		for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {
+			if (y == (double)(area_y + (ws - 1) * row_h)) {
+				on_row = true;
+				break;
+			}
+		}
+		if (x < box.x || x >= box.x + box.width || !on_row) {
+			wlr_log(WLR_ERROR, "overview-test: FAIL window (%.0f,%.0f) "
+				"not on a workspace row of its output", x, y);
+			return 0;
+		}
+	}
+
+	overview_hide(server);
+	if (server->overview.active) {
+		wlr_log(WLR_ERROR, "overview-test: FAIL still active after hide");
+		return 0;
+	}
+	int i = 0;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (i >= 64) {
+			break;
+		}
+		if (t->scene_tree->node.x != ox[i] || t->scene_tree->node.y != oy[i]) {
+			wlr_log(WLR_ERROR, "overview-test: FAIL geometry not restored "
+				"(%d,%d) != (%.0f,%.0f)",
+				t->scene_tree->node.x, t->scene_tree->node.y, ox[i], oy[i]);
+			return 0;
+		}
+		i++;
+	}
+	wlr_log(WLR_INFO, "overview-test: OK (%d outputs, %d toplevels)",
+		n_outputs, n_toplevels);
+	return 0;
+}
+
 int keybind_test_run(void *data) {
 	struct guibux_server *server = data;
 	const char *key = getenv("GUIBUX_TEST_KEYBIND");

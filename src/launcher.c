@@ -89,11 +89,87 @@ static void launcher_load_commands(struct guibux_launcher *l) {
 	wlr_log(WLR_INFO, "launcher: %d entries from $PATH", l->num_entries - saved_num);
 }
 
+// strip freedesktop field codes from one Exec token; the launcher
+// passes no files or URLs, so value codes are dropped and %% -> %
+static char *strip_field_codes(const char *tok) {
+	char *out = malloc(strlen(tok) + 1);
+	int n = 0;
+	for (size_t i = 0; tok[i]; i++) {
+		if (tok[i] == '%' && tok[i + 1] != '\0') {
+			char fc = tok[i + 1];
+			if (fc == '%') {
+				out[n++] = '%';
+				i++;
+				continue;
+			}
+			if (strchr("fFuUicknvNg", fc)) {
+				i++;
+				continue;
+			}
+		}
+		out[n++] = tok[i];
+	}
+	out[n] = '\0';
+	return out;
+}
+
+// convert a desktop Exec line to a shell command: split into tokens
+// (quotes respected), strip field codes, drop tokens that become
+// empty, rejoin (tokens with spaces get quoted)
+static char *desktop_exec_to_cmd(const char *exec) {
+	size_t cap = strlen(exec) * 2 + 3;
+	char *cmd = malloc(cap);
+	cmd[0] = '\0';
+	size_t clen = 0;
+	bool first = true;
+	bool in_squote = false, in_dquote = false;
+	char tok[256];
+	size_t tlen = 0;
+	for (size_t i = 0; ; i++) {
+		char c = exec[i];
+		bool end = (c == '\0');
+		bool sep = !in_squote && !in_dquote &&
+			(c == ' ' || c == '\t' || c == '\n' || c == '\r');
+		if (!end && !sep) {
+			if (c == '\'' && !in_dquote) {
+				in_squote = !in_squote;
+			} else if (c == '"' && !in_squote) {
+				in_dquote = !in_dquote;
+			} else if (c == '\\' && !in_squote && exec[i + 1] != '\0') {
+				tok[tlen++] = exec[++i];
+			} else {
+				tok[tlen++] = c;
+			}
+			continue;
+		}
+		tok[tlen] = '\0';
+		if (tlen > 0) {
+			char *clean = strip_field_codes(tok);
+			if (clean[0] != '\0') {
+				if (!first) {
+					clen += snprintf(cmd + clen, cap - clen, " ");
+				}
+				if (strchr(clean, ' ')) {
+					clen += snprintf(cmd + clen, cap - clen, "'%s'", clean);
+				} else {
+					clen += snprintf(cmd + clen, cap - clen, "%s", clean);
+				}
+				first = false;
+			}
+			free(clean);
+			tlen = 0;
+		}
+		in_squote = in_dquote = false;
+		if (end) break;
+	}
+	return cmd;
+}
+
 static void launcher_parse_desktop(const char *filepath, struct guibux_launcher *l) {
 	FILE *f = fopen(filepath, "r");
 	if (!f) return;
 	char line[512];
-	char *name = NULL, *exec = NULL;
+	char *name = NULL, *exec = NULL, *flatpak_id = NULL;
 	bool in_main = false;
 	while (fgets(line, sizeof(line), f)) {
 		if (strcmp(line, "[Desktop Entry]\n") == 0 ||
@@ -109,6 +185,8 @@ static void launcher_parse_desktop(const char *filepath, struct guibux_launcher 
 			val = line + 5;
 		} else if (strncmp(line, "Exec=", 5) == 0) {
 			val = line + 5;
+		} else if (strncmp(line, "X-Flatpak=", 10) == 0) {
+			val = line + 10;
 		} else continue;
 
 		int len = strlen(val);
@@ -116,25 +194,34 @@ static void launcher_parse_desktop(const char *filepath, struct guibux_launcher 
 			val[--len] = '\0';
 
 		if (val[0] == '\0') continue;
-		if (!name) name = strdup(val);
-		else if (!exec) exec = strdup(val);
-		if (name && exec) break;
+		if (strncmp(line, "Name=", 5) == 0) {
+			if (!name) name = strdup(val);
+		} else if (strncmp(line, "Exec=", 5) == 0) {
+			if (!exec) exec = strdup(val);
+		} else {
+			if (!flatpak_id) flatpak_id = strdup(val);
+		}
+		if (name && flatpak_id) break;
 	}
 	fclose(f);
 
-	if (name && exec) {
-		char *cleaned = strdup(exec);
-		for (int i = 0; cleaned[i]; i++) {
-			if (cleaned[i] == '%') {
-				memmove(cleaned + i, cleaned + i + 1, strlen(cleaned + i));
-				i--;
-			}
-		}
-		launcher_add_entry(l, name, cleaned);
-		free(cleaned);
+	if (name && flatpak_id) {
+		/* flatpak-exported desktop files: the Exec line carries
+		 * flatpak @@...@@ field-code wrappers that do not survive a
+		 * plain shell launch; run the app id directly instead */
+		size_t n = strlen(flatpak_id);
+		char *cmd = malloc(n + 16);
+		snprintf(cmd, n + 16, "flatpak run %s", flatpak_id);
+		launcher_add_entry(l, name, cmd);
+		free(cmd);
+	} else if (name && exec) {
+		char *cmd = desktop_exec_to_cmd(exec);
+		launcher_add_entry(l, name, cmd);
+		free(cmd);
 	}
 	free(name);
 	free(exec);
+	free(flatpak_id);
 }
 
 static void launcher_load_desktop_files(struct guibux_launcher *l) {
@@ -479,6 +566,8 @@ int launcher_test_run(void *data) {
 	}
 	wlr_log(WLR_INFO, "launcher-test: MATCHES OK (%d matches, selected '%s')",
 		l->num_matches, l->entries[l->matches[l->selection]].name);
+	wlr_log(WLR_INFO, "launcher-test: EXEC '%s'",
+		l->entries[l->matches[l->selection]].exec);
 	launcher_handle_key(server, XKB_KEY_Return);
 	if (l->active) {
 		wlr_log(WLR_ERROR, "launcher-test: FAIL enter (still active)");

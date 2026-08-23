@@ -89,8 +89,10 @@ int main(int argc, char *argv[]) {
 	server.color_topbar_text = DEFAULT_COLOR_TOPBAR_TEXT;
 	server.topbar_height = DEFAULT_TOPBAR_H;
 	server.topbar_font_size = DEFAULT_TOPBAR_FONT_SIZE;
+	server.topbar_win_pad = DEFAULT_TOPBAR_WIN_PAD;
 	server.background_scale = BG_FILL;
 	server.screensaver.timeout = 300;
+	server.focus_follow_mouse = true;
 	keybinds_defaults(&server);
 
 	if (config_path == NULL) {
@@ -108,9 +110,7 @@ int main(int argc, char *argv[]) {
 	if (config_path != NULL) {
 		load_config(&server, config_path);
 	}
-	if (server.background_path == NULL) {
-		// no default background; user must set via config or env
-	}
+	background_load_images(&server);
 
 	if (server.term_cmd == NULL) {
 		const char *env_term = getenv("GUIBUX_TERM");
@@ -236,6 +236,12 @@ int main(int argc, char *argv[]) {
 	}
 
 	setenv("WAYLAND_DISPLAY", socket, true);
+	/* some apps (e.g. PrusaSlicer flatpak) refuse GUI mode without a
+	 * non-empty DISPLAY even on Wayland; no X server exists, so this
+	 * value is never actually used for X11 */
+	if (getenv("DISPLAY") == NULL) {
+		setenv("DISPLAY", ":0", false);
+	}
 
 	if (extra_outputs != NULL) {
 		int n = atoi(extra_outputs) + 1;
@@ -258,6 +264,15 @@ int main(int argc, char *argv[]) {
 			wl_display_get_event_loop(server.wl_display),
 			tile_test_run, &server);
 		wl_event_source_timer_update(server.tile_test_timer, 500);
+	}
+
+	const char *overview_test = getenv("GUIBUX_TEST_OVERVIEW");
+	if (overview_test != NULL) {
+		test_seat_add_keyboard(&server);
+		server.overview_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			overview_test_run, &server);
+		wl_event_source_timer_update(server.overview_test_timer, 2000);
 	}
 
 	server.topbar_timer = wl_event_loop_add_timer(
@@ -344,6 +359,9 @@ int main(int argc, char *argv[]) {
 	if (server.keybind_test_timer != NULL) {
 		wl_event_source_remove(server.keybind_test_timer);
 	}
+	if (server.overview_test_timer != NULL) {
+		wl_event_source_remove(server.overview_test_timer);
+	}
 	if (server.psel_test_timer != NULL) {
 		wl_event_source_remove(server.psel_test_timer);
 	}
@@ -369,5 +387,6 @@ int main(int argc, char *argv[]) {
 	free(server.xkb_variant);
 	free(server.xkb_options);
 	free(server.background_path);
+	background_destroy_images(&server);
 	return 0;
 }

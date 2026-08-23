@@ -58,10 +58,13 @@ void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen) {
 		if (output != NULL) {
 			struct wlr_box box;
 			wlr_output_layout_get_box(server->output_layout, output, &box);
-			wlr_scene_node_set_position(&toplevel->scene_tree->node, box.x, box.y);
+			int th = server->topbar_height;
 			int ew, eh;
 			wlr_output_effective_resolution(output, &ew, &eh);
-			wlr_xdg_toplevel_set_size(xdg_toplevel, ew, eh);
+			/* fullscreen below the topbar, so the bar stays visible */
+			wlr_scene_node_set_position(&toplevel->scene_tree->node,
+				box.x, box.y + th);
+			wlr_xdg_toplevel_set_size(xdg_toplevel, ew, eh - th);
 		}
 		wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
 		topbar_raise_all(server);
@@ -153,6 +156,10 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, map);
 
+	if (toplevel->server->overview.active) {
+		overview_hide(toplevel->server);
+	}
+
 	wlr_log(WLR_INFO, "mapped toplevel '%s'",
 		toplevel->xdg_toplevel->title ? toplevel->xdg_toplevel->title : "(untitled)");
 
@@ -181,6 +188,10 @@ void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, unmap);
 	struct guibux_server *server = toplevel->server;
+
+	if (server->overview.active) {
+		overview_hide(server);
+	}
 
 	if (toplevel == server->grabbed_toplevel) {
 		reset_cursor_mode(server);
@@ -236,6 +247,10 @@ void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 		toplevel_output_for(toplevel));
 	if (fo)
 		topbar_mark_dirty(fo);
+
+	if (toplevel->server->last_ffm_toplevel == toplevel) {
+		toplevel->server->last_ffm_toplevel = NULL;
+	}
 
 	free(toplevel);
 }

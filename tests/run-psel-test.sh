@@ -11,7 +11,7 @@ COMP="$ROOT/build/guibuxwm"
 CLIENT="$ROOT/build/tests/psel-test"
 log=$(mktemp)
 out=$(mktemp)
-GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_PRIMARY_SELECTION=1 GUIBUX_TERM=true \
+GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_PRIMARY_SELECTION=1 GUIBUX_TERM=true \
   WLR_RENDERER=gles2 "$COMP" >"$log" 2>&1 &
 comp=$!
 wd=""

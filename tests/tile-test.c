@@ -253,11 +253,11 @@ int main(int argc, char *argv[]) {
 			usleep(20000);
 		}
 		if (wins[2].last_fs == 1 && wins[2].last_w == 1280 &&
-				wins[2].last_h == 720) {
+				wins[2].last_h == 696) {
 			printf("PHASE3 FS-ON OK: %dx%d fs=%d (mode %d)\n",
 				wins[2].last_w, wins[2].last_h, wins[2].last_fs, mode);
 		} else {
-			printf("PHASE3 FS-ON FAIL: got %dx%d fs=%d, expected 1280x720 fs=1\n",
+			printf("PHASE3 FS-ON FAIL: got %dx%d fs=%d, expected 1280x696 fs=1\n",
 				wins[2].last_w, wins[2].last_h, wins[2].last_fs);
 			result = 1;
 		}

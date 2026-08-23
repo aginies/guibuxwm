@@ -27,11 +27,9 @@ struct wlr_output *toplevel_output_for(struct guibux_toplevel *toplevel) {
 	if (output != NULL) {
 		return output;
 	}
-	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
-	int w = surface->buffer ? surface->current.width : 0;
-	int h = surface->buffer ? surface->current.height : 0;
-	int cx = toplevel->scene_tree->node.x + w / 2;
-	int cy = toplevel->scene_tree->node.y + h / 2;
+	struct wlr_box geo = toplevel->xdg_toplevel->base->geometry;
+	int cx = toplevel->scene_tree->node.x + geo.width / 2;
+	int cy = toplevel->scene_tree->node.y + geo.height / 2;
 	struct guibux_output *o;
 	wl_list_for_each(o, &server->outputs, link) {
 		if (wlr_output_layout_contains_point(server->output_layout,
@@ -214,6 +212,10 @@ void output_destroy(struct wl_listener *listener, void *data) {
 
 	topbar_destroy(output);
 	background_destroy(output);
+	if (output->overview_dim) {
+		wlr_scene_node_destroy(&output->overview_dim->node);
+		output->overview_dim = NULL;
+	}
 	topbar_renumber(server);
 
 	wl_list_remove(&output->frame.link);

@@ -1,16 +1,15 @@
 #!/bin/bash
-# Workspace test: start the compositor with GUIBUX_TEST_WORKSPACES, map 2
+# Overview test: start the compositor with GUIBUX_TEST_OVERVIEW, map 2
 # toplevels with the ws-test client, and let the compositor's ~2s hook
-# verify the workspace state machine. The compositor log is the verdict.
-# usage: run-ws-test.sh [ws]   (default 2)
+# verify the GNOME-style overview (show, grid placement, hide, restore).
+# The compositor log is the verdict.
 set -u
-ws=${1:-2}
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$SCRIPT_DIR/.."
 COMP="$ROOT/build/guibuxwm"
 CLIENT="$ROOT/build/tests/ws-test"
 log=$(mktemp)
-GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_WORKSPACES=$ws GUIBUX_TERM=true \
+GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_OVERVIEW=1 GUIBUX_TERM=true \
   WLR_RENDERER=gles2 "$COMP" >"$log" 2>&1 &
 comp=$!
 wd=""
@@ -26,12 +25,12 @@ sleep 6
 kill $client $comp 2>/dev/null
 wait $client 2>/dev/null
 wait $comp 2>/dev/null
-grep -E "workspace-test|workspace:" "$log"
-if grep -q "workspace-test: OK" "$log"; then
+grep -E "overview-test" "$log"
+if grep -q "overview-test: OK" "$log"; then
   rm -f "$log"
   exit 0
 fi
-echo "workspace-test: FAILED"
+echo "overview-test: FAILED"
 cat "$log"
 rm -f "$log"
 exit 1

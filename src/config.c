@@ -256,10 +256,23 @@ void load_config(struct guibux_server *server, const char *path) {
 				server->topbar_font_size = DEFAULT_TOPBAR_FONT_SIZE;
 			}
 			wlr_log(WLR_INFO, "config: topbar_font_size = %d", server->topbar_font_size);
+		} else if (!strcmp(key, "topbar_win_pad")) {
+			server->topbar_win_pad = atoi(val);
+			if (server->topbar_win_pad < 0) {
+				server->topbar_win_pad = DEFAULT_TOPBAR_WIN_PAD;
+			}
+			wlr_log(WLR_INFO, "config: topbar_win_pad = %d", server->topbar_win_pad);
 		} else if (!strcmp(key, "background")) {
 			free(server->background_path);
 			server->background_path = strdup(val);
 			wlr_log(WLR_INFO, "config: background = %s", val);
+		} else if (!strncmp(key, "background", 10) &&
+				key[10] >= '1' && key[10] <= '0' + NUM_WORKSPACES &&
+				key[11] == '\0') {
+			int ws = key[10] - '0';
+			free(server->bg_paths[ws - 1]);
+			server->bg_paths[ws - 1] = strdup(val);
+			wlr_log(WLR_INFO, "config: background%d = %s", ws, val);
 		} else if (!strcmp(key, "background_scale")) {
 			if (!strcmp(val, "stretch")) {
 				server->background_scale = BG_STRETCH;
@@ -276,6 +289,9 @@ void load_config(struct guibux_server *server, const char *path) {
 		} else if (!strcmp(key, "screensaver_timeout")) {
 			screensaver_set_timeout(&server->screensaver, atoi(val));
 			wlr_log(WLR_INFO, "config: screensaver_timeout = %d", server->screensaver.timeout);
+		} else if (!strcmp(key, "focus_follow_mouse")) {
+			server->focus_follow_mouse = !strcmp(val, "true");
+			wlr_log(WLR_INFO, "config: focus_follow_mouse = %s", val);
 		} else {
 			wlr_log(WLR_ERROR, "config: %s:%d: unknown key '%s'", path, lineno, key);
 		}

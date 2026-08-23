@@ -21,34 +21,56 @@ static cairo_surface_t *load_image(const char *path) {
 	return surface;
 }
 
+void background_load_images(struct guibux_server *server) {
+	for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {
+		const char *path = server->bg_paths[ws - 1]
+			? server->bg_paths[ws - 1] : server->background_path;
+		if (!path) {
+			continue;
+		}
+		server->bg_surfaces[ws - 1] = load_image(path);
+	}
+}
+
+void background_destroy_images(struct guibux_server *server) {
+	for (int ws = 0; ws < NUM_WORKSPACES; ws++) {
+		if (server->bg_surfaces[ws]) {
+			cairo_surface_destroy(server->bg_surfaces[ws]);
+			server->bg_surfaces[ws] = NULL;
+		}
+		free(server->bg_paths[ws]);
+		server->bg_paths[ws] = NULL;
+	}
+}
+
 void background_create(struct guibux_output *o) {
+	background_render(o);
+}
+
+void background_render(struct guibux_output *o) {
 	struct guibux_server *server = o->server;
-	if (!server->background_path)
-		return;
+	cairo_surface_t *img = server->bg_surfaces[o->current_workspace - 1];
 
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
 	if (box.width <= 0 || box.height <= 0)
 		return;
 
-	o->bg_surface = load_image(server->background_path);
-	if (!o->bg_surface)
+	if (!img) {
+		if (o->bg_node && o->bg_buffer) {
+			wlr_scene_buffer_set_buffer(o->bg_node, NULL);
+			wlr_buffer_drop(o->bg_buffer);
+			o->bg_buffer = NULL;
+			wlr_output_schedule_frame(o->wlr_output);
+		}
 		return;
+	}
 
-	o->bg_node = wlr_scene_buffer_create(&server->scene->tree, NULL);
-	wlr_scene_node_set_position(&o->bg_node->node, box.x, box.y);
-	o->bg_w = box.width;
-	o->bg_h = box.height;
-	background_render(o);
-}
+	if (!o->bg_node) {
+		o->bg_node = wlr_scene_buffer_create(&server->scene->tree, NULL);
+		wlr_scene_node_set_position(&o->bg_node->node, box.x, box.y);
+	}
 
-void background_render(struct guibux_output *o) {
-	struct guibux_server *server = o->server;
-	if (!o->bg_surface || !o->bg_node)
-		return;
-
-	struct wlr_box box;
-	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
 	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
 	int w = box.width * scale;
 	int h = box.height * scale;
@@ -99,13 +121,13 @@ void background_render(struct guibux_output *o) {
 	cairo_set_source_rgb(cr, 0, 0, 0);
 	cairo_paint(cr);
 
-	int img_w = cairo_image_surface_get_width(o->bg_surface);
-	int img_h = cairo_image_surface_get_height(o->bg_surface);
+	int img_w = cairo_image_surface_get_width(img);
+	int img_h = cairo_image_surface_get_height(img);
 
 	switch (server->background_scale) {
 	case BG_STRETCH:
 		cairo_scale(cr, (double)w / img_w, (double)h / img_h);
-		cairo_set_source_surface(cr, o->bg_surface, 0, 0);
+		cairo_set_source_surface(cr, img, 0, 0);
 		cairo_paint(cr);
 		break;
 
@@ -119,7 +141,7 @@ void background_render(struct guibux_output *o) {
 		double oy = (h - nh) / 2;
 		cairo_translate(cr, ox, oy);
 		cairo_scale(cr, s, s);
-		cairo_set_source_surface(cr, o->bg_surface, 0, 0);
+		cairo_set_source_surface(cr, img, 0, 0);
 		cairo_paint(cr);
 		break;
 	}
@@ -134,13 +156,13 @@ void background_render(struct guibux_output *o) {
 		double oy = (h - nh) / 2;
 		cairo_translate(cr, ox, oy);
 		cairo_scale(cr, s, s);
-		cairo_set_source_surface(cr, o->bg_surface, 0, 0);
+		cairo_set_source_surface(cr, img, 0, 0);
 		cairo_paint(cr);
 		break;
 	}
 
 	case BG_TILE:
-		cairo_set_source_surface(cr, o->bg_surface, 0, 0);
+		cairo_set_source_surface(cr, img, 0, 0);
 		cairo_paint(cr);
 		break;
 	}
@@ -160,9 +182,5 @@ void background_destroy(struct guibux_output *o) {
 	if (o->bg_buffer) {
 		wlr_buffer_drop(o->bg_buffer);
 		o->bg_buffer = NULL;
-	}
-	if (o->bg_surface) {
-		cairo_surface_destroy(o->bg_surface);
-		o->bg_surface = NULL;
 	}
 }

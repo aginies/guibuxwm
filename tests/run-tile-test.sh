@@ -10,8 +10,10 @@ ROOT="$SCRIPT_DIR/.."
 COMP="$ROOT/build/guibuxwm"
 CLIENT="$ROOT/build/tests/tile-test"
 log=$(mktemp)
-GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_TILE_MODE=$mode GUIBUX_TERM=true \
-  WLR_RENDERER=gles2 "$COMP" >"$log" 2>&1 &
+cfg=$(mktemp)
+echo "term = true" >"$cfg"
+GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_TILE_MODE=$mode GUIBUX_TERM=true \
+  WLR_RENDERER=gles2 "$COMP" -c "$cfg" >"$log" 2>&1 &
 comp=$!
 wd=""
 for i in $(seq 1 50); do
@@ -25,5 +27,5 @@ WAYLAND_DISPLAY=$wd "$CLIENT" "$mode"
 rc=$?
 kill $comp 2>/dev/null
 wait $comp 2>/dev/null
-rm -f "$log"
+rm -f "$log" "$cfg"
 exit $rc

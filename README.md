@@ -8,6 +8,8 @@ Derived from [tinywl](https://gitlab.freedesktop.org/wlroots/wlroots/-/tree/main
 ## Features
 
 - xdg-shell application windows: focus, move, resize, fullscreen
+- Focus follows mouse (keyboard focus tracks cursor, configurable)
+- GNOME-style overview (`F12`): all workspaces and windows visible, click to select
 - Tile modes (`Mod+t`): free / left-right split / main+stack, per monitor
 - Snap to half-screen (`Mod+Left` / `Mod+Right`): left or right 50% of monitor
 - Command box (`Mod+e`) to launch programs by typing a command, with
@@ -86,6 +88,7 @@ Run:
 | `Mod+f` | Toggle fullscreen |
 | `Mod+t` | Cycle tile mode of the focused window's monitor (free / split / main+stack) |
 | `Mod+Tab` | Cycle window focus |
+| `F12` | Toggle GNOME-style overview (all workspaces + windows) |
 | `Mod+1..4` | Switch to workspace 1..4 on the focused window's monitor |
 | `Mod+Shift+1..4` | Move focused window to workspace 1..4 (same monitor) |
 | `Mod+Shift+Left` / `Mod+Shift+Right` | Move focused window to previous/next monitor |
@@ -160,8 +163,10 @@ it to `~/.config/guibuxwm/config` and edit.
 | `topbar_text` | Topbar text (monitor letter, workspaces, date/time) | `topbar_text = #1e1e2e` |
 | `topbar_height` | Topbar height in pixels (default: 24) | `topbar_height = 28` |
 | `topbar_font_size` | Topbar font size in pixels (default: 16) | `topbar_font_size = 18` |
+| `topbar_win_pad` | Vertical padding of window pills in the topbar, pixels (default: 2, 0 = full height) | `topbar_win_pad = 2` |
 | `background` | Desktop background image path (PNG or JPEG) | `background = ~/wallpaper.jpg` |
 | `background_scale` | Background scale mode: `stretch`, `fit`, `fill`, `tile` (default: `fill`) | `background_scale = fill` |
+| `focus_follow_mouse` | Focus follows mouse: `true` or `false` (default: `true`) | `focus_follow_mouse = true` |
 
 Example:
 

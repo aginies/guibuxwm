@@ -4,11 +4,29 @@
 #include <drm_fourcc.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define SWITCHER_LINE_H 28
 #define SWITCHER_MAX_WINS 64
 #define SWITCHER_PAD 12
 #define SWITCHER_MAX_LINES 16
+
+static uint32_t now_msec(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+
+static void switcher_warp_to_selection(struct guibux_server *server) {
+	struct guibux_switcher *s = &server->switcher;
+	if (s->selection >= s->num_wins) return;
+	struct guibux_toplevel *t = s->wins[s->selection];
+	struct wlr_box geo = t->xdg_toplevel->base->geometry;
+	double cx = t->scene_tree->node.x + geo.width / 2.0;
+	double cy = t->scene_tree->node.y + geo.height / 2.0;
+	wlr_cursor_warp(server->cursor, NULL, cx, cy);
+	process_cursor_motion(server, now_msec());
+}
 
 static void switcher_render(struct guibux_server *server) {
 	struct guibux_switcher *s = &server->switcher;
@@ -138,6 +156,7 @@ void switcher_show(struct guibux_server *server) {
 
 	s->active = true;
 	switcher_render(server);
+	switcher_warp_to_selection(server);
 }
 
 void switcher_hide(struct guibux_server *server) {
@@ -156,6 +175,7 @@ void switcher_hide(struct guibux_server *server) {
 		wlr_buffer_drop(s->buffer);
 		s->buffer = NULL;
 	}
+	process_cursor_motion(server, now_msec());
 }
 
 static void switcher_select(struct guibux_server *server) {
@@ -193,6 +213,7 @@ bool switcher_handle_key(struct guibux_server *server, xkb_keysym_t sym) {
 		if (s->num_wins > 0) {
 			s->selection = (s->selection + 1) % s->num_wins;
 			switcher_render(server);
+			switcher_warp_to_selection(server);
 		}
 		return true;
 	case XKB_KEY_Return:

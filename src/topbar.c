@@ -6,38 +6,91 @@
 #include <wlr/render/allocator.h>
 
 // width in px of text at the face's current pixel size
-// cache: store advance width per char for current font size
-static int char_width_cache[256];
-static bool char_width_cache_valid = false;
+// cache: store advance width per codepoint for current font size
+#define CHAR_CACHE_MAX 256
+static uint32_t char_cache_cp[CHAR_CACHE_MAX];
+static int char_cache_w[CHAR_CACHE_MAX];
+static int char_cache_count = 0;
 static int char_width_cache_size = -1;
 
 static void invalidate_char_width_cache(void) {
-	char_width_cache_valid = false;
+	char_cache_count = 0;
 	char_width_cache_size = -1;
 }
 
-static int char_advance_width(FT_Face face, unsigned char c, int font_size) {
+// decode one UTF-8 codepoint, advance *p past it
+static uint32_t utf8_next(const char **p) {
+	const unsigned char *s = (const unsigned char *)*p;
+	uint32_t cp;
+	if (s[0] < 0x80) {
+		cp = s[0];
+		*p += 1;
+	} else if ((s[0] & 0xE0) == 0xC0 && s[1]) {
+		cp = ((uint32_t)(s[0] & 0x1F) << 6) | (s[1] & 0x3F);
+		*p += 2;
+	} else if ((s[0] & 0xF0) == 0xE0 && s[1] && s[2]) {
+		cp = ((uint32_t)(s[0] & 0x0F) << 12) | ((uint32_t)(s[1] & 0x3F) << 6) |
+			(s[2] & 0x3F);
+		*p += 3;
+	} else if ((s[0] & 0xF8) == 0xF0 && s[1] && s[2] && s[3]) {
+		cp = ((uint32_t)(s[0] & 0x07) << 18) | ((uint32_t)(s[1] & 0x3F) << 12) |
+			((uint32_t)(s[2] & 0x3F) << 6) | (s[3] & 0x3F);
+		*p += 4;
+	} else {
+		cp = '?';
+		*p += 1;
+	}
+	return cp;
+}
+
+// copy up to max_cp codepoints of src into dst (NUL-terminated)
+static void utf8_truncate(const char *src, char *dst, size_t dst_size, int max_cp) {
+	int cp = 0;
+	size_t n = 0;
+	while (src[0] && cp < max_cp) {
+		const char *p = src;
+		utf8_next(&p);
+		size_t len = (size_t)(p - src);
+		if (n + len >= dst_size) {
+			break;
+		}
+		memcpy(dst + n, src, len);
+		n += len;
+		src = p;
+		cp++;
+	}
+	dst[n] = '\0';
+}
+
+static int char_advance_width(FT_Face face, uint32_t cp, int font_size) {
 	if (font_size != char_width_cache_size) {
 		invalidate_char_width_cache();
 		char_width_cache_size = font_size;
 	}
-	if (char_width_cache_valid && char_width_cache[c] != 0) {
-		return char_width_cache[c];
+	for (int i = 0; i < char_cache_count; i++) {
+		if (char_cache_cp[i] == cp) {
+			return char_cache_w[i];
+		}
 	}
-	if (FT_Load_Char(face, c, FT_LOAD_RENDER) != 0) {
+	FT_UInt glyph = FT_Get_Char_Index(face, cp);
+	if (glyph == 0 || FT_Load_Glyph(face, glyph, FT_LOAD_RENDER) != 0) {
 		return 0;
 	}
 	int w = face->glyph->advance.x / 64;
-	char_width_cache[c] = w;
-	char_width_cache_valid = true;
+	if (char_cache_count < CHAR_CACHE_MAX) {
+		char_cache_cp[char_cache_count] = cp;
+		char_cache_w[char_cache_count] = w;
+		char_cache_count++;
+	}
 	return w;
 }
 
 int guibux_text_width(FT_Face face, const char *text) {
 	int w = 0;
 	int font_size = face->size->metrics.height / 64;
-	for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
-		w += char_advance_width(face, *p, font_size);
+	const char *p = text;
+	while (*p) {
+		w += char_advance_width(face, utf8_next(&p), font_size);
 	}
 	return w;
 }
@@ -47,6 +100,25 @@ void set_color(cairo_t *cr, uint32_t c) {
 		((c >> 8) & 0xFF) / 255.0, (c & 0xFF) / 255.0);
 }
 
+static void set_color_alpha(cairo_t *cr, uint32_t c, double a) {
+	cairo_set_source_rgba(cr, ((c >> 16) & 0xFF) / 255.0,
+		((c >> 8) & 0xFF) / 255.0, (c & 0xFF) / 255.0, a);
+}
+
+static void topbar_rounded_rect(cairo_t *cr, double x, double y,
+		double w, double h, double r) {
+	if (r > w / 2)
+		r = w / 2;
+	if (r > h / 2)
+		r = h / 2;
+	cairo_new_sub_path(cr);
+	cairo_arc(cr, x + w - r, y + r, r, -M_PI / 2, 0);
+	cairo_arc(cr, x + w - r, y + h - r, r, 0, M_PI / 2);
+	cairo_arc(cr, x + r, y + h - r, r, M_PI / 2, M_PI);
+	cairo_arc(cr, x + r, y + r, r, M_PI, 3 * M_PI / 2);
+	cairo_close_path(cr);
+}
+
 int launcher_draw_text_on_surface(cairo_surface_t *cs, FT_Face face,
 		const char *text, int x, int baseline, uint32_t color) {
 	uint32_t *data = (uint32_t *)cairo_image_surface_get_data(cs);
@@ -54,8 +126,11 @@ int launcher_draw_text_on_surface(cairo_surface_t *cs, FT_Face face,
 	int sw = cairo_image_surface_get_width(cs);
 	int sh = cairo_image_surface_get_height(cs);
 	int cx = x;
-	for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
-		if (FT_Load_Char(face, *p, FT_LOAD_RENDER) != 0) {
+	const char *p = text;
+	while (*p) {
+		uint32_t cp = utf8_next(&p);
+		FT_UInt glyph = FT_Get_Char_Index(face, cp);
+		if (glyph == 0 || FT_Load_Glyph(face, glyph, FT_LOAD_RENDER) != 0) {
 			continue;
 		}
 		FT_GlyphSlot g = face->glyph;
@@ -159,6 +234,16 @@ void topbar_render(struct guibux_output *o) {
 	FT_Set_Pixel_Sizes(server->launcher.face, 0, font_px);
 	int baseline = o->server->topbar_height / 2 * scale + font_px * 35 / 100;
 
+	/* vertical extent of cells/pills inside the topbar (config: topbar_win_pad) */
+	int th = o->server->topbar_height;
+	int pad = server->topbar_win_pad;
+	if (pad < 0)
+		pad = 0;
+	if (pad * 2 >= th)
+		pad = th / 4;
+	int cell_y = pad;
+	int cell_h = th - 2 * pad;
+
 	char left[16];
 	snprintf(left, sizeof(left), "%c", 'A' + (o->topbar_number - 1));
 	launcher_draw_text_on_surface(cs, server->launcher.face, left,
@@ -173,8 +258,8 @@ void topbar_render(struct guibux_output *o) {
 		snprintf(num, sizeof(num), "%d", ws);
 		if (ws == o->current_workspace) {
 			set_color(cr, server->color_highlight);
-			cairo_rectangle(cr, x * scale, (o->server->topbar_height / 4) * scale,
-				cell_w * scale, (o->server->topbar_height / 2) * scale);
+			cairo_rectangle(cr, x * scale, cell_y * scale,
+				cell_w * scale, cell_h * scale);
 			cairo_fill(cr);
 			launcher_draw_text_on_surface(cs, server->launcher.face, num,
 				(x + 4) * scale, baseline, server->color_text);
@@ -192,8 +277,7 @@ void topbar_render(struct guibux_output *o) {
 		((server->color_border >> 8) & 0xFF) / 255.0,
 		(server->color_border & 0xFF) / 255.0);
 	cairo_rectangle(cr, (int)((x + sep_gap / 2) * scale) - (int)(scale / 2.f),
-		(o->server->topbar_height / 4) * scale, 1 * scale,
-		(o->server->topbar_height / 2) * scale);
+		cell_y * scale, 1 * scale, cell_h * scale);
 	cairo_fill(cr);
 
 	/* render window titles between workspaces and date */
@@ -269,8 +353,7 @@ void topbar_render(struct guibux_output *o) {
 			((server->color_border >> 8) & 0xFF) / 255.0,
 			(server->color_border & 0xFF) / 255.0);
 		cairo_rectangle(cr, (int)((win_end + sep_gap / 2) * scale) - (int)(scale / 2.f),
-			(o->server->topbar_height / 4) * scale, 1 * scale,
-			(o->server->topbar_height / 2) * scale);
+			cell_y * scale, 1 * scale, cell_h * scale);
 		cairo_fill(cr);
 	}
 
@@ -291,16 +374,25 @@ void topbar_render(struct guibux_output *o) {
 		char buf[64];
 		int tw = guibux_text_width(server->launcher.face, title);
 		if (tw > max_w - 16) {
-			int max_len = (int)strlen(title);
-			for (int trunc = max_len; trunc >= 4; trunc--) {
-				snprintf(buf, sizeof(buf), "%.*s...", trunc - 3, title);
+			int cps = 0;
+			const char *p = title;
+			while (*p) {
+				utf8_next(&p);
+				cps++;
+			}
+			for (int trunc = cps; trunc >= 1; trunc--) {
+				utf8_truncate(title, buf, sizeof(buf), trunc);
+				size_t n = strlen(buf);
+				snprintf(buf + n, sizeof(buf) - n, "...");
 				tw = guibux_text_width(server->launcher.face, buf);
 				if (tw <= max_w - 16) {
 					break;
 				}
 			}
 			if (tw > max_w - 16) {
-				snprintf(buf, sizeof(buf), "%.2s...", title);
+				utf8_truncate(title, buf, sizeof(buf), 1);
+				size_t n = strlen(buf);
+				snprintf(buf + n, sizeof(buf) - n, "...");
 			}
 		} else {
 			snprintf(buf, sizeof(buf), "%s", title);
@@ -315,20 +407,34 @@ void topbar_render(struct guibux_output *o) {
 
 		if (wins[i] == kb_focus_t) {
 			set_color(cr, server->color_highlight);
-			cairo_rectangle(cr, win_x * scale,
-				(o->server->topbar_height / 4) * scale,
+			topbar_rounded_rect(cr, win_x * scale,
+				cell_y * scale,
 				cell_w * scale,
-				(o->server->topbar_height / 2) * scale);
-			cairo_fill(cr);
+				cell_h * scale,
+				6 * scale);
+			cairo_fill_preserve(cr);
+			set_color(cr, server->color_text);
+			cairo_set_line_width(cr, 1.0 * scale);
+			cairo_stroke(cr);
 			launcher_draw_text_on_surface(cs,
 				server->launcher.face, buf,
 				(win_x + 8) * scale, baseline,
 				server->color_text);
 		} else {
+			set_color_alpha(cr, server->color_topbar_text, 0.22);
+			topbar_rounded_rect(cr, win_x * scale,
+				cell_y * scale,
+				cell_w * scale,
+				cell_h * scale,
+				6 * scale);
+			cairo_fill_preserve(cr);
+			set_color_alpha(cr, server->color_topbar_text, 0.50);
+			cairo_set_line_width(cr, 1.0 * scale);
+			cairo_stroke(cr);
 			launcher_draw_text_on_surface(cs,
 				server->launcher.face, buf,
 				(win_x + 8) * scale, baseline,
-				server->color_dim);
+				server->color_topbar_text);
 		}
 		win_x += cell_w + TOPBAR_WIN_GAP;
 		rendered++;
@@ -347,8 +453,7 @@ void topbar_render(struct guibux_output *o) {
 			((server->color_border >> 8) & 0xFF) / 255.0,
 			(server->color_border & 0xFF) / 255.0);
 		cairo_rectangle(cr, (int)((date_x - 2) * scale) - (int)(scale / 2.f),
-			(o->server->topbar_height / 4) * scale, 1 * scale,
-			(o->server->topbar_height / 2) * scale);
+			cell_y * scale, 1 * scale, cell_h * scale);
 		cairo_fill(cr);
 	}
 
