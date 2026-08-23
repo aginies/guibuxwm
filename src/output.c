@@ -185,8 +185,11 @@ void server_new_output(struct wl_listener *listener, void *data) {
 	} else {
 		wlr_scene_output_layout_add_output(server->scene_layout, l_output, scene_output);
 	}
-	topbar_create(output);
+	/* background first: wlr-scene draws later children on top, so the
+	 * topbar node must come after the background or the bar is hidden
+	 * until the first toplevel raises it */
 	background_create(output);
+	topbar_create(output);
 	topbar_renumber(server);
 }
 
