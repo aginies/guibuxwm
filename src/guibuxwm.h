@@ -40,6 +40,7 @@
 #define TOPBAR_PAD 8
 #define NUM_WORKSPACES 4
 #define NUM_KEYBINDS 64
+#define MAX_WINDOWS 128
 #define DEFAULT_COLOR_BG 0x1e1e2e
 #define DEFAULT_COLOR_BORDER 0x45475a
 #define DEFAULT_COLOR_HIGHLIGHT 0x3a3c55
@@ -178,7 +179,7 @@ struct guibux_output {
     struct wlr_scene_rect *overview_dim;
 #define TOPBAR_WIN_W 100
 #define TOPBAR_WIN_GAP 10
-#define TOPBAR_WIN_MAX 64
+#define TOPBAR_WIN_MAX MAX_WINDOWS
 
     int topbar_win_x[TOPBAR_WIN_MAX];
     int topbar_win_w[TOPBAR_WIN_MAX];
@@ -246,7 +247,7 @@ struct launcher_entry {
 struct guibux_switcher {
 	bool active;
 	int selection;
-	struct guibux_toplevel *wins[64];
+	struct guibux_toplevel *wins[MAX_WINDOWS];
 	int num_wins;
 	struct wlr_output *output;
 	struct wlr_scene_buffer *scene_node;
@@ -256,15 +257,15 @@ struct guibux_switcher {
 
 struct guibux_overview {
 	bool active;
-	struct guibux_toplevel *wins[64];
-	struct wlr_output *win_output[64];
+	struct guibux_toplevel *wins[MAX_WINDOWS];
+	struct wlr_output *win_output[MAX_WINDOWS];
 	int num_wins;
-	double saved_x[64], saved_y[64];
-	int32_t saved_w[64], saved_h[64];
-	struct wlr_scene_buffer *label_node[64];
-	struct wlr_buffer *label_buf[64];
-	int label_w[64], label_h[64], label_scale[64];
-	char label_text[64][128];
+	double saved_x[MAX_WINDOWS], saved_y[MAX_WINDOWS];
+	int32_t saved_w[MAX_WINDOWS], saved_h[MAX_WINDOWS];
+	struct wlr_scene_buffer *label_node[MAX_WINDOWS];
+	struct wlr_buffer *label_buf[MAX_WINDOWS];
+	int label_w[MAX_WINDOWS], label_h[MAX_WINDOWS], label_scale[MAX_WINDOWS];
+	char label_text[MAX_WINDOWS][128];
 };
 
 struct guibux_help {

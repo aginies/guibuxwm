@@ -26,7 +26,7 @@ void retile_output(struct guibux_output *output) {
 		return;
 	}
 
-	struct guibux_toplevel *wins[64];
+	struct guibux_toplevel *wins[MAX_WINDOWS];
 	int n = 0;
 	struct guibux_toplevel *t;
 	wl_list_for_each(t, &server->toplevels, link) {
@@ -36,7 +36,7 @@ void retile_output(struct guibux_output *output) {
 		if (toplevel_output_for(t) != output->wlr_output) {
 			continue;
 		}
-		if (n < 64) {
+		if (n < MAX_WINDOWS) {
 			wins[n++] = t;
 		}
 	}

@@ -5,7 +5,6 @@
 #include <drm_fourcc.h>
 #include <string.h>
 
-#define OVERVIEW_MAX_WINS 64
 #define OVERVIEW_LABEL_FONT 60
 #define OVERVIEW_LABEL_PAD 6
 
@@ -272,7 +271,7 @@ void overview_show(struct guibux_server *server) {
 	ov->num_wins = 0;
 	struct guibux_toplevel *t;
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (ov->num_wins >= OVERVIEW_MAX_WINS) {
+		if (ov->num_wins >= MAX_WINDOWS) {
 			break;
 		}
 		ov->wins[ov->num_wins] = t;

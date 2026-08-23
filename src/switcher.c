@@ -7,7 +7,6 @@
 #include <time.h>
 
 #define SWITCHER_LINE_H 28
-#define SWITCHER_MAX_WINS 64
 #define SWITCHER_PAD 12
 #define SWITCHER_MAX_LINES 16
 
@@ -124,7 +123,7 @@ void switcher_show(struct guibux_server *server) {
 	s->num_wins = 0;
 	struct guibux_toplevel *t;
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (s->num_wins >= SWITCHER_MAX_WINS) break;
+		if (s->num_wins >= MAX_WINDOWS) break;
 		s->wins[s->num_wins++] = t;
 	}
 	if (s->num_wins == 0) {

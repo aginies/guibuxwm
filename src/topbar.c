@@ -2,19 +2,22 @@
 #include <wlr/types/wlr_scene.h>
 #include <drm_fourcc.h>
 #include <time.h>
+#include <string.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/render/allocator.h>
 
 // width in px of text at the face's current pixel size
-// cache: store advance width per codepoint for current font size
-#define CHAR_CACHE_MAX 256
-static uint32_t char_cache_cp[CHAR_CACHE_MAX];
-static int char_cache_w[CHAR_CACHE_MAX];
-static int char_cache_count = 0;
+// cache: open-addressing hash of the advance width per codepoint for
+// the current font size; cp 0 marks an empty slot (NUL is never
+// measured). A linear scan here is O(cps^2 * cache) for title
+// truncation
+#define CHAR_CACHE_SIZE 512
+static uint32_t char_cache_cp[CHAR_CACHE_SIZE];
+static int char_cache_w[CHAR_CACHE_SIZE];
 static int char_width_cache_size = -1;
 
 static void invalidate_char_width_cache(void) {
-	char_cache_count = 0;
+	memset(char_cache_cp, 0, sizeof(char_cache_cp));
 	char_width_cache_size = -1;
 }
 
@@ -67,9 +70,14 @@ static int char_advance_width(FT_Face face, uint32_t cp, int font_size) {
 		invalidate_char_width_cache();
 		char_width_cache_size = font_size;
 	}
-	for (int i = 0; i < char_cache_count; i++) {
-		if (char_cache_cp[i] == cp) {
-			return char_cache_w[i];
+	int i = (int)((uint32_t)cp * 2654435761u & (CHAR_CACHE_SIZE - 1));
+	for (int probe = 0; probe < 8; probe++) {
+		int slot = (i + probe) & (CHAR_CACHE_SIZE - 1);
+		if (char_cache_cp[slot] == cp) {
+			return char_cache_w[slot];
+		}
+		if (char_cache_cp[slot] == 0) {
+			break;
 		}
 	}
 	FT_UInt glyph = FT_Get_Char_Index(face, cp);
@@ -77,10 +85,13 @@ static int char_advance_width(FT_Face face, uint32_t cp, int font_size) {
 		return 0;
 	}
 	int w = face->glyph->advance.x / 64;
-	if (char_cache_count < CHAR_CACHE_MAX) {
-		char_cache_cp[char_cache_count] = cp;
-		char_cache_w[char_cache_count] = w;
-		char_cache_count++;
+	for (int probe = 0; probe < 8; probe++) {
+		int slot = (i + probe) & (CHAR_CACHE_SIZE - 1);
+		if (char_cache_cp[slot] == 0) {
+			char_cache_cp[slot] = cp;
+			char_cache_w[slot] = w;
+			break;
+		}
 	}
 	return w;
 }
