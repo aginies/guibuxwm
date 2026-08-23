@@ -173,7 +173,7 @@ struct guibux_output {
     int topbar_ws_x[NUM_WORKSPACES + 1];
     int topbar_ws_cell_w;
     struct wlr_scene_buffer *bg_node;
-    struct wlr_buffer *bg_buffer;
+    struct wlr_buffer *bg_ws_buffers[NUM_WORKSPACES];
     int bg_w, bg_h;
     struct wlr_scene_rect *overview_dim;
 #define TOPBAR_WIN_W 100

@@ -208,8 +208,11 @@ int main(int argc, char *argv[]) {
 	server.new_input.notify = server_new_input;
 	wl_signal_add(&server.backend->events.new_input, &server.new_input);
 	server.seat = wlr_seat_create(server.wl_display, "seat0");
+	/* lazy: the Xwayland process only starts when the first X11 client
+	 * connects; display_name is available immediately, so DISPLAY setup
+	 * below is unaffected */
 	server.xwayland = wlr_xwayland_create(server.wl_display,
-		server.compositor, false);
+		server.compositor, true);
 	if (server.xwayland != NULL) {
 		wlr_xwayland_set_seat(server.xwayland, server.seat);
 		wlr_log(WLR_INFO, "xwayland: DISPLAY=%s",

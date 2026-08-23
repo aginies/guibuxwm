@@ -47,71 +47,57 @@ void background_create(struct guibux_output *o) {
 	background_render(o);
 }
 
-void background_render(struct guibux_output *o) {
-	struct guibux_server *server = o->server;
-	cairo_surface_t *img = server->bg_surfaces[o->current_workspace - 1];
-
-	struct wlr_box box;
-	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
-	if (box.width <= 0 || box.height <= 0)
-		return;
-
-	if (!img) {
-		if (o->bg_node && o->bg_buffer) {
-			wlr_scene_buffer_set_buffer(o->bg_node, NULL);
-			wlr_buffer_drop(o->bg_buffer);
-			o->bg_buffer = NULL;
-			wlr_output_schedule_frame(o->wlr_output);
+static void background_drop_ws_buffers(struct guibux_output *o) {
+	for (int i = 0; i < NUM_WORKSPACES; i++) {
+		if (o->bg_ws_buffers[i]) {
+			wlr_buffer_drop(o->bg_ws_buffers[i]);
+			o->bg_ws_buffers[i] = NULL;
 		}
-		return;
 	}
+	o->bg_w = 0;
+	o->bg_h = 0;
+}
 
-	if (!o->bg_node) {
-		o->bg_node = wlr_scene_buffer_create(&server->scene->tree, NULL);
-		wlr_scene_node_set_position(&o->bg_node->node, box.x, box.y);
-	}
-
+/* Render workspace ws's image into a fresh buffer at the output's
+ * current size. The caller stores it in o->bg_ws_buffers[ws-1] so
+ * workspace switches become a cheap buffer swap instead of a full
+ * cairo rescale of the image */
+static struct wlr_buffer *background_render_workspace(struct guibux_output *o,
+		int ws, struct wlr_box box) {
+	struct guibux_server *server = o->server;
+	cairo_surface_t *img = server->bg_surfaces[ws - 1];
 	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
 	int w = box.width * scale;
 	int h = box.height * scale;
 
-	if (o->bg_buffer && (o->bg_w != box.width || o->bg_h != box.height)) {
-		wlr_buffer_drop(o->bg_buffer);
-		o->bg_buffer = NULL;
-		o->bg_w = 0;
-		o->bg_h = 0;
-	}
-
-	if (!o->bg_buffer) {
-		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-		struct wlr_drm_format format = {
-			.format = DRM_FORMAT_XRGB8888,
-			.len = 1,
-			.modifiers = mods,
-		};
-		o->bg_buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-			w, h, &format);
-		if (!o->bg_buffer) {
-			wlr_log(WLR_ERROR, "background: failed to create buffer on %s",
-				o->wlr_output->name ? o->wlr_output->name : "(unknown)");
-			return;
-		}
-		o->bg_w = box.width;
-		o->bg_h = box.height;
+	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
+	struct wlr_drm_format format = {
+		.format = DRM_FORMAT_XRGB8888,
+		.len = 1,
+		.modifiers = mods,
+	};
+	struct wlr_buffer *buf = wlr_allocator_create_buffer(
+		server->launcher.shm_alloc, w, h, &format);
+	if (!buf) {
+		wlr_log(WLR_ERROR, "background: failed to create buffer on %s",
+			o->wlr_output->name ? o->wlr_output->name : "(unknown)");
+		return NULL;
 	}
 
 	void *data;
-	uint32_t format;
+	uint32_t fmt;
 	size_t stride;
-	if (!wlr_buffer_begin_data_ptr_access(o->bg_buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) {
+	if (!wlr_buffer_begin_data_ptr_access(buf,
+			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &fmt, &stride)) {
 		wlr_log(WLR_ERROR, "background: cannot access buffer data");
-		return;
+		wlr_buffer_drop(buf);
+		return NULL;
 	}
-	if (format != DRM_FORMAT_XRGB8888) {
-		wlr_log(WLR_ERROR, "background: unexpected buffer format 0x%x", format);
-		wlr_buffer_end_data_ptr_access(o->bg_buffer);
-		return;
+	if (fmt != DRM_FORMAT_XRGB8888) {
+		wlr_log(WLR_ERROR, "background: unexpected buffer format 0x%x", fmt);
+		wlr_buffer_end_data_ptr_access(buf);
+		wlr_buffer_drop(buf);
+		return NULL;
 	}
 
 	cairo_surface_t *cs = cairo_image_surface_create_for_data(
@@ -162,15 +148,70 @@ void background_render(struct guibux_output *o) {
 	}
 
 	case BG_TILE:
-		cairo_set_source_surface(cr, img, 0, 0);
-		cairo_paint(cr);
+		/* repeat the image across the whole output; cairo clips each
+		 * tile to the surface */
+		for (int ty = 0; ty < h; ty += img_h) {
+			for (int tx = 0; tx < w; tx += img_w) {
+				cairo_save(cr);
+				cairo_translate(cr, tx, ty);
+				cairo_set_source_surface(cr, img, 0, 0);
+				cairo_paint(cr);
+				cairo_restore(cr);
+			}
+		}
 		break;
 	}
 
 	cairo_destroy(cr);
 	cairo_surface_destroy(cs);
-	wlr_buffer_end_data_ptr_access(o->bg_buffer);
-	wlr_scene_buffer_set_buffer(o->bg_node, o->bg_buffer);
+	wlr_buffer_end_data_ptr_access(buf);
+	return buf;
+}
+
+void background_render(struct guibux_output *o) {
+	struct guibux_server *server = o->server;
+	int ws = o->current_workspace;
+	cairo_surface_t *img = server->bg_surfaces[ws - 1];
+
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+	if (box.width <= 0 || box.height <= 0)
+		return;
+
+	if (!img) {
+		if (o->bg_node) {
+			background_drop_ws_buffers(o);
+			wlr_scene_buffer_set_buffer(o->bg_node, NULL);
+			wlr_output_schedule_frame(o->wlr_output);
+		}
+		return;
+	}
+
+	if (!o->bg_node) {
+		o->bg_node = wlr_scene_buffer_create(&server->scene->tree, NULL);
+		wlr_scene_node_set_position(&o->bg_node->node, box.x, box.y);
+	}
+
+	/* output resized: all cached workspace buffers are stale */
+	if (o->bg_w != box.width || o->bg_h != box.height) {
+		background_drop_ws_buffers(o);
+		o->bg_w = box.width;
+		o->bg_h = box.height;
+	}
+
+	/* already rendered for this workspace: just swap the buffer in */
+	if (o->bg_ws_buffers[ws - 1]) {
+		wlr_scene_buffer_set_buffer(o->bg_node, o->bg_ws_buffers[ws - 1]);
+		wlr_output_schedule_frame(o->wlr_output);
+		return;
+	}
+
+	struct wlr_buffer *buf = background_render_workspace(o, ws, box);
+	if (!buf) {
+		return;
+	}
+	o->bg_ws_buffers[ws - 1] = buf;
+	wlr_scene_buffer_set_buffer(o->bg_node, buf);
 	wlr_output_schedule_frame(o->wlr_output);
 }
 
@@ -179,8 +220,5 @@ void background_destroy(struct guibux_output *o) {
 		wlr_scene_node_destroy(&o->bg_node->node);
 		o->bg_node = NULL;
 	}
-	if (o->bg_buffer) {
-		wlr_buffer_drop(o->bg_buffer);
-		o->bg_buffer = NULL;
-	}
+	background_drop_ws_buffers(o);
 }
