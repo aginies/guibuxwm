@@ -6,13 +6,13 @@
 // ---------------------------------------------------------------------------
 
 void focus_toplevel(struct guibux_toplevel *toplevel) {
-	if (toplevel == NULL) {
+	if (toplevel == NULL || toplevel->scene_tree == NULL) {
 		return;
 	}
 	struct guibux_server *server = toplevel->server;
 	struct wlr_seat *seat = server->seat;
 	struct wlr_surface *prev_surface = seat->keyboard_state.focused_surface;
-	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
+	struct wlr_surface *surface = toplevel_get_surface(toplevel);
 	if (prev_surface == surface) {
 		return;
 	}
@@ -21,14 +21,22 @@ void focus_toplevel(struct guibux_toplevel *toplevel) {
 			wlr_xdg_toplevel_try_from_wlr_surface(prev_surface);
 		if (prev_toplevel != NULL) {
 			wlr_xdg_toplevel_set_activated(prev_toplevel, false);
+		} else {
+			struct wlr_xwayland_surface *prev_xs =
+				wlr_xwayland_surface_try_from_wlr_surface(prev_surface);
+			if (prev_xs != NULL) {
+				wlr_xwayland_surface_activate(prev_xs, false);
+			}
 		}
 	}
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
 	wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
 	topbar_raise_all(server);
-	wl_list_remove(&toplevel->link);
-	wl_list_insert(&server->toplevels, &toplevel->link);
-	wlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, true);
+	if (toplevel->managed) {
+		wl_list_remove(&toplevel->link);
+		wl_list_insert(&server->toplevels, &toplevel->link);
+	}
+	toplevel_set_activated(toplevel, true);
 	if (keyboard != NULL) {
 		wlr_seat_keyboard_notify_enter(seat, surface,
 			keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
@@ -48,11 +56,14 @@ void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen) {
 		return;
 	}
 	struct guibux_server *server = toplevel->server;
-	struct wlr_xdg_toplevel *xdg_toplevel = toplevel->xdg_toplevel;
 
 	if (fullscreen) {
 		toplevel->saved_x = toplevel->scene_tree->node.x;
 		toplevel->saved_y = toplevel->scene_tree->node.y;
+		if (toplevel->xsurface != NULL) {
+			toplevel->saved_w = toplevel->xsurface->width;
+			toplevel->saved_h = toplevel->xsurface->height;
+		}
 
 		struct wlr_output *output = toplevel_output_for(toplevel);
 		if (output != NULL) {
@@ -64,18 +75,22 @@ void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen) {
 			/* fullscreen below the topbar, so the bar stays visible */
 			wlr_scene_node_set_position(&toplevel->scene_tree->node,
 				box.x, box.y + th);
-			wlr_xdg_toplevel_set_size(xdg_toplevel, ew, eh - th);
+			toplevel_set_size(toplevel, ew, eh - th);
 		}
 		wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
 		topbar_raise_all(server);
 	} else {
 		wlr_scene_node_set_position(&toplevel->scene_tree->node,
 			toplevel->saved_x, toplevel->saved_y);
-		wlr_xdg_toplevel_set_size(xdg_toplevel, 0, 0);
+		if (toplevel->xsurface != NULL) {
+			toplevel_set_size(toplevel, toplevel->saved_w, toplevel->saved_h);
+		} else {
+			wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, 0, 0);
+		}
 	}
 
 	toplevel->is_fullscreen = fullscreen;
-	wlr_xdg_toplevel_set_fullscreen(xdg_toplevel, fullscreen);
+	toplevel_set_fullscreen_state(toplevel, fullscreen);
 	if (!fullscreen) {
 		struct guibux_output *o = guibux_output_for(server,
 			toplevel_output_for(toplevel));
@@ -100,16 +115,17 @@ void begin_interactive(struct guibux_toplevel *toplevel,
 		server->grab_x = server->cursor->x - toplevel->scene_tree->node.x;
 		server->grab_y = server->cursor->y - toplevel->scene_tree->node.y;
 	} else {
-		struct wlr_box *geo_box = &toplevel->xdg_toplevel->base->geometry;
+		struct wlr_box geo_box;
+		toplevel_get_geometry(toplevel, &geo_box);
 
-		double border_x = (toplevel->scene_tree->node.x + geo_box->x) +
-			((edges & WLR_EDGE_RIGHT) ? geo_box->width : 0);
-		double border_y = (toplevel->scene_tree->node.y + geo_box->y) +
-			((edges & WLR_EDGE_BOTTOM) ? geo_box->height : 0);
+		double border_x = (toplevel->scene_tree->node.x + geo_box.x) +
+			((edges & WLR_EDGE_RIGHT) ? geo_box.width : 0);
+		double border_y = (toplevel->scene_tree->node.y + geo_box.y) +
+			((edges & WLR_EDGE_BOTTOM) ? geo_box.height : 0);
 		server->grab_x = server->cursor->x - border_x;
 		server->grab_y = server->cursor->y - border_y;
 
-		server->grab_geobox = *geo_box;
+		server->grab_geobox = geo_box;
 		server->grab_geobox.x += toplevel->scene_tree->node.x;
 		server->grab_geobox.y += toplevel->scene_tree->node.y;
 
@@ -128,6 +144,7 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	struct guibux_toplevel *toplevel = calloc(1, sizeof(*toplevel));
 	toplevel->server = server;
 	toplevel->xdg_toplevel = xdg_toplevel;
+	toplevel->managed = true;
 	toplevel->scene_tree =
 		wlr_scene_xdg_surface_create(&toplevel->server->scene->tree, xdg_toplevel->base);
 	toplevel->scene_tree->node.data = toplevel;
@@ -287,6 +304,382 @@ void xdg_toplevel_request_fullscreen(struct wl_listener *listener, void *data) {
 	if (toplevel->xdg_toplevel->base->initialized) {
 		wlr_xdg_surface_schedule_configure(toplevel->xdg_toplevel->base);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Toplevel accessors (xdg or xwayland)
+// ---------------------------------------------------------------------------
+
+struct wlr_surface *toplevel_get_surface(struct guibux_toplevel *toplevel) {
+	if (toplevel->xdg_toplevel != NULL) {
+		return toplevel->xdg_toplevel->base->surface;
+	}
+	return toplevel->xsurface->surface;
+}
+
+const char *toplevel_get_title(struct guibux_toplevel *toplevel) {
+	if (toplevel->xdg_toplevel != NULL) {
+		return toplevel->xdg_toplevel->title;
+	}
+	return toplevel->xsurface->title;
+}
+
+bool toplevel_is_xwayland(struct guibux_toplevel *toplevel) {
+	return toplevel->xsurface != NULL;
+}
+
+void toplevel_set_size(struct guibux_toplevel *toplevel, int width, int height) {
+	if (toplevel->xdg_toplevel != NULL) {
+		wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, width, height);
+	} else if (width > 0 && height > 0) {
+		/* 0,0 has no meaning for X11 windows; the app keeps its size.
+		 * Skip no-op configures: they send a synthetic ConfigureNotify
+		 * and would loop with the commit handler in tile mode */
+		if (width == toplevel->xsurface->width &&
+				height == toplevel->xsurface->height &&
+				toplevel->scene_tree->node.x == toplevel->xsurface->x &&
+				toplevel->scene_tree->node.y == toplevel->xsurface->y) {
+			return;
+		}
+		wlr_xwayland_surface_configure(toplevel->xsurface,
+			toplevel->scene_tree->node.x, toplevel->scene_tree->node.y,
+			width, height);
+	}
+}
+
+void toplevel_get_geometry(struct guibux_toplevel *toplevel,
+		struct wlr_box *box) {
+	if (toplevel->xdg_toplevel != NULL) {
+		*box = toplevel->xdg_toplevel->base->geometry;
+	} else {
+		box->x = 0;
+		box->y = 0;
+		box->width = toplevel->xsurface->width;
+		box->height = toplevel->xsurface->height;
+	}
+}
+
+void toplevel_close(struct guibux_toplevel *toplevel) {
+	if (toplevel->xdg_toplevel != NULL) {
+		wlr_xdg_toplevel_send_close(toplevel->xdg_toplevel);
+	} else {
+		wlr_xwayland_surface_close(toplevel->xsurface);
+	}
+}
+
+void toplevel_set_activated(struct guibux_toplevel *toplevel, bool activated) {
+	if (toplevel->xdg_toplevel != NULL) {
+		wlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, activated);
+	} else {
+		wlr_xwayland_surface_activate(toplevel->xsurface, activated);
+	}
+}
+
+void toplevel_set_fullscreen_state(struct guibux_toplevel *toplevel,
+		bool fullscreen) {
+	if (toplevel->xdg_toplevel != NULL) {
+		wlr_xdg_toplevel_set_fullscreen(toplevel->xdg_toplevel, fullscreen);
+	} else {
+		wlr_xwayland_surface_set_fullscreen(toplevel->xsurface, fullscreen);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// xwayland surface lifecycle
+// ---------------------------------------------------------------------------
+
+static void xsurface_associate(struct wl_listener *listener, void *data);
+static void xsurface_dissociate(struct wl_listener *listener, void *data);
+static void xsurface_map(struct wl_listener *listener, void *data);
+static void xsurface_unmap(struct wl_listener *listener, void *data);
+static void xsurface_commit(struct wl_listener *listener, void *data);
+static void xsurface_destroy(struct wl_listener *listener, void *data);
+static void xsurface_request_move(struct wl_listener *listener, void *data);
+static void xsurface_request_resize(struct wl_listener *listener, void *data);
+static void xsurface_request_fullscreen(struct wl_listener *listener, void *data);
+static void xsurface_request_activate(struct wl_listener *listener, void *data);
+static void xsurface_request_close(struct wl_listener *listener, void *data);
+static void xsurface_request_configure(struct wl_listener *listener, void *data);
+static void xsurface_set_title(struct wl_listener *listener, void *data);
+static void xsurface_ping_timeout(struct wl_listener *listener, void *data);
+
+void server_new_xwayland_surface(struct wl_listener *listener, void *data) {
+	struct guibux_server *server =
+		wl_container_of(listener, server, new_xwayland_surface);
+	struct wlr_xwayland_surface *xsurface = data;
+
+	struct guibux_toplevel *toplevel = calloc(1, sizeof(*toplevel));
+	toplevel->server = server;
+	toplevel->xsurface = xsurface;
+	toplevel->managed = !xsurface->override_redirect;
+
+	toplevel->associate.notify = xsurface_associate;
+	wl_signal_add(&xsurface->events.associate, &toplevel->associate);
+	toplevel->dissociate.notify = xsurface_dissociate;
+	wl_signal_add(&xsurface->events.dissociate, &toplevel->dissociate);
+	toplevel->destroy.notify = xsurface_destroy;
+	wl_signal_add(&xsurface->events.destroy, &toplevel->destroy);
+	toplevel->request_move.notify = xsurface_request_move;
+	wl_signal_add(&xsurface->events.request_move, &toplevel->request_move);
+	toplevel->request_resize.notify = xsurface_request_resize;
+	wl_signal_add(&xsurface->events.request_resize, &toplevel->request_resize);
+	toplevel->request_fullscreen.notify = xsurface_request_fullscreen;
+	wl_signal_add(&xsurface->events.request_fullscreen,
+		&toplevel->request_fullscreen);
+	toplevel->request_activate.notify = xsurface_request_activate;
+	wl_signal_add(&xsurface->events.request_activate, &toplevel->request_activate);
+	toplevel->request_close.notify = xsurface_request_close;
+	wl_signal_add(&xsurface->events.request_close, &toplevel->request_close);
+	toplevel->request_configure.notify = xsurface_request_configure;
+	wl_signal_add(&xsurface->events.request_configure,
+		&toplevel->request_configure);
+	toplevel->set_title.notify = xsurface_set_title;
+	wl_signal_add(&xsurface->events.set_title, &toplevel->set_title);
+	toplevel->ping_timeout.notify = xsurface_ping_timeout;
+	wl_signal_add(&xsurface->events.ping_timeout, &toplevel->ping_timeout);
+}
+
+static void xsurface_associate(struct wl_listener *listener, void *data) {
+	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, associate);
+	struct wlr_xwayland_surface *xsurface = toplevel->xsurface;
+
+	/* wrapper tree so children (e.g. overview labels) can attach,
+	 * matching the xdg scene tree layout */
+	toplevel->scene_tree = wlr_scene_tree_create(&toplevel->server->scene->tree);
+	toplevel->scene_tree->node.data = toplevel;
+	wlr_scene_surface_create(toplevel->scene_tree, xsurface->surface);
+
+	toplevel->map.notify = xsurface_map;
+	wl_signal_add(&xsurface->surface->events.map, &toplevel->map);
+	toplevel->unmap.notify = xsurface_unmap;
+	wl_signal_add(&xsurface->surface->events.unmap, &toplevel->unmap);
+	toplevel->commit.notify = xsurface_commit;
+	wl_signal_add(&xsurface->surface->events.commit, &toplevel->commit);
+}
+
+static void xsurface_dissociate(struct wl_listener *listener, void *data) {
+	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, dissociate);
+
+	wl_list_remove(&toplevel->map.link);
+	wl_list_remove(&toplevel->unmap.link);
+	wl_list_remove(&toplevel->commit.link);
+	wlr_scene_node_destroy(&toplevel->scene_tree->node);
+	toplevel->scene_tree = NULL;
+}
+
+static void xsurface_map(struct wl_listener *listener, void *data) {
+	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, map);
+	struct wlr_xwayland_surface *xsurface = toplevel->xsurface;
+
+	if (toplevel->server->overview.active) {
+		overview_hide(toplevel->server);
+	}
+
+	wlr_log(WLR_INFO, "mapped xwayland toplevel '%s' (OR=%d)",
+		xsurface->title ? xsurface->title : "(untitled)",
+		xsurface->override_redirect);
+
+	if (!toplevel->managed) {
+		/* override-redirect (menus, tooltips): place where the app
+		 * asked, no tiling, no topbar, no focus stealing */
+		wlr_scene_node_set_position(&toplevel->scene_tree->node,
+			xsurface->x, xsurface->y);
+		wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
+		topbar_raise_all(toplevel->server);
+		if (wlr_xwayland_surface_override_redirect_wants_focus(xsurface)) {
+			focus_toplevel(toplevel);
+		}
+		return;
+	}
+
+	wl_list_insert(&toplevel->server->toplevels, &toplevel->link);
+
+	struct wlr_output *output = output_at_cursor(toplevel->server);
+	struct guibux_output *o = output != NULL
+		? guibux_output_for(toplevel->server, output) : NULL;
+	toplevel->workspace = o != NULL ? o->current_workspace : 1;
+	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+		struct wlr_box box;
+		wlr_output_layout_get_box(toplevel->server->output_layout,
+			output, &box);
+		wlr_scene_node_set_position(&toplevel->scene_tree->node, box.x, box.y);
+		retile_output(o);
+	} else {
+		place_toplevel(toplevel);
+	}
+	focus_toplevel(toplevel);
+	if (xsurface->fullscreen) {
+		set_fullscreen(toplevel, true);
+	}
+	struct guibux_output *o2 = guibux_output_for(toplevel->server,
+		toplevel_output_for(toplevel));
+	if (o2)
+		topbar_mark_dirty(o2);
+}
+
+static void xsurface_unmap(struct wl_listener *listener, void *data) {
+	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, unmap);
+	struct guibux_server *server = toplevel->server;
+
+	if (!toplevel->managed) {
+		return;
+	}
+
+	if (server->overview.active) {
+		overview_hide(server);
+	}
+
+	if (toplevel == server->grabbed_toplevel) {
+		reset_cursor_mode(server);
+	}
+
+	struct guibux_output *o = guibux_output_for(server,
+		toplevel_output_for(toplevel));
+	wl_list_remove(&toplevel->link);
+	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+		retile_output(o);
+	}
+	topbar_mark_dirty(o);
+
+	if (!wl_list_empty(&server->toplevels)) {
+		struct guibux_toplevel *next =
+			wl_container_of(server->toplevels.next, next, link);
+		focus_toplevel(next);
+	} else {
+		clear_keyboard_focus(server);
+	}
+}
+
+static void xsurface_commit(struct wl_listener *listener, void *data) {
+	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, commit);
+
+	if (toplevel->managed && toplevel->xsurface->surface->mapped) {
+		struct guibux_output *o = guibux_output_for(toplevel->server,
+			toplevel_output_for(toplevel));
+		if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+			retile_output(o);
+		}
+	}
+}
+
+static void xsurface_destroy(struct wl_listener *listener, void *data) {
+	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, destroy);
+
+	wlr_log(WLR_INFO, "destroyed xwayland toplevel '%s'",
+		toplevel->xsurface->title ? toplevel->xsurface->title : "(untitled)");
+
+	if (toplevel->scene_tree != NULL) {
+		wl_list_remove(&toplevel->map.link);
+		wl_list_remove(&toplevel->unmap.link);
+		wl_list_remove(&toplevel->commit.link);
+	}
+	wl_list_remove(&toplevel->associate.link);
+	wl_list_remove(&toplevel->dissociate.link);
+	wl_list_remove(&toplevel->destroy.link);
+	wl_list_remove(&toplevel->request_move.link);
+	wl_list_remove(&toplevel->request_resize.link);
+	wl_list_remove(&toplevel->request_fullscreen.link);
+	wl_list_remove(&toplevel->request_activate.link);
+	wl_list_remove(&toplevel->request_close.link);
+	wl_list_remove(&toplevel->request_configure.link);
+	wl_list_remove(&toplevel->set_title.link);
+	wl_list_remove(&toplevel->ping_timeout.link);
+
+	struct guibux_output *fo = guibux_output_for(toplevel->server,
+		toplevel_output_for(toplevel));
+	if (fo)
+		topbar_mark_dirty(fo);
+
+	if (toplevel->server->last_ffm_toplevel == toplevel) {
+		toplevel->server->last_ffm_toplevel = NULL;
+	}
+
+	free(toplevel);
+}
+
+static void xsurface_request_move(struct wl_listener *listener, void *data) {
+	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, request_move);
+	if (toplevel->scene_tree == NULL) {
+		return;
+	}
+	if (toplevel->is_fullscreen) {
+		set_fullscreen(toplevel, false);
+	}
+	begin_interactive(toplevel, GUIBUX_CURSOR_MOVE, 0);
+}
+
+static void xsurface_request_resize(struct wl_listener *listener, void *data) {
+	struct wlr_xwayland_resize_event *event = data;
+	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, request_resize);
+	if (toplevel->scene_tree == NULL) {
+		return;
+	}
+	if (toplevel->is_fullscreen) {
+		set_fullscreen(toplevel, false);
+	}
+	begin_interactive(toplevel, GUIBUX_CURSOR_RESIZE, event->edges);
+}
+
+static void xsurface_request_fullscreen(struct wl_listener *listener, void *data) {
+	struct guibux_toplevel *toplevel =
+		wl_container_of(listener, toplevel, request_fullscreen);
+	if (toplevel->scene_tree == NULL) {
+		return;
+	}
+	set_fullscreen(toplevel, toplevel->xsurface->fullscreen);
+}
+
+static void xsurface_request_activate(struct wl_listener *listener, void *data) {
+	struct guibux_toplevel *toplevel =
+		wl_container_of(listener, toplevel, request_activate);
+	if (toplevel->scene_tree == NULL) {
+		return;
+	}
+	focus_toplevel(toplevel);
+}
+
+static void xsurface_request_close(struct wl_listener *listener, void *data) {
+	struct guibux_toplevel *toplevel =
+		wl_container_of(listener, toplevel, request_close);
+	toplevel_close(toplevel);
+}
+
+static void xsurface_request_configure(struct wl_listener *listener, void *data) {
+	struct wlr_xwayland_surface_configure_event *event = data;
+	struct guibux_toplevel *toplevel =
+		wl_container_of(listener, toplevel, request_configure);
+	if (!toplevel->managed || toplevel->is_fullscreen ||
+			toplevel->scene_tree == NULL) {
+		return;
+	}
+	/* free mode: accept the app's requested geometry */
+	if (event->mask & XCB_CONFIG_WINDOW_X) {
+		toplevel->scene_tree->node.x = event->x;
+	}
+	if (event->mask & XCB_CONFIG_WINDOW_Y) {
+		toplevel->scene_tree->node.y = event->y;
+	}
+	wlr_xwayland_surface_configure(toplevel->xsurface,
+		toplevel->scene_tree->node.x, toplevel->scene_tree->node.y,
+		event->width, event->height);
+}
+
+static void xsurface_set_title(struct wl_listener *listener, void *data) {
+	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, set_title);
+	if (!toplevel->managed || toplevel->scene_tree == NULL) {
+		return;
+	}
+	struct guibux_output *o = guibux_output_for(toplevel->server,
+		toplevel_output_for(toplevel));
+	if (o)
+		topbar_mark_dirty(o);
+}
+
+static void xsurface_ping_timeout(struct wl_listener *listener, void *data) {
+	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, ping_timeout);
+	wlr_log(WLR_INFO, "xwayland ping timeout, closing '%s'",
+		toplevel->xsurface->title ? toplevel->xsurface->title : "(untitled)");
+	wlr_xwayland_surface_close(toplevel->xsurface);
 }
 
 // ---------------------------------------------------------------------------

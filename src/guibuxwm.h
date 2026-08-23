@@ -25,6 +25,7 @@
 #ifdef WLR_USE_UNSTABLE
 #include <wlr/types/wlr_idle_inhibit_v1.h>
 #include <wlr/types/wlr_idle_notify_v1.h>
+#include <wlr/xwayland.h>
 #endif
 
 #define CASCADE_STEP 40
@@ -194,10 +195,13 @@ struct guibux_toplevel {
 	struct wl_list link;
 	struct guibux_server *server;
 	struct wlr_xdg_toplevel *xdg_toplevel;
+	struct wlr_xwayland_surface *xsurface;
 	struct wlr_scene_tree *scene_tree;
 	bool is_fullscreen;
+	bool managed;
 	int workspace;
 	double saved_x, saved_y;
+	int saved_w, saved_h;
 	struct wl_listener map;
 	struct wl_listener unmap;
 	struct wl_listener commit;
@@ -206,6 +210,15 @@ struct guibux_toplevel {
 	struct wl_listener request_resize;
 	struct wl_listener request_maximize;
 	struct wl_listener request_fullscreen;
+	/* xwayland-only */
+	struct wl_listener associate;
+	struct wl_listener dissociate;
+	struct wl_listener request_activate;
+	struct wl_listener request_close;
+	struct wl_listener request_configure;
+	struct wl_listener set_title;
+	struct wl_listener ping_timeout;
+	struct wl_listener map_request;
 };
 
 struct guibux_popup {
@@ -286,12 +299,15 @@ struct guibux_server {
 	struct wlr_backend *backend;
 	struct wlr_renderer *renderer;
 	struct wlr_allocator *allocator;
+	struct wlr_compositor *compositor;
 	struct wlr_scene *scene;
 	struct wlr_scene_output_layout *scene_layout;
 
 	struct wlr_xdg_shell *xdg_shell;
 	struct wl_listener new_xdg_toplevel;
 	struct wl_listener new_xdg_popup;
+	struct wlr_xwayland *xwayland;
+	struct wl_listener new_xwayland_surface;
 	struct wl_list toplevels;
 
 	struct wlr_cursor *cursor;
@@ -400,6 +416,15 @@ void xdg_toplevel_request_move(struct wl_listener *listener, void *data);
 void xdg_toplevel_request_resize(struct wl_listener *listener, void *data);
 void xdg_toplevel_request_maximize(struct wl_listener *listener, void *data);
 void xdg_toplevel_request_fullscreen(struct wl_listener *listener, void *data);
+void server_new_xwayland_surface(struct wl_listener *listener, void *data);
+struct wlr_surface *toplevel_get_surface(struct guibux_toplevel *toplevel);
+const char *toplevel_get_title(struct guibux_toplevel *toplevel);
+bool toplevel_is_xwayland(struct guibux_toplevel *toplevel);
+void toplevel_set_size(struct guibux_toplevel *toplevel, int width, int height);
+void toplevel_get_geometry(struct guibux_toplevel *toplevel, struct wlr_box *box);
+void toplevel_close(struct guibux_toplevel *toplevel);
+void toplevel_set_activated(struct guibux_toplevel *toplevel, bool activated);
+void toplevel_set_fullscreen_state(struct guibux_toplevel *toplevel, bool fullscreen);
 struct guibux_toplevel *desktop_toplevel_at(struct guibux_server *server, double lx, double ly, struct wlr_surface **surface, double *sx, double *sy);
 
 /* window-layout.c */

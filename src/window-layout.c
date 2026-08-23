@@ -71,7 +71,7 @@ void retile_output(struct guibux_output *output) {
 		}
 		wlr_scene_node_set_position(&wins[i]->scene_tree->node,
 			box.x + rx, box.y + ry);
-		wlr_xdg_toplevel_set_size(wins[i]->xdg_toplevel, rw, rh);
+		toplevel_set_size(wins[i], rw, rh);
 	}
 }
 
@@ -113,13 +113,16 @@ void switch_workspace(struct guibux_output *output, int ws) {
 
 	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
 	struct wlr_xdg_toplevel *focused_xdg = NULL;
+	struct wlr_xwayland_surface *focused_xs = NULL;
 	if (focused != NULL) {
 		focused_xdg = wlr_xdg_toplevel_try_from_wlr_surface(focused);
+		focused_xs = wlr_xwayland_surface_try_from_wlr_surface(focused);
 	}
 	struct guibux_toplevel *focused_toplevel = NULL;
-	if (focused_xdg != NULL) {
+	if (focused_xdg != NULL || focused_xs != NULL) {
 		wl_list_for_each(t, &server->toplevels, link) {
-			if (t->xdg_toplevel == focused_xdg) {
+			if ((focused_xdg != NULL && t->xdg_toplevel == focused_xdg) ||
+					(focused_xs != NULL && t->xsurface == focused_xs)) {
 				focused_toplevel = t;
 				break;
 			}
@@ -184,14 +187,15 @@ void move_toplevel_to_output(struct guibux_toplevel *toplevel, struct wlr_output
 	struct wlr_output *src = toplevel_output_for(toplevel);
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, output, &box);
-	struct wlr_box geo = toplevel->xdg_toplevel->base->geometry;
+	struct wlr_box geo;
+	toplevel_get_geometry(toplevel, &geo);
 	int32_t w = geo.width > 0 ? geo.width : 800;
 	int32_t h = geo.height > 0 ? geo.height : 600;
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
 		box.x + (box.width - w) / 2,
 		box.y + (box.height - h) / 2);
 	wlr_log(WLR_INFO, "moved '%s' to output %s",
-		toplevel->xdg_toplevel->title ? toplevel->xdg_toplevel->title : "(untitled)",
+		toplevel_get_title(toplevel) ? toplevel_get_title(toplevel) : "(untitled)",
 		output->name ? output->name : "(unknown)");
 	struct guibux_output *o = guibux_output_for(server, output);
 	if (o != NULL) {
@@ -250,7 +254,7 @@ void snap_toplevel_left(struct guibux_toplevel *toplevel) {
 	int h = box.height - toplevel->server->topbar_height;
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
 		box.x, box.y + toplevel->server->topbar_height);
-	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, w, h);
+	toplevel_set_size(toplevel, w, h);
 }
 
 void snap_toplevel_right(struct guibux_toplevel *toplevel) {
@@ -269,7 +273,7 @@ void snap_toplevel_right(struct guibux_toplevel *toplevel) {
 	int h = box.height - server->topbar_height;
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
 		box.x + rx, box.y + server->topbar_height);
-	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, w, h);
+	toplevel_set_size(toplevel, w, h);
 }
 
 void snap_toplevel_top(struct guibux_toplevel *toplevel) {
@@ -287,7 +291,7 @@ void snap_toplevel_top(struct guibux_toplevel *toplevel) {
 	int h = (box.height - toplevel->server->topbar_height) / 2;
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
 		box.x, box.y + toplevel->server->topbar_height);
-	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, w, h);
+	toplevel_set_size(toplevel, w, h);
 }
 
 void snap_toplevel_bottom(struct guibux_toplevel *toplevel) {
@@ -306,5 +310,5 @@ void snap_toplevel_bottom(struct guibux_toplevel *toplevel) {
 	int ry = toplevel->server->topbar_height + (box.height - toplevel->server->topbar_height) / 2;
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
 		box.x, box.y + ry);
-	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, w, h);
+	toplevel_set_size(toplevel, w, h);
 }

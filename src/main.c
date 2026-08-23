@@ -162,7 +162,7 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
-	wlr_compositor_create(server.wl_display, 5, server.renderer);
+	server.compositor = wlr_compositor_create(server.wl_display, 5, server.renderer);
 	wlr_subcompositor_create(server.wl_display);
 	wlr_data_device_manager_create(server.wl_display);
 	wlr_primary_selection_v1_device_manager_create(server.wl_display);
@@ -208,6 +208,18 @@ int main(int argc, char *argv[]) {
 	server.new_input.notify = server_new_input;
 	wl_signal_add(&server.backend->events.new_input, &server.new_input);
 	server.seat = wlr_seat_create(server.wl_display, "seat0");
+	server.xwayland = wlr_xwayland_create(server.wl_display,
+		server.compositor, false);
+	if (server.xwayland != NULL) {
+		wlr_xwayland_set_seat(server.xwayland, server.seat);
+		wlr_log(WLR_INFO, "xwayland: DISPLAY=%s",
+			server.xwayland->display_name);
+		server.new_xwayland_surface.notify = server_new_xwayland_surface;
+		wl_signal_add(&server.xwayland->events.new_surface,
+			&server.new_xwayland_surface);
+	} else {
+		wlr_log(WLR_ERROR, "failed to create xwayland, X11 apps disabled");
+	}
 	server.request_cursor.notify = seat_request_cursor;
 	wl_signal_add(&server.seat->events.request_set_cursor,
 		&server.request_cursor);
@@ -236,11 +248,10 @@ int main(int argc, char *argv[]) {
 	}
 
 	setenv("WAYLAND_DISPLAY", socket, true);
-	/* some apps (e.g. PrusaSlicer flatpak) refuse GUI mode without a
-	 * non-empty DISPLAY even on Wayland; no X server exists, so this
-	 * value is never actually used for X11 */
-	if (getenv("DISPLAY") == NULL) {
-		setenv("DISPLAY", ":0", false);
+	/* X11 clients (e.g. PrusaSlicer flatpak) connect to the Xwayland
+	 * display started above; spawned clients inherit this DISPLAY */
+	if (server.xwayland != NULL) {
+		setenv("DISPLAY", server.xwayland->display_name, true);
 	}
 
 	if (extra_outputs != NULL) {
@@ -329,6 +340,9 @@ int main(int argc, char *argv[]) {
 
 	wl_list_remove(&server.new_xdg_toplevel.link);
 	wl_list_remove(&server.new_xdg_popup.link);
+	if (server.xwayland != NULL) {
+		wl_list_remove(&server.new_xwayland_surface.link);
+	}
 
 	wl_list_remove(&server.cursor_motion.link);
 	wl_list_remove(&server.cursor_motion_absolute.link);
@@ -370,6 +384,9 @@ int main(int argc, char *argv[]) {
 	launcher_free_commands(&server.launcher);
 	wlr_xcursor_manager_destroy(server.cursor_mgr);
 	wlr_cursor_destroy(server.cursor);
+	if (server.xwayland != NULL) {
+		wlr_xwayland_destroy(server.xwayland);
+	}
 	wlr_backend_destroy(server.backend);
 	wlr_scene_node_destroy(&server.scene->tree.node);
 	wlr_output_layout_destroy(server.output_layout);

@@ -21,7 +21,8 @@ static void switcher_warp_to_selection(struct guibux_server *server) {
 	struct guibux_switcher *s = &server->switcher;
 	if (s->selection >= s->num_wins) return;
 	struct guibux_toplevel *t = s->wins[s->selection];
-	struct wlr_box geo = t->xdg_toplevel->base->geometry;
+	struct wlr_box geo;
+	toplevel_get_geometry(t, &geo);
 	double cx = t->scene_tree->node.x + geo.width / 2.0;
 	double cy = t->scene_tree->node.y + geo.height / 2.0;
 	wlr_cursor_warp(server->cursor, NULL, cx, cy);
@@ -81,8 +82,8 @@ static void switcher_render(struct guibux_server *server) {
 		if (o != NULL) {
 			monletter = 'A' + (o->topbar_number - 1);
 		}
-		const char *title = t->xdg_toplevel->title
-			? t->xdg_toplevel->title : "(untitled)";
+		const char *title = toplevel_get_title(t)
+			? toplevel_get_title(t) : "(untitled)";
 		char label[256];
 		snprintf(label, sizeof(label), "%c%d: %s", monletter, t->workspace, title);
 

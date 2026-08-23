@@ -45,7 +45,7 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 		break;
 	case GUIBUX_ACT_CLOSE:
 		if (toplevel != NULL) {
-			wlr_xdg_toplevel_send_close(toplevel->xdg_toplevel);
+			toplevel_close(toplevel);
 		}
 		break;
 	case GUIBUX_ACT_FULLSCREEN:

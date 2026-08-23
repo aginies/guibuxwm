@@ -128,7 +128,7 @@ static void overview_create_overlays(struct guibux_server *server) {
 		if (wout && wout->scale > 1) sc = (int)wout->scale;
 
 		/* label */
-		const char *title = t->xdg_toplevel->title ? t->xdg_toplevel->title : "";
+		const char *title = toplevel_get_title(t) ? toplevel_get_title(t) : "";
 		FT_Face face = server->launcher.face;
 		if (!face) continue;
 
@@ -245,8 +245,7 @@ static void overview_layout(struct guibux_server *server) {
 						ov->win_output[i] == o->wlr_output) {
 					wlr_scene_node_set_position(&t->scene_tree->node,
 						x, area_y + (ws - 1) * row_h);
-					wlr_xdg_toplevel_set_size(t->xdg_toplevel,
-						cell_w, row_h);
+					toplevel_set_size(t, cell_w, row_h);
 
 					if (ov->label_node[i]) {
 						int x_off = (cell_w - ov->label_w[i]) / 2;
@@ -285,7 +284,8 @@ void overview_show(struct guibux_server *server) {
 		ov->saved_y[ov->num_wins] = t->scene_tree->node.y;
 		/* geometry (logical) size: wlr_xdg_toplevel_set_size takes
 		 * logical pixels, the buffer size is scale-adjusted */
-		struct wlr_box geo = t->xdg_toplevel->base->geometry;
+		struct wlr_box geo;
+		toplevel_get_geometry(t, &geo);
 		ov->saved_w[ov->num_wins] = geo.width;
 		ov->saved_h[ov->num_wins] = geo.height;
 		ov->label_node[ov->num_wins] = NULL;
@@ -350,8 +350,7 @@ void overview_hide(struct guibux_server *server) {
 		wlr_scene_node_set_position(&t->scene_tree->node,
 			ov->saved_x[i], ov->saved_y[i]);
 		if (ov->saved_w[i] > 0 && ov->saved_h[i] > 0) {
-			wlr_xdg_toplevel_set_size(t->xdg_toplevel,
-				ov->saved_w[i], ov->saved_h[i]);
+			toplevel_set_size(t, ov->saved_w[i], ov->saved_h[i]);
 		}
 	}
 	ov->num_wins = 0;

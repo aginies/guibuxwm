@@ -8,6 +8,10 @@ Derived from [tinywl](https://gitlab.freedesktop.org/wlroots/wlroots/-/tree/main
 ## Features
 
 - xdg-shell application windows: focus, move, resize, fullscreen
+- X11 application support via XWayland: X11 windows (e.g. flatpak apps)
+  map as regular toplevels with focus, tiling, fullscreen, workspaces and
+  topbar entries; `DISPLAY` is set automatically for spawned clients, and
+  `Mod+drag` moves an X11 window (it has no titlebar)
 - Focus follows mouse (keyboard focus tracks cursor, configurable)
 - GNOME-style overview (`F12`): all workspaces and windows visible, click to select
 - Tile modes (`Mod+t`): free / left-right split / main+stack, per monitor
@@ -40,6 +44,7 @@ Tested on openSUSE. All development packages are expected to be preinstalled:
 - `freetype-devel`, `cairo-devel`
 - `pixman-devel`, `libegl-devel` / `libgles-devel` (Mesa)
 - `libudev-devel`, `libdisplay-info-devel`, `lcms2-devel`, `libliftoff-devel`, `libseat-devel`
+- `xwayland` (X11 support; the `Xwayland` binary must be on `$PATH`)
 - a Wayland terminal for the startup terminal (e.g. `gnome-terminal`)
 
 wlroots itself is **not** taken from the distribution package: `build.sh`

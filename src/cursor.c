@@ -10,6 +10,13 @@ static void process_cursor_move(struct guibux_server *server) {
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
 		server->cursor->x - server->grab_x,
 		server->cursor->y - server->grab_y);
+	if (toplevel_is_xwayland(toplevel)) {
+		struct wlr_box geo;
+		toplevel_get_geometry(toplevel, &geo);
+		wlr_xwayland_surface_configure(toplevel->xsurface,
+			toplevel->scene_tree->node.x, toplevel->scene_tree->node.y,
+			geo.width, geo.height);
+	}
 }
 
 static void process_cursor_resize(struct guibux_server *server) {
@@ -44,13 +51,14 @@ static void process_cursor_resize(struct guibux_server *server) {
 		}
 	}
 
-	struct wlr_box *geo_box = &toplevel->xdg_toplevel->base->geometry;
+	struct wlr_box geo_box;
+	toplevel_get_geometry(toplevel, &geo_box);
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
-		new_left - geo_box->x, new_top - geo_box->y);
+		new_left - geo_box.x, new_top - geo_box.y);
 
 	int new_width = new_right - new_left;
 	int new_height = new_bottom - new_top;
-	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, new_width, new_height);
+	toplevel_set_size(toplevel, new_width, new_height);
 }
 
 void process_cursor_motion(struct guibux_server *server, uint32_t time) {
@@ -154,6 +162,9 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 				server->cursor->x,
 				server->cursor->y);
 			if (win) {
+				if (win->workspace != o->current_workspace) {
+					switch_workspace(o, win->workspace);
+				}
 				uint32_t dt = event->time_msec - server->last_topbar_click_time;
 				if (dt < 300 && server->last_topbar_click_win == win) {
 					set_fullscreen(win, !win->is_fullscreen);
@@ -170,6 +181,24 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 			return;
 		}
 	}
+	/* X11 windows have no titlebar: Mod+drag moves them */
+	if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
+		double sx, sy;
+		struct wlr_surface *surface = NULL;
+		struct guibux_toplevel *toplevel = desktop_toplevel_at(server,
+			server->cursor->x, server->cursor->y, &surface, &sx, &sy);
+		struct wlr_keyboard *kb = wlr_seat_get_keyboard(server->seat);
+		if (toplevel != NULL && toplevel->managed &&
+				toplevel_is_xwayland(toplevel) && kb != NULL &&
+				(kb->modifiers.depressed & WLR_MODIFIER_LOGO)) {
+			focus_toplevel(toplevel);
+			if (toplevel->is_fullscreen) {
+				set_fullscreen(toplevel, false);
+			}
+			begin_interactive(toplevel, GUIBUX_CURSOR_MOVE, 0);
+			return;
+		}
+	}
 	wlr_seat_pointer_notify_button(server->seat,
 		event->time_msec, event->button, event->state);
 	if (event->state == WL_POINTER_BUTTON_STATE_RELEASED) {
@@ -183,7 +212,6 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 		server->last_ffm_toplevel = NULL;
 	}
 }
-
 void server_cursor_axis(struct wl_listener *listener, void *data) {
 	struct guibux_server *server =
 		wl_container_of(listener, server, cursor_axis);

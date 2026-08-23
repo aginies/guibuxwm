@@ -23,11 +23,15 @@ struct wlr_output *output_at_cursor(struct guibux_server *server) {
 
 struct wlr_output *toplevel_output_for(struct guibux_toplevel *toplevel) {
 	struct guibux_server *server = toplevel->server;
-	struct wlr_output *output = toplevel->xdg_toplevel->requested.fullscreen_output;
-	if (output != NULL) {
-		return output;
+	if (toplevel->scene_tree == NULL) {
+		return NULL;
 	}
-	struct wlr_box geo = toplevel->xdg_toplevel->base->geometry;
+	if (toplevel->xdg_toplevel != NULL &&
+			toplevel->xdg_toplevel->requested.fullscreen_output != NULL) {
+		return toplevel->xdg_toplevel->requested.fullscreen_output;
+	}
+	struct wlr_box geo;
+	toplevel_get_geometry(toplevel, &geo);
 	int cx = toplevel->scene_tree->node.x + geo.width / 2;
 	int cy = toplevel->scene_tree->node.y + geo.height / 2;
 	struct guibux_output *o;

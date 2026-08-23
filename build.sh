@@ -26,7 +26,7 @@ build_wlroots() {
 	rm -rf "${SRC_DIR}/wlroots-${WLR_VERSION}" "${SRC_DIR}/wlroots-build"
 	tar xzf "${tarball}" -C "${SRC_DIR}"
 	meson setup "${SRC_DIR}/wlroots-build" "${SRC_DIR}/wlroots-${WLR_VERSION}" \
-		--prefix="${PREFIX}" -Dxwayland=disabled -Dexamples=false
+		--prefix="${PREFIX}" -Dxwayland=enabled -Dexamples=false
 	ninja -C "${SRC_DIR}/wlroots-build"
 	ninja -C "${SRC_DIR}/wlroots-build" install
 }

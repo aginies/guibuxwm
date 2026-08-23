@@ -290,12 +290,13 @@ void topbar_render(struct guibux_output *o) {
 	if (kb_focus) {
 		struct wlr_xdg_toplevel *kb_xdg =
 			wlr_xdg_toplevel_try_from_wlr_surface(kb_focus);
-		if (kb_xdg) {
-			wl_list_for_each(t, &server->toplevels, link) {
-				if (t->xdg_toplevel == kb_xdg) {
-					kb_focus_t = t;
-					break;
-				}
+		struct wlr_xwayland_surface *kb_xs =
+			wlr_xwayland_surface_try_from_wlr_surface(kb_focus);
+		wl_list_for_each(t, &server->toplevels, link) {
+			if ((kb_xdg && t->xdg_toplevel == kb_xdg) ||
+					(kb_xs && t->xsurface == kb_xs)) {
+				kb_focus_t = t;
+				break;
 			}
 		}
 	}
@@ -369,8 +370,8 @@ void topbar_render(struct guibux_output *o) {
 
 	int rendered = 0;
 	for (int i = 0; i < nwins && win_x < win_end; i++) {
-		char *title = wins[i]->xdg_toplevel->title ?
-			wins[i]->xdg_toplevel->title : "(untitled)";
+		const char *title = toplevel_get_title(wins[i]) ?
+			toplevel_get_title(wins[i]) : "(untitled)";
 		char buf[64];
 		int tw = guibux_text_width(server->launcher.face, title);
 		if (tw > max_w - 16) {

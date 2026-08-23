@@ -259,7 +259,7 @@ int psel_test_run(void *data) {
 	}
 	struct guibux_toplevel *t = wl_container_of(
 		server->toplevels.next, t, link);
-	struct wlr_surface *surface = t->xdg_toplevel->base->surface;
+	struct wlr_surface *surface = toplevel_get_surface(t);
 	wlr_seat_pointer_notify_enter(server->seat, surface, 0.0, 0.0);
 	wlr_seat_keyboard_notify_enter(server->seat, surface, NULL, 0, NULL);
 	wlr_log(WLR_INFO, "psel-test: enter sent");
