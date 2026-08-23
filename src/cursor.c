@@ -7,13 +7,14 @@ void reset_cursor_mode(struct guibux_server *server) {
 
 static void process_cursor_move(struct guibux_server *server) {
 	struct guibux_toplevel *toplevel = server->grabbed_toplevel;
-	int nx = (int)(server->cursor->x - server->grab_x);
-	int ny = (int)(server->cursor->y - server->grab_y);
-	wlr_scene_node_set_position(&toplevel->scene_tree->node, nx, ny);
+	double dx = server->cursor->x - server->grab_x;
+	double dy = server->cursor->y - server->grab_y;
+	wlr_scene_node_set_position(&toplevel->scene_tree->node, dx, dy);
 	if (toplevel_is_xwayland(toplevel)) {
 		/* motion events arrive at the pointer's polling rate (up to
 		 * 1000/s); only notify the X11 app when the integer position
 		 * actually changed */
+		int nx = (int)dx, ny = (int)dy;
 		if (nx != toplevel->xsurface->x || ny != toplevel->xsurface->y) {
 			struct wlr_box geo;
 			toplevel_get_geometry(toplevel, &geo);
