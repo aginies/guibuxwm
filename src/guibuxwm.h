@@ -183,7 +183,7 @@ struct guibux_output {
 
     int topbar_win_x[TOPBAR_WIN_MAX];
     int topbar_win_w[TOPBAR_WIN_MAX];
-    char topbar_win_titles[TOPBAR_WIN_MAX][64];
+    char topbar_win_titles[TOPBAR_WIN_MAX][72];
     int topbar_win_count;
     struct guibux_toplevel *topbar_wins[TOPBAR_WIN_MAX];
     bool topbar_dirty;

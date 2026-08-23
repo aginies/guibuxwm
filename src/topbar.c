@@ -384,9 +384,16 @@ void topbar_render(struct guibux_output *o) {
 	for (int i = 0; i < nwins && win_x < win_end; i++) {
 		const char *title = toplevel_get_title(wins[i]) ?
 			toplevel_get_title(wins[i]) : "(untitled)";
-		char buf[64];
+		char prefix[8];
+		snprintf(prefix, sizeof(prefix), "%c%d: ",
+			'A' + (o->topbar_number - 1), wins[i]->workspace);
+		int pw = guibux_text_width(server->launcher.face, prefix);
+		int budget = max_w - 16 - pw;
+		if (budget < 0)
+			budget = 0;
+		char tbuf[64];
 		int tw = guibux_text_width(server->launcher.face, title);
-		if (tw > max_w - 16) {
+		if (tw > budget) {
 			int cps = 0;
 			const char *p = title;
 			while (*p) {
@@ -394,22 +401,25 @@ void topbar_render(struct guibux_output *o) {
 				cps++;
 			}
 			for (int trunc = cps; trunc >= 1; trunc--) {
-				utf8_truncate(title, buf, sizeof(buf), trunc);
-				size_t n = strlen(buf);
-				snprintf(buf + n, sizeof(buf) - n, "...");
-				tw = guibux_text_width(server->launcher.face, buf);
-				if (tw <= max_w - 16) {
+				utf8_truncate(title, tbuf, sizeof(tbuf), trunc);
+				size_t n = strlen(tbuf);
+				snprintf(tbuf + n, sizeof(tbuf) - n, "...");
+				tw = guibux_text_width(server->launcher.face, tbuf);
+				if (tw <= budget) {
 					break;
 				}
 			}
-			if (tw > max_w - 16) {
-				utf8_truncate(title, buf, sizeof(buf), 1);
-				size_t n = strlen(buf);
-				snprintf(buf + n, sizeof(buf) - n, "...");
+			if (tw > budget) {
+				utf8_truncate(title, tbuf, sizeof(tbuf), 1);
+				size_t n = strlen(tbuf);
+				snprintf(tbuf + n, sizeof(tbuf) - n, "...");
 			}
 		} else {
-			snprintf(buf, sizeof(buf), "%s", title);
+			snprintf(tbuf, sizeof(tbuf), "%s", title);
 		}
+		char buf[72];
+		snprintf(buf, sizeof(buf), "%s%s", prefix, tbuf);
+		tw = guibux_text_width(server->launcher.face, buf);
 		int cell_w = tw + 16;
 		if (cell_w > max_w)
 			cell_w = max_w;
