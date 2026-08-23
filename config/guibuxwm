@@ -4,7 +4,7 @@
 # Every line mirrors the built-in default; change what you want.
 # A keybind with the same modifiers+key as a default replaces it.
 
-# terminal command started at launch (and by Mod+Return)
+# terminal command started by Mod+Return
 term = gnome-terminal
 
 # preferred apps shown above the command box (Mod+e) prompt, up to 5.

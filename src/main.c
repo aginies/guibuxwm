@@ -4,8 +4,8 @@
 //
 // Features:
 //   - xdg-shell toplevels: focus, move, resize, fullscreen
-//   - starts a terminal at launch (config `term`, GUIBUX_TERM env or -t
-//     flag, default: gnome-terminal)
+//   - terminal command (config `term`, GUIBUX_TERM env or -t flag,
+//     default: gnome-terminal) started by Mod+Return
 //   - keyboard layout: -k flag, config `xkb_layout`, GUIBUX_XKB_LAYOUT or
 //     XKB_DEFAULT_LAYOUT env (e.g. -k fr); variant and options via config
 //   - multi-monitor: new windows open on the output under the cursor,
@@ -48,8 +48,6 @@
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/types/wlr_primary_selection_v1.h>
-
-extern void spawn_terminal(struct guibux_server *server);
 
 int main(int argc, char *argv[]) {
 	wlr_log_init(WLR_INFO, NULL);
@@ -331,8 +329,6 @@ int main(int argc, char *argv[]) {
 			keybind_test_run, &server);
 		wl_event_source_timer_update(server.keybind_test_timer, 500);
 	}
-
-	spawn_terminal(&server);
 
 	wlr_log(WLR_INFO, "guibuxwm running on WAYLAND_DISPLAY=%s", socket);
 	wl_display_run(server.wl_display);

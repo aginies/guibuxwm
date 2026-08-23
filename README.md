@@ -25,7 +25,7 @@ Derived from [tinywl](https://gitlab.freedesktop.org/wlroots/wlroots/-/tree/main
 - Workspaces per monitor (4, numbered 1 2 3 4): `Mod+1..4` switch,
   `Mod+Shift+1..4` move the focused window; workspace numbers shown in the
   topbar with the current one highlighted (clickable to switch)
-- Starts a terminal automatically at launch (default: `gnome-terminal`)
+- Terminal command configurable (default: `gnome-terminal`), started by `Mod+Return`
 - Configurable keyboard layout (e.g. French), variant and options
 - Config file for keybinds, terminal, keyboard, colors, and background image
 - Desktop background image (PNG or JPEG) with configurable scale mode (stretch/fit/fill/tile)
@@ -46,7 +46,7 @@ Tested on openSUSE. All development packages are expected to be preinstalled:
 - `pixman-devel`, `libegl-devel` / `libgles-devel` (Mesa)
 - `libudev-devel`, `libdisplay-info-devel`, `lcms2-devel`, `libliftoff-devel`, `libseat-devel`
 - `xwayland` (X11 support; the `Xwayland` binary must be on `$PATH`)
-- a Wayland terminal for the startup terminal (e.g. `gnome-terminal`)
+- a Wayland terminal (e.g. `gnome-terminal`) started by `Mod+Return`
 
 wlroots itself is **not** taken from the distribution package: `build.sh`
 builds wlroots 0.20.2 from source (see [Build](#build)).
@@ -162,7 +162,7 @@ it to `~/.config/guibuxwm/config` and edit.
 
 | Key | Meaning | Example |
 |---|---|---|
-| `term` | Terminal command started at launch (and by `Mod+Return`) | `term = foot` |
+| `term` | Terminal command started by `Mod+Return` | `term = foot` |
 | `xkb_layout` | Keyboard layout (xkb layout name) | `xkb_layout = fr` |
 | `xkb_variant` | Keyboard variant | `xkb_variant = osd` |
 | `xkb_options` | xkb options (comma-separated) | `xkb_options = caps:swapscape` |
@@ -225,7 +225,7 @@ guibuxwm [-t terminal command] [-k keyboard layout] [-c config file]
 
 | Flag | Meaning | Example |
 |---|---|---|
-| `-t` | Terminal command started at launch (and by `Mod+Return`) | `-t "gnome-terminal"` |
+| `-t` | Terminal command started by `Mod+Return` | `-t "gnome-terminal"` |
 | `-k` | Keyboard layout (xkb layout name) | `-k fr` |
 | `-c` | Path to the config file | `-c ~/.config/guibuxwm/config` |
 
