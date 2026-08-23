@@ -93,14 +93,17 @@ Run:
 | `Mod+q` | Close focused window |
 | `Mod+f` | Toggle fullscreen |
 | `Mod+t` | Cycle tile mode of the focused window's monitor (free / split / main+stack) |
-| `Mod+Tab` | Cycle window focus |
+| `Alt+Tab` | Cycle window focus |
 | `F12` | Toggle GNOME-style overview (all workspaces + windows) |
 | `Mod+1..4` | Switch to workspace 1..4 on the focused window's monitor |
 | `Mod+Shift+1..4` | Move focused window to workspace 1..4 (same monitor) |
+| `Mod+Ctrl+Left` / `Mod+Ctrl+Right` | Switch to previous/next workspace |
 | `Mod+Shift+Left` / `Mod+Shift+Right` | Move focused window to previous/next monitor |
 | `Mod+Left` | Snap focused window to left half of its monitor |
 | `Mod+Right` | Snap focused window to right half of its monitor |
+| `Mod+Ctrl+Shift+Up` / `Mod+Ctrl+Shift+Down` | Snap focused window to top/bottom half of its monitor |
 | `Mod+Up` | Fullscreen focused window |
+| `Mod+h` | Show the keybinding help overlay |
 | `Mod+Shift+q` | Quit |
 | `Alt+Escape` | Quit |
 | `Mod+Alt+Escape` | Quit |
@@ -179,7 +182,9 @@ it to `~/.config/guibuxwm/config` and edit.
 | `topbar_font_size` | Topbar font size in pixels (default: 16) | `topbar_font_size = 18` |
 | `topbar_win_pad` | Vertical padding of window pills in the topbar, pixels (default: 2, 0 = full height) | `topbar_win_pad = 2` |
 | `background` | Desktop background image path (PNG or JPEG) | `background = ~/wallpaper.jpg` |
+| `background1..4` | Per-workspace background image (falls back to `background`) | `background1 = ~/ws1.jpg` |
 | `background_scale` | Background scale mode: `stretch`, `fit`, `fill`, `tile` (default: `fill`) | `background_scale = fill` |
+| `screensaver_timeout` | Screensaver timeout in seconds (0 = disabled, default: 300) | `screensaver_timeout = 600` |
 | `focus_follow_mouse` | Focus follows mouse: `true` or `false` (default: `true`) | `focus_follow_mouse = true` |
 
 Example:
@@ -213,6 +218,10 @@ Syntax: `keybind = MODS+key: action`. At least one modifier is required:
 | `move-monitor-left` / `move-monitor-right` | Move the focused window to the previous/next monitor |
 | `snap-left` | Snap the focused window to the left half of its monitor |
 | `snap-right` | Snap the focused window to the right half of its monitor |
+| `snap-top` | Snap the focused window to the top half of its monitor |
+| `snap-bottom` | Snap the focused window to the bottom half of its monitor |
+| `switch-ws-left` / `switch-ws-right` | Switch to the previous/next workspace |
+| `show-help` | Show the keybinding help overlay |
 
 A config keybind with the same modifiers+key as a default replaces it,
 otherwise it is added. Defaults are listed in [Keybindings](#keybindings).
