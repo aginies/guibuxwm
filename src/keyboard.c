@@ -246,9 +246,16 @@ bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
 void keyboard_handle_modifiers(struct wl_listener *listener, void *data) {
 	struct guibux_keyboard *keyboard =
 		wl_container_of(listener, keyboard, modifiers);
-	wlr_seat_set_keyboard(keyboard->server->seat, keyboard->wlr_keyboard);
-	wlr_seat_keyboard_notify_modifiers(keyboard->server->seat,
+	struct guibux_server *server = keyboard->server;
+	wlr_seat_set_keyboard(server->seat, keyboard->wlr_keyboard);
+	wlr_seat_keyboard_notify_modifiers(server->seat,
 		&keyboard->wlr_keyboard->modifiers);
+	/* fires after wlroots cleared the released key from the modifier
+	 * state; the key event itself still carries the stale mask */
+	if (server->switcher.active) {
+		switcher_on_modifier_release(server,
+			wlr_keyboard_get_modifiers(keyboard->wlr_keyboard));
+	}
 }
 
 void keyboard_handle_key(struct wl_listener *listener, void *data) {
@@ -290,10 +297,6 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 			if (handled) {
 				break;
 			}
-		}
-	} else if (event->state == WL_KEYBOARD_KEY_STATE_RELEASED) {
-		if (server->switcher.active) {
-			switcher_on_modifier_release(server, modifiers);
 		}
 	}
 
