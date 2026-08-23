@@ -493,6 +493,7 @@ static void xsurface_map(struct wl_listener *listener, void *data) {
 	}
 
 	wl_list_insert(&toplevel->server->toplevels, &toplevel->link);
+	toplevel->initial_commit = true;
 
 	struct wlr_output *output = output_at_cursor(toplevel->server);
 	struct guibux_output *o = output != NULL
@@ -553,12 +554,20 @@ static void xsurface_unmap(struct wl_listener *listener, void *data) {
 static void xsurface_commit(struct wl_listener *listener, void *data) {
 	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, commit);
 
-	if (toplevel->managed && toplevel->xsurface->surface->mapped) {
-		struct guibux_output *o = guibux_output_for(toplevel->server,
-			toplevel_output_for(toplevel));
-		if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
-			retile_output(o);
-		}
+	/* like xdg_toplevel_commit: only re-assert the tile geometry on the
+	 * first commit (the app may have mapped at its own size). Retiling on
+	 * every commit would fight apps that enforce a minimum size larger
+	 * than the tile cell (configure/commit loop) and would snap a window
+	 * being dragged back to its tile slot on every frame */
+	if (!toplevel->managed || !toplevel->xsurface->surface->mapped ||
+			!toplevel->initial_commit) {
+		return;
+	}
+	toplevel->initial_commit = false;
+	struct guibux_output *o = guibux_output_for(toplevel->server,
+		toplevel_output_for(toplevel));
+	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+		retile_output(o);
 	}
 }
 
@@ -650,6 +659,15 @@ static void xsurface_request_configure(struct wl_listener *listener, void *data)
 		wl_container_of(listener, toplevel, request_configure);
 	if (!toplevel->managed || toplevel->is_fullscreen ||
 			toplevel->scene_tree == NULL) {
+		return;
+	}
+	struct guibux_output *o = guibux_output_for(toplevel->server,
+		toplevel_output_for(toplevel));
+	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+		/* tile mode: the layout is authoritative. Accepting the app's
+		 * geometry would break the tiling, and re-asserting the tile
+		 * size would loop with apps that re-assert their minimum size
+		 * on every ConfigureNotify */
 		return;
 	}
 	/* free mode: accept the app's requested geometry */

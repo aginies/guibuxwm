@@ -327,6 +327,7 @@ void topbar_render(struct guibux_output *o) {
 	localtime_r(&now, &tm);
 	strftime(o->topbar_right, sizeof(o->topbar_right),
 		"%a %d %b %Y  %H:%M", &tm);
+	o->topbar_minute = now / 60;
 
 	/* update sysinfo */
 
@@ -621,8 +622,15 @@ void topbar_renumber(struct guibux_server *server) {
 
 int topbar_tick(void *data) {
 	struct guibux_server *server = data;
+	/* the clock is part of the topbar: mark dirty on a minute rollover,
+	 * otherwise an idle desktop would show a frozen time */
+	time_t minute = time(NULL) / 60;
 	struct guibux_output *o;
 	wl_list_for_each(o, &server->outputs, link) {
+		if (o->topbar_minute != minute) {
+			o->topbar_minute = minute;
+			o->topbar_dirty = true;
+		}
 		if (o->topbar_dirty) {
 			topbar_render(o);
 		}

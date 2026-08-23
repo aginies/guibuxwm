@@ -7,15 +7,19 @@ void reset_cursor_mode(struct guibux_server *server) {
 
 static void process_cursor_move(struct guibux_server *server) {
 	struct guibux_toplevel *toplevel = server->grabbed_toplevel;
-	wlr_scene_node_set_position(&toplevel->scene_tree->node,
-		server->cursor->x - server->grab_x,
-		server->cursor->y - server->grab_y);
+	int nx = (int)(server->cursor->x - server->grab_x);
+	int ny = (int)(server->cursor->y - server->grab_y);
+	wlr_scene_node_set_position(&toplevel->scene_tree->node, nx, ny);
 	if (toplevel_is_xwayland(toplevel)) {
-		struct wlr_box geo;
-		toplevel_get_geometry(toplevel, &geo);
-		wlr_xwayland_surface_configure(toplevel->xsurface,
-			toplevel->scene_tree->node.x, toplevel->scene_tree->node.y,
-			geo.width, geo.height);
+		/* motion events arrive at the pointer's polling rate (up to
+		 * 1000/s); only notify the X11 app when the integer position
+		 * actually changed */
+		if (nx != toplevel->xsurface->x || ny != toplevel->xsurface->y) {
+			struct wlr_box geo;
+			toplevel_get_geometry(toplevel, &geo);
+			wlr_xwayland_surface_configure(toplevel->xsurface,
+				nx, ny, geo.width, geo.height);
+		}
 	}
 }
 
@@ -134,6 +138,7 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 	screensaver_notify_activity(server);
 	if (server->launcher.active &&
 			event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
+		server->button_consumed = event->button;
 		launcher_hide(server);
 		return;
 	}
@@ -195,15 +200,23 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 			if (toplevel->is_fullscreen) {
 				set_fullscreen(toplevel, false);
 			}
+			server->button_consumed = event->button;
 			begin_interactive(toplevel, GUIBUX_CURSOR_MOVE, 0);
 			return;
 		}
 	}
-	wlr_seat_pointer_notify_button(server->seat,
-		event->time_msec, event->button, event->state);
 	if (event->state == WL_POINTER_BUTTON_STATE_RELEASED) {
+		/* a press consumed by the WM (Mod+drag, launcher) was never
+		 * forwarded; don't send the client a release for it */
+		if (server->button_consumed != event->button) {
+			wlr_seat_pointer_notify_button(server->seat,
+				event->time_msec, event->button, event->state);
+		}
+		server->button_consumed = 0;
 		reset_cursor_mode(server);
 	} else {
+		wlr_seat_pointer_notify_button(server->seat,
+			event->time_msec, event->button, event->state);
 		double sx, sy;
 		struct wlr_surface *surface = NULL;
 		struct guibux_toplevel *toplevel = desktop_toplevel_at(server,

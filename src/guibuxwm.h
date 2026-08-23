@@ -186,6 +186,7 @@ struct guibux_output {
     int topbar_win_count;
     struct guibux_toplevel *topbar_wins[TOPBAR_WIN_MAX];
     bool topbar_dirty;
+    time_t topbar_minute;
 	struct wl_listener frame;
 	struct wl_listener request_state;
 	struct wl_listener destroy;
@@ -199,6 +200,7 @@ struct guibux_toplevel {
 	struct wlr_scene_tree *scene_tree;
 	bool is_fullscreen;
 	bool managed;
+	bool initial_commit;
 	int workspace;
 	double saved_x, saved_y;
 	int saved_w, saved_h;
@@ -327,6 +329,7 @@ struct guibux_server {
 	struct wl_list keyboards;
 	enum guibux_cursor_mode cursor_mode;
 	struct guibux_toplevel *grabbed_toplevel;
+	uint32_t button_consumed;
 	double grab_x, grab_y;
 	struct wlr_box grab_geobox;
 	uint32_t resize_edges;
