@@ -69,7 +69,7 @@ static void launcher_load_commands(struct guibux_launcher *l) {
 	char *save = NULL;
 	for (char *dir = strtok_r(copy, ":", &save); dir != NULL;
 			dir = strtok_r(NULL, ":", &save)) {
-		if (*dir == '\0') break;
+		if (*dir == '\0') continue;
 		DIR *d = opendir(dir);
 		if (d == NULL) continue;
 		struct dirent *e;
@@ -136,9 +136,13 @@ static char *desktop_exec_to_cmd(const char *exec) {
 			} else if (c == '"' && !in_squote) {
 				in_dquote = !in_dquote;
 			} else if (c == '\\' && !in_squote && exec[i + 1] != '\0') {
-				tok[tlen++] = exec[++i];
+				if (tlen < sizeof(tok) - 1) {
+					tok[tlen++] = exec[++i];
+				}
 			} else {
-				tok[tlen++] = c;
+				if (tlen < sizeof(tok) - 1) {
+					tok[tlen++] = c;
+				}
 			}
 			continue;
 		}
@@ -423,6 +427,7 @@ static void launcher_spawn(struct guibux_server *server, const char *cmd) {
 		execl("/bin/sh", "/bin/sh", "-c", cmd, (void *)NULL);
 		_exit(127);
 	}
+	spawn_track(pid);
 	wlr_log(WLR_INFO, "launcher: running '%s' (pid %d)", cmd, pid);
 }
 
@@ -464,6 +469,7 @@ void launcher_show(struct guibux_server *server) {
 		return;
 	}
 	l->scene_node = wlr_scene_buffer_create(&server->scene->tree, l->buffer);
+	wlr_scene_buffer_set_dest_size(l->scene_node, bw, l->box_h);
 	wlr_scene_node_set_position(&l->scene_node->node,
 		box.x + (ew - bw) / 2, box.y + (eh - l->box_h) / 2);
 
@@ -610,11 +616,18 @@ int launcher_test_run(void *data) {
 			"(num_matches=%d, entries=%d)", l->num_matches, l->num_entries);
 		return 0;
 	}
+	int sel_idx = l->selection - l->num_preferred;
+	if (sel_idx < 0 || sel_idx >= l->num_matches) {
+		wlr_log(WLR_ERROR, "launcher-test: FAIL selection out of range "
+			"(selection=%d, preferred=%d, matches=%d)",
+			l->selection, l->num_preferred, l->num_matches);
+		return 0;
+	}
 	wlr_log(WLR_INFO, "launcher-test: MATCHES OK (%d matches, selected '%s')",
 		l->num_matches,
-		l->entries[l->matches[l->selection - l->num_preferred]].name);
+		l->entries[l->matches[sel_idx]].name);
 	wlr_log(WLR_INFO, "launcher-test: EXEC '%s'",
-		l->entries[l->matches[l->selection - l->num_preferred]].exec);
+		l->entries[l->matches[sel_idx]].exec);
 	launcher_handle_key(server, XKB_KEY_Return);
 	if (l->active) {
 		wlr_log(WLR_ERROR, "launcher-test: FAIL enter (still active)");

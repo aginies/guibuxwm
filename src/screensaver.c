@@ -121,7 +121,13 @@ static int screensaver_timer_cb(void *data) {
 	struct guibux_server *server = data;
 	struct guibux_screensaver *ss = &server->screensaver;
 
-	if (!ss->active || is_inhibited(ss) || ui_active(server)) {
+	if (!ss->active) {
+		return 0;
+	}
+	if (is_inhibited(ss) || ui_active(server)) {
+		/* re-check in a second: the inhibitor or UI may go away, and
+		 * disarming here would kill the screensaver for good */
+		wl_event_source_timer_update(ss->timer, 1000);
 		return 0;
 	}
 

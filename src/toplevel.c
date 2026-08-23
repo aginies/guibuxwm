@@ -51,7 +51,8 @@ void focus_toplevel(struct guibux_toplevel *toplevel) {
 // Fullscreen
 // ---------------------------------------------------------------------------
 
-void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen) {
+void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen,
+		struct wlr_output *output) {
 	if (fullscreen == toplevel->is_fullscreen) {
 		return;
 	}
@@ -65,7 +66,12 @@ void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen) {
 			toplevel->saved_h = toplevel->xsurface->height;
 		}
 
-		struct wlr_output *output = toplevel_output_for(toplevel);
+		/* the requested output is authoritative (it may differ from
+		 * the window's current position); fall back to the window's
+		 * output for WM-initiated fullscreen */
+		if (output == NULL) {
+			output = toplevel_output_for(toplevel);
+		}
 		if (output != NULL) {
 			struct wlr_box box;
 			wlr_output_layout_get_box(server->output_layout, output, &box);
@@ -202,6 +208,24 @@ void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 		topbar_mark_dirty(o2);
 }
 
+/* Pick a visible toplevel to focus after one was unmapped; the
+ * first entry of the list may live on another workspace/output */
+static void focus_after_unmap(struct guibux_server *server) {
+	struct guibux_toplevel *t;
+	struct guibux_toplevel *next = NULL;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (toplevel_visible(t)) {
+			next = t;
+			break;
+		}
+	}
+	if (next != NULL) {
+		focus_toplevel(next);
+	} else {
+		clear_keyboard_focus(server);
+	}
+}
+
 void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, unmap);
 	struct guibux_server *server = toplevel->server;
@@ -217,18 +241,14 @@ void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	struct guibux_output *o = guibux_output_for(server,
 		toplevel_output_for(toplevel));
 	wl_list_remove(&toplevel->link);
+	switcher_on_unmap(server, toplevel);
+	topbar_win_remove(o, toplevel);
 	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
 		retile_output(o);
 	}
 	topbar_mark_dirty(o);
 
-	if (!wl_list_empty(&server->toplevels)) {
-		struct guibux_toplevel *next =
-			wl_container_of(server->toplevels.next, next, link);
-		focus_toplevel(next);
-	} else {
-		clear_keyboard_focus(server);
-	}
+	focus_after_unmap(server);
 }
 
 void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
@@ -275,7 +295,7 @@ void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 void xdg_toplevel_request_move(struct wl_listener *listener, void *data) {
 	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, request_move);
 	if (toplevel->is_fullscreen) {
-		set_fullscreen(toplevel, false);
+		set_fullscreen(toplevel, false, NULL);
 	}
 	begin_interactive(toplevel, GUIBUX_CURSOR_MOVE, 0);
 }
@@ -284,7 +304,7 @@ void xdg_toplevel_request_resize(struct wl_listener *listener, void *data) {
 	struct wlr_xdg_toplevel_resize_event *event = data;
 	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, request_resize);
 	if (toplevel->is_fullscreen) {
-		set_fullscreen(toplevel, false);
+		set_fullscreen(toplevel, false, NULL);
 	}
 	begin_interactive(toplevel, GUIBUX_CURSOR_RESIZE, event->edges);
 }
@@ -300,7 +320,8 @@ void xdg_toplevel_request_maximize(struct wl_listener *listener, void *data) {
 void xdg_toplevel_request_fullscreen(struct wl_listener *listener, void *data) {
 	struct guibux_toplevel *toplevel =
 		wl_container_of(listener, toplevel, request_fullscreen);
-	set_fullscreen(toplevel, toplevel->xdg_toplevel->requested.fullscreen);
+	set_fullscreen(toplevel, toplevel->xdg_toplevel->requested.fullscreen,
+		toplevel->xdg_toplevel->requested.fullscreen_output);
 	if (toplevel->xdg_toplevel->base->initialized) {
 		wlr_xdg_surface_schedule_configure(toplevel->xdg_toplevel->base);
 	}
@@ -329,6 +350,14 @@ bool toplevel_is_xwayland(struct guibux_toplevel *toplevel) {
 }
 
 void toplevel_set_size(struct guibux_toplevel *toplevel, int width, int height) {
+	/* wlr_xdg_toplevel_set_size asserts non-negative sizes; a tiny
+	 * output or a huge topbar can compute a negative height */
+	if (width < 0) {
+		width = 0;
+	}
+	if (height < 0) {
+		height = 0;
+	}
 	if (toplevel->xdg_toplevel != NULL) {
 		wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, width, height);
 	} else if (width > 0 && height > 0) {
@@ -510,7 +539,7 @@ static void xsurface_map(struct wl_listener *listener, void *data) {
 	}
 	focus_toplevel(toplevel);
 	if (xsurface->fullscreen) {
-		set_fullscreen(toplevel, true);
+		set_fullscreen(toplevel, true, NULL);
 	}
 	struct guibux_output *o2 = guibux_output_for(toplevel->server,
 		toplevel_output_for(toplevel));
@@ -537,18 +566,14 @@ static void xsurface_unmap(struct wl_listener *listener, void *data) {
 	struct guibux_output *o = guibux_output_for(server,
 		toplevel_output_for(toplevel));
 	wl_list_remove(&toplevel->link);
+	switcher_on_unmap(server, toplevel);
+	topbar_win_remove(o, toplevel);
 	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
 		retile_output(o);
 	}
 	topbar_mark_dirty(o);
 
-	if (!wl_list_empty(&server->toplevels)) {
-		struct guibux_toplevel *next =
-			wl_container_of(server->toplevels.next, next, link);
-		focus_toplevel(next);
-	} else {
-		clear_keyboard_focus(server);
-	}
+	focus_after_unmap(server);
 }
 
 static void xsurface_commit(struct wl_listener *listener, void *data) {
@@ -612,7 +637,7 @@ static void xsurface_request_move(struct wl_listener *listener, void *data) {
 		return;
 	}
 	if (toplevel->is_fullscreen) {
-		set_fullscreen(toplevel, false);
+		set_fullscreen(toplevel, false, NULL);
 	}
 	begin_interactive(toplevel, GUIBUX_CURSOR_MOVE, 0);
 }
@@ -624,7 +649,7 @@ static void xsurface_request_resize(struct wl_listener *listener, void *data) {
 		return;
 	}
 	if (toplevel->is_fullscreen) {
-		set_fullscreen(toplevel, false);
+		set_fullscreen(toplevel, false, NULL);
 	}
 	begin_interactive(toplevel, GUIBUX_CURSOR_RESIZE, event->edges);
 }
@@ -635,7 +660,7 @@ static void xsurface_request_fullscreen(struct wl_listener *listener, void *data
 	if (toplevel->scene_tree == NULL) {
 		return;
 	}
-	set_fullscreen(toplevel, toplevel->xsurface->fullscreen);
+	set_fullscreen(toplevel, toplevel->xsurface->fullscreen, NULL);
 }
 
 static void xsurface_request_activate(struct wl_listener *listener, void *data) {

@@ -139,21 +139,36 @@ static void overview_create_overlays(struct guibux_server *server) {
 		int font_px = OVERVIEW_LABEL_FONT;
 		FT_Set_Pixel_Sizes(face, 0, font_px);
 
-		/* truncate long titles so the label fits the cell */
+		/* truncate long titles so the label fits the cell (codepoint
+		 * safe: byte-wise truncation would split multi-byte UTF-8) */
 		int max_w = cw - 2 * OVERVIEW_LABEL_PAD;
 		if (max_w < 30) max_w = 30;
 		if (guibux_text_width(face, ov->label_text[i]) > max_w) {
-			int ell_w = guibux_text_width(face, "...");
-			while (strlen(ov->label_text[i]) > 0 &&
-					guibux_text_width(face, ov->label_text[i]) + ell_w > max_w) {
-				ov->label_text[i][strlen(ov->label_text[i]) - 1] = '\0';
+			const char *p = ov->label_text[i];
+			int cps = 0;
+			while (*p) {
+				utf8_next(&p);
+				cps++;
 			}
-			size_t len = strlen(ov->label_text[i]);
-			if (len + 4 > sizeof(ov->label_text[i])) {
-				len = sizeof(ov->label_text[i]) - 4;
-				ov->label_text[i][len] = '\0';
+			char tmp[sizeof(ov->label_text[i])];
+			for (int trunc = cps; trunc >= 0; trunc--) {
+				utf8_truncate(ov->label_text[i], tmp, sizeof(tmp), trunc);
+				size_t n = strlen(tmp);
+				if (n + 4 > sizeof(tmp)) {
+					n = sizeof(tmp) - 4;
+					tmp[n] = '\0';
+				}
+				snprintf(tmp + n, sizeof(tmp) - n, "...");
+				if (guibux_text_width(face, tmp) <= max_w) {
+					snprintf(ov->label_text[i], sizeof(ov->label_text[i]),
+						"%s", tmp);
+					break;
+				}
+				if (trunc == 0) {
+					snprintf(ov->label_text[i], sizeof(ov->label_text[i]),
+						"...");
+				}
 			}
-			memcpy(ov->label_text[i] + len, "...", 4);
 		}
 
 		int tw = guibux_text_width(face, ov->label_text[i]);
@@ -182,6 +197,7 @@ static void overview_create_overlays(struct guibux_server *server) {
 			ov->label_buf[i] = NULL;
 			continue;
 		}
+		wlr_scene_buffer_set_dest_size(ov->label_node[i], lw, lh);
 		overview_render_label(server, i);
 		overview_position_overlay(&ov->label_node[i]->node, lw, lh, cw, ch);
 	}

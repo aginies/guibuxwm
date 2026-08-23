@@ -145,6 +145,7 @@ void help_show(struct guibux_server *server) {
 		bw * scale, h->box_h * scale, &format);
 	if (h->buffer == NULL) return;
 	h->scene_node = wlr_scene_buffer_create(&server->scene->tree, h->buffer);
+	wlr_scene_buffer_set_dest_size(h->scene_node, bw, h->box_h);
 	wlr_scene_node_set_position(&h->scene_node->node,
 		box.x + (ew - bw) / 2, box.y + (eh - h->box_h) / 2);
 

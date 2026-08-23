@@ -151,12 +151,39 @@ void switcher_show(struct guibux_server *server) {
 		return;
 	}
 	s->scene_node = wlr_scene_buffer_create(&server->scene->tree, s->buffer);
+	wlr_scene_buffer_set_dest_size(s->scene_node, bw, s->box_h);
 	wlr_scene_node_set_position(&s->scene_node->node,
 		box.x + (ew - bw) / 2, box.y + (eh - s->box_h) / 2);
 
 	s->active = true;
 	switcher_render(server);
 	switcher_warp_to_selection(server);
+}
+
+void switcher_on_unmap(struct guibux_server *server,
+		struct guibux_toplevel *toplevel) {
+	struct guibux_switcher *s = &server->switcher;
+	if (!s->active) {
+		return;
+	}
+	for (int i = 0; i < s->num_wins; i++) {
+		if (s->wins[i] != toplevel) {
+			continue;
+		}
+		int n = s->num_wins - i - 1;
+		memmove(&s->wins[i], &s->wins[i + 1], n * sizeof(*s->wins));
+		s->num_wins--;
+		if (s->num_wins == 0) {
+			switcher_hide(server);
+			return;
+		}
+		if (s->selection >= s->num_wins) {
+			s->selection = s->num_wins - 1;
+		}
+		switcher_render(server);
+		switcher_warp_to_selection(server);
+		return;
+	}
 }
 
 void switcher_hide(struct guibux_server *server) {

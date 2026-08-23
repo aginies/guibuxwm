@@ -293,7 +293,11 @@ void load_config(struct guibux_server *server, const char *path) {
 			}
 		} else if (!strcmp(key, "topbar_height")) {
 			server->topbar_height = atoi(val);
-			if (server->topbar_height <= 0) {
+			/* an absurd height would push the fullscreen height to
+			 * zero or below and crash the size assert */
+			if (server->topbar_height <= 0 || server->topbar_height > 200) {
+				wlr_log(WLR_ERROR, "config: %s:%d: topbar_height %d out of range 1..200, using default",
+					path, lineno, server->topbar_height);
 				server->topbar_height = DEFAULT_TOPBAR_H;
 			}
 			wlr_log(WLR_INFO, "config: topbar_height = %d", server->topbar_height);
@@ -395,6 +399,11 @@ void parse_output_placements(struct guibux_server *server) {
 			wlr_log(WLR_ERROR, "GUIBUX_OUTPUTS: too many outputs (max %d)",
 				MAX_OUTPUT_PLACEMENTS);
 			break;
+		}
+		if (strlen(tok) >= sizeof(server->placements[0].name)) {
+			wlr_log(WLR_ERROR, "GUIBUX_OUTPUTS: output name too long (max %zu chars) in '%s'",
+				sizeof(server->placements[0].name) - 1, tok);
+			continue;
 		}
 		struct output_placement *p = &server->placements[server->num_placements++];
 		snprintf(p->name, sizeof(p->name), "%s", tok);

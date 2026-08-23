@@ -12,16 +12,18 @@ xkbcommon_dep = dependency('xkbcommon')
 freetype_dep = dependency('freetype2')
 cairo_dep = dependency('cairo')
 dbus_dep = dependency('dbus-1')
+threads_dep = dependency('threads')
 
 executable('guibuxwm',
   ['src/main.c', 'src/guibuxwm.h', 'src/output.c', 'src/toplevel.c',
     'src/window-layout.c', 'src/topbar.c', 'src/launcher.c', 'src/switcher.c',
     'src/overview.c', 'src/help.c',
     'src/keyboard.c',
-    'src/config.c', 'src/cursor.c', 'src/popup.c', 'src/wm-test.c',
+    'src/config.c', 'src/cursor.c', 'src/popup.c', 'tests/wm-test.c',
     'src/sysinfo.c', 'src/background.c', 'src/screensaver.c'],
   c_args: ['-DWLR_USE_UNSTABLE', '-Wno-unused-parameter'],
-  dependencies: [wlroots_dep, wayland_dep, xkbcommon_dep, freetype_dep, cairo_dep, dbus_dep],
+  include_directories: include_directories('src'),
+  dependencies: [wlroots_dep, wayland_dep, xkbcommon_dep, freetype_dep, cairo_dep, dbus_dep, threads_dep],
   install: true,
 )
 

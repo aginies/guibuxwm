@@ -152,6 +152,8 @@ void move_toplevel_to_workspace(struct guibux_toplevel *toplevel, int ws) {
 	struct guibux_server *server = toplevel->server;
 	struct guibux_output *o = guibux_output_for(server,
 		toplevel_output_for(toplevel));
+	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
+	bool was_focused = focused == toplevel_get_surface(toplevel);
 	end_seat_grabs(server);
 	toplevel->workspace = ws;
 	wlr_scene_node_set_enabled(&toplevel->scene_tree->node,
@@ -159,6 +161,23 @@ void move_toplevel_to_workspace(struct guibux_toplevel *toplevel, int ws) {
 	if (o != NULL) {
 		retile_output(o);
 		topbar_mark_dirty(o);
+	}
+	/* the focused window may have moved to a hidden workspace:
+	 * keyboard focus must not stay on an invisible window */
+	if (was_focused && !toplevel_visible(toplevel)) {
+		struct guibux_toplevel *t;
+		struct guibux_toplevel *next = NULL;
+		wl_list_for_each(t, &server->toplevels, link) {
+			if (toplevel_visible(t)) {
+				next = t;
+				break;
+			}
+		}
+		if (next != NULL) {
+			focus_toplevel(next);
+		} else {
+			clear_keyboard_focus(server);
+		}
 	}
 }
 
@@ -182,7 +201,7 @@ void place_toplevel(struct guibux_toplevel *toplevel) {
 void move_toplevel_to_output(struct guibux_toplevel *toplevel, struct wlr_output *output) {
 	struct guibux_server *server = toplevel->server;
 	if (toplevel->is_fullscreen) {
-		set_fullscreen(toplevel, false);
+		set_fullscreen(toplevel, false, NULL);
 	}
 	struct wlr_output *src = toplevel_output_for(toplevel);
 	struct wlr_box box;
@@ -248,7 +267,7 @@ void snap_toplevel_left(struct guibux_toplevel *toplevel) {
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, output, &box);
 	if (toplevel->is_fullscreen) {
-		set_fullscreen(toplevel, false);
+		set_fullscreen(toplevel, false, NULL);
 	}
 	int w = box.width / 2;
 	int h = box.height - toplevel->server->topbar_height;
@@ -266,7 +285,7 @@ void snap_toplevel_right(struct guibux_toplevel *toplevel) {
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, output, &box);
 	if (toplevel->is_fullscreen) {
-		set_fullscreen(toplevel, false);
+		set_fullscreen(toplevel, false, NULL);
 	}
 	int rx = box.width / 2;
 	int w = box.width - box.width / 2;
@@ -285,7 +304,7 @@ void snap_toplevel_top(struct guibux_toplevel *toplevel) {
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, output, &box);
 	if (toplevel->is_fullscreen) {
-		set_fullscreen(toplevel, false);
+		set_fullscreen(toplevel, false, NULL);
 	}
 	int w = box.width;
 	int h = (box.height - toplevel->server->topbar_height) / 2;
@@ -303,7 +322,7 @@ void snap_toplevel_bottom(struct guibux_toplevel *toplevel) {
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, output, &box);
 	if (toplevel->is_fullscreen) {
-		set_fullscreen(toplevel, false);
+		set_fullscreen(toplevel, false, NULL);
 	}
 	int w = box.width;
 	int h = (box.height - toplevel->server->topbar_height) - (box.height - toplevel->server->topbar_height) / 2;

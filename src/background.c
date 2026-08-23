@@ -15,6 +15,15 @@ static cairo_surface_t *load_image(const char *path) {
 		wlr_log(WLR_ERROR, "background: failed to load '%s'", path);
 		return NULL;
 	}
+	/* stbi returns straight-alpha RGBA; cairo ARGB32 is premultiplied
+	 * BGRA in memory on little-endian: swap R/B and premultiply */
+	for (int i = 0; i < w * h; i++) {
+		uint8_t *px = pixels + (size_t)i * 4;
+		uint8_t r = px[0], g = px[1], b = px[2], a = px[3];
+		px[0] = (uint8_t)((int)b * a / 255);
+		px[1] = (uint8_t)((int)g * a / 255);
+		px[2] = (uint8_t)((int)r * a / 255);
+	}
 	cairo_surface_t *surface = cairo_image_surface_create_for_data(
 		pixels, CAIRO_FORMAT_ARGB32, w, h, w * 4);
 	cairo_surface_set_user_data(surface, NULL, pixels, free);
@@ -22,20 +31,41 @@ static cairo_surface_t *load_image(const char *path) {
 }
 
 void background_load_images(struct guibux_server *server) {
+	/* workspaces without a per-workspace image share one decode of
+	 * the default background */
+	cairo_surface_t *fallback = NULL;
 	for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {
 		const char *path = server->bg_paths[ws - 1]
 			? server->bg_paths[ws - 1] : server->background_path;
 		if (!path) {
 			continue;
 		}
-		server->bg_surfaces[ws - 1] = load_image(path);
+		if (server->bg_paths[ws - 1] == NULL && fallback != NULL) {
+			server->bg_surfaces[ws - 1] = fallback;
+			continue;
+		}
+		cairo_surface_t *s = load_image(path);
+		if (server->bg_paths[ws - 1] == NULL) {
+			fallback = s;
+		}
+		server->bg_surfaces[ws - 1] = s;
 	}
 }
 
 void background_destroy_images(struct guibux_server *server) {
 	for (int ws = 0; ws < NUM_WORKSPACES; ws++) {
 		if (server->bg_surfaces[ws]) {
-			cairo_surface_destroy(server->bg_surfaces[ws]);
+			/* the fallback surface is shared between workspaces */
+			bool shared = false;
+			for (int j = 0; j < ws; j++) {
+				if (server->bg_surfaces[j] == server->bg_surfaces[ws]) {
+					shared = true;
+					break;
+				}
+			}
+			if (!shared) {
+				cairo_surface_destroy(server->bg_surfaces[ws]);
+			}
 			server->bg_surfaces[ws] = NULL;
 		}
 		free(server->bg_paths[ws]);

@@ -40,6 +40,7 @@
 #include "guibuxwm.h"
 #include <getopt.h>
 #include <limits.h>
+#include <signal.h>
 #include <wlr/backend.h>
 #include <wlr/backend/headless.h>
 #include <wlr/render/allocator.h>
@@ -51,6 +52,11 @@
 
 int main(int argc, char *argv[]) {
 	wlr_log_init(WLR_INFO, NULL);
+	/* spawned children (terminals, launcher commands) are reaped by a
+	 * targeted SIGCHLD handler instead of accumulating as zombies;
+	 * SIG_IGN is not an option: it is inherited by Xwayland and breaks
+	 * the X server's waitpid() on xkbcomp */
+	signal(SIGCHLD, spawn_sigchld_handler);
 
 	char *term_cmd = NULL;
 	char *xkb_layout = NULL;
@@ -292,11 +298,6 @@ int main(int argc, char *argv[]) {
 		topbar_tick, &server);
 	wl_event_source_timer_update(server.topbar_timer, 500);
 
-	server.sysinfo_timer = wl_event_loop_add_timer(
-		wl_display_get_event_loop(server.wl_display),
-		sysinfo_tick, &server);
-	wl_event_source_timer_update(server.sysinfo_timer, 5000);
-
 	const char *topbar_test = getenv("GUIBUX_TEST_TOPBAR");
 	if (topbar_test != NULL) {
 		server.topbar_test_timer = wl_event_loop_add_timer(
@@ -359,9 +360,6 @@ int main(int argc, char *argv[]) {
 
 	if (server.topbar_timer != NULL) {
 		wl_event_source_remove(server.topbar_timer);
-	}
-	if (server.sysinfo_timer != NULL) {
-		wl_event_source_remove(server.sysinfo_timer);
 	}
 	if (server.topbar_test_timer != NULL) {
 		wl_event_source_remove(server.topbar_test_timer);

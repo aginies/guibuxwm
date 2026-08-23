@@ -1,7 +1,68 @@
 #include "guibuxwm.h"
 #include <wlr/util/log.h>
+#include <signal.h>
 #include <stdlib.h>
+#include <sys/wait.h>
 #include <unistd.h>
+
+/*
+ * Spawned children (terminals, launcher commands) are reaped by a
+ * SIGCHLD handler that only waits for PIDs we track. SIG_IGN would
+ * work for the compositor but is inherited by Xwayland, whose X server
+ * relies on waitpid() for xkbcomp and would lose its child; waiting
+ * only for tracked PIDs is a no-op in the inherited copy (none of
+ * them are Xwayland's children).
+ */
+#define SPAWNED_MAX 256
+static volatile pid_t spawned_pids[SPAWNED_MAX];
+static volatile int num_spawned = 0;
+
+void spawn_track(pid_t pid) {
+	int i = num_spawned;
+	if (i < SPAWNED_MAX) {
+		spawned_pids[i] = pid;
+		num_spawned = i + 1;
+	}
+}
+
+static void spawn_reap(void) {
+	for (int i = 0; i < num_spawned; ) {
+		int st;
+		pid_t r = waitpid(spawned_pids[i], &st, WNOHANG);
+		if (r == spawned_pids[i] || r == -1) {
+			/* exited (or already gone: duplicate entry) */
+			num_spawned--;
+			spawned_pids[i] = spawned_pids[num_spawned];
+		} else {
+			i++;
+		}
+	}
+}
+
+void spawn_sigchld_handler(int sig) {
+	(void)sig;
+	spawn_reap();
+}
+
+/* Quote s for embedding in a /bin/sh -c command line */
+static void shell_quote(char *dst, size_t dst_size, const char *s) {
+	size_t di = 0;
+	if (dst_size == 0) {
+		return;
+	}
+	dst[di++] = '\'';
+	for (const char *p = s; *p != '\0' && di < dst_size - 2; p++) {
+		if (*p == '\'') {
+			/* end quote, escaped quote, reopen quote */
+			dst[di++] = '\'';
+			dst[di++] = '\\';
+			dst[di++] = '\'';
+		} else {
+			dst[di++] = *p;
+		}
+	}
+	dst[di] = '\0';
+}
 
 void spawn_terminal(struct guibux_server *server) {
 	pid_t pid = fork();
@@ -13,14 +74,17 @@ void spawn_terminal(struct guibux_server *server) {
 		execl("/bin/sh", "/bin/sh", "-c", server->term_cmd, (void *)NULL);
 		_exit(127);
 	}
+	spawn_track(pid);
 	wlr_log(WLR_INFO, "spawned terminal (%s) pid %d", server->term_cmd, pid);
 }
 
 void spawn_network_info(struct guibux_server *server) {
+	char quoted[256];
+	shell_quote(quoted, sizeof(quoted), server->term_cmd);
 	char cmd[512];
 	snprintf(cmd, sizeof(cmd),
 		"%s -- bash -c \"nmcli -t -f DEVICE,TYPE,STATE,CONNECTION,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS device show 2>/dev/null || nmcli device show; read -p '\\nPress enter'\"",
-		server->term_cmd);
+		quoted);
 	pid_t pid = fork();
 	if (pid < 0) {
 		wlr_log(WLR_ERROR, "fork failed: %m");
@@ -30,6 +94,7 @@ void spawn_network_info(struct guibux_server *server) {
 		execl("/bin/sh", "/bin/sh", "-c", cmd, (void *)NULL);
 		_exit(127);
 	}
+	spawn_track(pid);
 	wlr_log(WLR_INFO, "spawned network info terminal pid %d", pid);
 }
 
@@ -50,7 +115,7 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 		break;
 	case GUIBUX_ACT_FULLSCREEN:
 		if (toplevel != NULL) {
-			set_fullscreen(toplevel, !toplevel->is_fullscreen);
+			set_fullscreen(toplevel, !toplevel->is_fullscreen, NULL);
 		}
 		break;
 	case GUIBUX_ACT_TILE:
@@ -275,6 +340,20 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 	bool handled = false;
 	uint32_t modifiers = wlr_keyboard_get_modifiers(keyboard->wlr_keyboard);
 	if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+		/* wlroots synthesizes repeats as fresh PRESSED events; track
+		 * per-keyboard state so keybinds don't re-fire while held
+		 * (the launcher/switcher keep their repeats for typing) */
+		bool repeat = false;
+		for (int i = 0; i < keyboard->num_pressed; i++) {
+			if (keyboard->pressed[i] == keycode) {
+				repeat = true;
+				break;
+			}
+		}
+		if (!repeat && keyboard->num_pressed < 64) {
+			keyboard->pressed[keyboard->num_pressed++] = keycode;
+		}
+
 		for (int i = 0; i < nsyms; i++) {
 			if (server->launcher.active) {
 				handled = launcher_handle_key(server, syms[i]);
@@ -282,6 +361,8 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 				handled = switcher_handle_key(server, syms[i]);
 			} else if (server->help.active) {
 				handled = help_handle_key(server, syms[i]);
+			} else if (repeat) {
+				break;
 			} else if (syms[i] == XKB_KEY_F12) {
 				if (server->overview.active) {
 					overview_hide(server);
@@ -295,6 +376,14 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 				handled = handle_keybinding(server, syms[i], modifiers);
 			}
 			if (handled) {
+				break;
+			}
+		}
+	} else {
+		for (int i = 0; i < keyboard->num_pressed; i++) {
+			if (keyboard->pressed[i] == keycode) {
+				keyboard->pressed[i] =
+					keyboard->pressed[--keyboard->num_pressed];
 				break;
 			}
 		}

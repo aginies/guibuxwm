@@ -22,7 +22,7 @@ static void invalidate_char_width_cache(void) {
 }
 
 // decode one UTF-8 codepoint, advance *p past it
-static uint32_t utf8_next(const char **p) {
+uint32_t utf8_next(const char **p) {
 	const unsigned char *s = (const unsigned char *)*p;
 	uint32_t cp;
 	if (s[0] < 0x80) {
@@ -47,7 +47,7 @@ static uint32_t utf8_next(const char **p) {
 }
 
 // copy up to max_cp codepoints of src into dst (NUL-terminated)
-static void utf8_truncate(const char *src, char *dst, size_t dst_size, int max_cp) {
+void utf8_truncate(const char *src, char *dst, size_t dst_size, int max_cp) {
 	int cp = 0;
 	size_t n = 0;
 	while (src[0] && cp < max_cp) {
@@ -179,23 +179,34 @@ int launcher_draw_text_on_surface(cairo_surface_t *cs, FT_Face face,
 
 void topbar_render(struct guibux_output *o) {
 	struct guibux_server *server = o->server;
-	if (o->topbar_buffer == NULL || server->launcher.face == NULL) {
+	if (server->launcher.face == NULL || server->launcher.shm_alloc == NULL) {
 		return;
 	}
 	if (!o->topbar_dirty) {
 		return;
 	}
-	o->topbar_dirty = false;
 
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+	if (box.width <= 0 || box.height <= 0) {
+		/* keep the dirty flag: retry once the output has a real mode */
+		return;
+	}
+	o->topbar_dirty = false;
+
+	/* buffer is in device pixels; the node stays at logical size via
+	 * the dest size, so the bar renders sharp on fractional/integer
+	 * scaled outputs */
 	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
-	int w = box.width;
+	int w = box.width * scale;
 	int h = o->server->topbar_height * scale;
 
-	/* resize buffer if output dimensions changed */
-	if (o->topbar_buffer_w != w || o->topbar_buffer_h != h) {
+	/* create/resize buffer (also covers outputs that mapped with a
+	 * 0x0 box and only got a real mode later) */
+	if (o->topbar_buffer == NULL || o->topbar_buffer_w != w ||
+			o->topbar_buffer_h != h) {
 		wlr_buffer_drop(o->topbar_buffer);
+		o->topbar_buffer = NULL;
 		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
 		struct wlr_drm_format format = {
 			.format = DRM_FORMAT_XRGB8888,
@@ -205,15 +216,29 @@ void topbar_render(struct guibux_output *o) {
 		o->topbar_buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
 			w, h, &format);
 		if (o->topbar_buffer == NULL) {
-			wlr_log(WLR_ERROR, "topbar: failed to recreate buffer on %s",
+			wlr_log(WLR_ERROR, "topbar: failed to create buffer on %s",
 				o->wlr_output->name ? o->wlr_output->name : "(unknown)");
+			o->topbar_buffer_w = 0;
+			o->topbar_buffer_h = 0;
 			return;
 		}
 		o->topbar_buffer_w = w;
 		o->topbar_buffer_h = h;
-		if (o->topbar_node != NULL) {
+		if (o->topbar_node == NULL) {
+			o->topbar_node = wlr_scene_buffer_create(&server->scene->tree,
+				o->topbar_buffer);
+			if (o->topbar_node == NULL) {
+				wlr_buffer_drop(o->topbar_buffer);
+				o->topbar_buffer = NULL;
+				o->topbar_buffer_w = 0;
+				o->topbar_buffer_h = 0;
+				return;
+			}
+		} else {
 			wlr_scene_buffer_set_buffer(o->topbar_node, o->topbar_buffer);
 		}
+		wlr_scene_buffer_set_dest_size(o->topbar_node,
+			box.width, o->server->topbar_height);
 		wlr_scene_node_set_position(&o->topbar_node->node, box.x, box.y);
 	}
 
@@ -340,19 +365,22 @@ void topbar_render(struct guibux_output *o) {
 		"%a %d %b %Y  %H:%M", &tm);
 	o->topbar_minute = now / 60;
 
-	/* update sysinfo */
+	/* snapshot sysinfo (published by the sysinfo worker thread) */
+	char net[64], bat[32];
+	sysinfo_get(&o->server->sysinfo, net, sizeof(net), bat, sizeof(bat));
 
-	/* calculate indicator width */
+	/* calculate indicator width (logical units; text widths come back
+	 * in device pixels at the scaled font size) */
 	int ind_w = 0;
-	if (o->server->sysinfo.network[0] != '\0') {
-		ind_w += guibux_text_width(server->launcher.face, o->server->sysinfo.network);
+	if (net[0] != '\0') {
+		ind_w += guibux_text_width(server->launcher.face, net) / scale;
 	}
-	if (o->server->sysinfo.battery[0] != '\0') {
+	if (bat[0] != '\0') {
 		if (ind_w > 0) ind_w += 8;
-		ind_w += guibux_text_width(server->launcher.face, o->server->sysinfo.battery);
+		ind_w += guibux_text_width(server->launcher.face, bat) / scale;
 	}
 
-	int date_w = guibux_text_width(server->launcher.face, o->topbar_right);
+	int date_w = guibux_text_width(server->launcher.face, o->topbar_right) / scale;
 	int date_x = w / scale - TOPBAR_PAD - date_w;
 	int ind_start = date_x - 4 - ind_w;
 	int win_end = ind_start - sep_gap;
@@ -480,16 +508,16 @@ void topbar_render(struct guibux_output *o) {
 		cairo_fill(cr);
 	}
 
-	if (o->server->sysinfo.network[0] != '\0') {
+	if (net[0] != '\0') {
 		launcher_draw_text_on_surface(cs, server->launcher.face,
-			o->server->sysinfo.network,
+			net,
 			ind_x * scale, baseline, server->color_topbar_text);
 		ind_x += guibux_text_width(server->launcher.face,
-			o->server->sysinfo.network) / scale + 8;
+			net) / scale + 8;
 	}
-	if (o->server->sysinfo.battery[0] != '\0') {
+	if (bat[0] != '\0') {
 		launcher_draw_text_on_surface(cs, server->launcher.face,
-			o->server->sysinfo.battery,
+			bat,
 			ind_x * scale, baseline, server->color_topbar_text);
 	}
 
@@ -588,32 +616,32 @@ void topbar_create(struct guibux_output *o) {
 			o->wlr_output->name ? o->wlr_output->name : "(unknown)");
 		return;
 	}
-	struct wlr_box box;
-	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
-	if (box.width <= 0 || box.height <= 0) {
-		return;
-	}
-	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
-
-	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-	struct wlr_drm_format format = {
-		.format = DRM_FORMAT_XRGB8888,
-		.len = 1,
-		.modifiers = mods,
-	};
-	o->topbar_buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-		box.width, o->server->topbar_height * scale, &format);
-	if (o->topbar_buffer == NULL) {
-		wlr_log(WLR_ERROR, "topbar: failed to create buffer on %s",
-			o->wlr_output->name ? o->wlr_output->name : "(unknown)");
-		return;
-	}
-	o->topbar_buffer_w = box.width;
-	o->topbar_buffer_h = o->server->topbar_height * scale;
-	o->topbar_node = wlr_scene_buffer_create(&server->scene->tree, o->topbar_buffer);
-	wlr_scene_node_set_position(&o->topbar_node->node, box.x, box.y);
+	/* the buffer is created lazily by topbar_render: the output may
+	 * not have a mode yet (0x0 box) and get one later */
 	o->topbar_dirty = true;
 	topbar_render(o);
+}
+
+void topbar_win_remove(struct guibux_output *o,
+		struct guibux_toplevel *toplevel) {
+	if (o == NULL) {
+		return;
+	}
+	for (int i = 0; i < o->topbar_win_count; i++) {
+		if (o->topbar_wins[i] == toplevel) {
+			int n = o->topbar_win_count - i - 1;
+			memmove(&o->topbar_wins[i], &o->topbar_wins[i + 1],
+				n * sizeof(*o->topbar_wins));
+			memmove(&o->topbar_win_x[i], &o->topbar_win_x[i + 1],
+				n * sizeof(o->topbar_win_x[0]));
+			memmove(&o->topbar_win_w[i], &o->topbar_win_w[i + 1],
+				n * sizeof(o->topbar_win_w[0]));
+			memmove(&o->topbar_win_titles[i], &o->topbar_win_titles[i + 1],
+				n * sizeof(o->topbar_win_titles[0]));
+			o->topbar_win_count--;
+			return;
+		}
+	}
 }
 
 void topbar_destroy(struct guibux_output *o) {

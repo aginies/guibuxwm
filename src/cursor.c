@@ -173,7 +173,7 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 				}
 				uint32_t dt = event->time_msec - server->last_topbar_click_time;
 				if (dt < 300 && server->last_topbar_click_win == win) {
-					set_fullscreen(win, !win->is_fullscreen);
+					set_fullscreen(win, !win->is_fullscreen, NULL);
 				} else {
 					focus_toplevel(win);
 				}
@@ -199,7 +199,7 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 				(kb->modifiers.depressed & WLR_MODIFIER_LOGO)) {
 			focus_toplevel(toplevel);
 			if (toplevel->is_fullscreen) {
-				set_fullscreen(toplevel, false);
+				set_fullscreen(toplevel, false, NULL);
 			}
 			server->button_consumed = event->button;
 			begin_interactive(toplevel, GUIBUX_CURSOR_MOVE, 0);

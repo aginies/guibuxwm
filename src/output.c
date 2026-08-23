@@ -26,7 +26,11 @@ struct wlr_output *toplevel_output_for(struct guibux_toplevel *toplevel) {
 	if (toplevel->scene_tree == NULL) {
 		return NULL;
 	}
+	/* requested.fullscreen_output is only cleared when the client
+	 * resets the toplevel, so it goes stale after un-fullscreening;
+	 * trust it only while the window is actually fullscreen */
 	if (toplevel->xdg_toplevel != NULL &&
+			toplevel->is_fullscreen &&
 			toplevel->xdg_toplevel->requested.fullscreen_output != NULL) {
 		return toplevel->xdg_toplevel->requested.fullscreen_output;
 	}
@@ -177,13 +181,18 @@ void server_new_output(struct wl_listener *listener, void *data) {
 	if (l_output == NULL) {
 		l_output = wlr_output_layout_add_auto(server->output_layout, wlr_output);
 	}
-	struct wlr_scene_output *scene_output =
-		wlr_scene_output_create(server->scene, wlr_output);
 	if (l_output == NULL) {
 		wlr_log(WLR_ERROR, "%s: failed to add output to layout",
 			wlr_output->name);
 	} else {
-		wlr_scene_output_layout_add_output(server->scene_layout, l_output, scene_output);
+		struct wlr_scene_output *scene_output =
+			wlr_scene_output_create(server->scene, wlr_output);
+		if (scene_output == NULL) {
+			wlr_log(WLR_ERROR, "%s: failed to create scene output",
+				wlr_output->name);
+		} else {
+			wlr_scene_output_layout_add_output(server->scene_layout, l_output, scene_output);
+		}
 	}
 	/* background first: wlr-scene draws later children on top, so the
 	 * topbar node must come after the background or the bar is hidden
@@ -195,7 +204,18 @@ void server_new_output(struct wl_listener *listener, void *data) {
 
 void output_frame(struct wl_listener *listener, void *data) {
 	struct guibux_output *output = wl_container_of(listener, output, frame);
-	struct wlr_scene *scene = output->server->scene;
+	struct guibux_server *server = output->server;
+	struct wlr_scene *scene = server->scene;
+
+	/* output resized or rescaled: the topbar buffer is stale */
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, output->wlr_output, &box);
+	int scale = output->wlr_output->scale > 1 ? (int)output->wlr_output->scale : 1;
+	if (output->topbar_buffer != NULL &&
+			(output->topbar_buffer_w != box.width * scale ||
+			 output->topbar_buffer_h != server->topbar_height * scale)) {
+		output->topbar_dirty = true;
+	}
 
 	struct wlr_scene_output *scene_output = wlr_scene_get_scene_output(
 		scene, output->wlr_output);

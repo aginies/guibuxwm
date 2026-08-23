@@ -21,6 +21,7 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include <dbus/dbus.h>
+#include <pthread.h>
 
 #ifdef WLR_USE_UNSTABLE
 #include <wlr/types/wlr_idle_inhibit_v1.h>
@@ -111,45 +112,21 @@ struct guibux_keybind {
 struct guibux_server;
 
 /* sysinfo.c */
-enum sysinfo_prop {
-    SYSINFO_PROP_DEVTYPE,
-    SYSINFO_PROP_STATE,
-    SYSINFO_PROP_IFACE,
-    SYSINFO_PROP_SSID,
-    SYSINFO_PROP_STRENGTH,
-};
-
 struct guibux_sysinfo {
     DBusConnection *system_bus;
     bool nm_available;
     char network[64];
     char battery[32];
-    struct wl_event_source *dbus_fd_source;
-    int dbus_fd;
-    bool query_pending;
-    char query_display[128];
-    int query_devices_count;
-    char *query_devices[16];
-    int query_pending_replies;
-    struct {
-        char iface[32];
-        dbus_uint32_t type;
-        dbus_uint32_t state;
-        char ssid[64];
-        dbus_uint32_t strength;
-        bool type_ready;
-        bool state_ready;
-        bool iface_ready;
-        bool ssid_ready;
-        bool strength_ready;
-    } query_dev_data[16];
-    int query_dev_index;
+    pthread_t worker;
+    pthread_mutex_t lock;
+    pthread_cond_t wake;
+    bool worker_running;
 };
 
 void sysinfo_init(struct guibux_server *server);
 void sysinfo_destroy(struct guibux_server *server);
-void sysinfo_update(struct guibux_sysinfo *si);
-int sysinfo_tick(void *data);
+void sysinfo_get(struct guibux_sysinfo *si, char *net, size_t net_size,
+                 char *bat, size_t bat_size);
 struct guibux_toplevel;
 
 // declared in wlr/render/allocator/shm.h (not installed with our wlroots build)
@@ -238,6 +215,8 @@ struct guibux_keyboard {
 	struct wl_listener modifiers;
 	struct wl_listener key;
 	struct wl_listener destroy;
+	uint32_t pressed[64];
+	int num_pressed;
 };
 
 struct launcher_entry {
@@ -363,7 +342,6 @@ struct guibux_server {
 
 	struct wl_event_source *tile_test_timer;
 	struct wl_event_source *topbar_timer;
-	struct wl_event_source *sysinfo_timer;
 	struct wl_event_source *topbar_test_timer;
 	struct wl_event_source *workspace_test_timer;
 	struct wl_event_source *keybind_test_timer;
@@ -412,7 +390,7 @@ bool topbar_network_at(struct guibux_server *server, struct guibux_output *o, do
 
 /* toplevel.c */
 void focus_toplevel(struct guibux_toplevel *toplevel);
-void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen);
+void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen, struct wlr_output *output);
 void begin_interactive(struct guibux_toplevel *toplevel, enum guibux_cursor_mode mode, uint32_t edges);
 void server_new_xdg_toplevel(struct wl_listener *listener, void *data);
 void xdg_toplevel_map(struct wl_listener *listener, void *data);
@@ -449,10 +427,13 @@ void snap_toplevel_bottom(struct guibux_toplevel *toplevel);
 /* topbar.c */
 void topbar_render(struct guibux_output *o);
 void topbar_mark_dirty(struct guibux_output *o);
+void topbar_win_remove(struct guibux_output *o, struct guibux_toplevel *toplevel);
 bool topbar_workspace_at(struct guibux_server *server, double lx, double ly, struct guibux_output **output, int *ws);
 int topbar_tick(void *data);
 int topbar_test_run(void *data);
 int guibux_text_width(FT_Face face, const char *text);
+uint32_t utf8_next(const char **p);
+void utf8_truncate(const char *src, char *dst, size_t dst_size, int max_cp);
 int launcher_draw_text_on_surface(cairo_surface_t *cs, FT_Face face,
 	const char *text, int x, int baseline, uint32_t color);
 void set_color(cairo_t *cr, uint32_t c);
@@ -478,6 +459,7 @@ void switcher_show(struct guibux_server *server);
 void switcher_hide(struct guibux_server *server);
 bool switcher_handle_key(struct guibux_server *server, xkb_keysym_t sym);
 void switcher_on_modifier_release(struct guibux_server *server, uint32_t modifiers);
+void switcher_on_unmap(struct guibux_server *server, struct guibux_toplevel *toplevel);
 
 /* overview.c */
 void overview_show(struct guibux_server *server);
@@ -502,6 +484,8 @@ void keybinds_defaults(struct guibux_server *server);
 void keybind_add(struct guibux_server *server, uint32_t modifiers, xkb_keysym_t keysym, enum guibux_action action, int arg);
 void spawn_terminal(struct guibux_server *server);
 void spawn_network_info(struct guibux_server *server);
+void spawn_sigchld_handler(int sig);
+void spawn_track(pid_t pid);
 
 /* config.c */
 void load_config(struct guibux_server *server, const char *path);
