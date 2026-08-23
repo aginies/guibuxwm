@@ -4,7 +4,7 @@
 > 310,751,941 Tokens
 
 A simple Wayland window manager built on [wlroots 0.20](https://gitlab.freedesktop.org/wlroots/wlroots).
-Derived from [tinywl](https://gitlab.freedesktop.org/wlroots/wlroots/-/tree/main/tinywl) (MIT).
+Derived from [tinywl](https://github.com/swaywm/wlroots/tree/master/tinywl).
 
 ## Features
 
