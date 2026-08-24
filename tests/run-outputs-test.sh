@@ -20,12 +20,16 @@ case_run() {
   cfg=${5:-}
   log=$(mktemp)
   state_home=$(mktemp -d)
-  envs=(GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_OUTPUTS=$hook GUIBUX_TERM=true WLR_RENDERER=gles2 XDG_STATE_HOME=$state_home)
+  # isolate from the user's real config: without GUIBUX_CONFIG the
+  # compositor would read ~/.config/guibuxwm/config, and an `outputs`
+  # line there outranks the GUIBUX_OUTPUTS env
+  if [ -z "$cfg" ]; then
+    cfg=$(mktemp)
+    echo "term = true" >"$cfg"
+  fi
+  envs=(GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_OUTPUTS=$hook GUIBUX_TERM=true WLR_RENDERER=gles2 XDG_STATE_HOME=$state_home GUIBUX_CONFIG=$cfg)
   if [ "$outputs_val" != "-" ]; then
     envs+=(GUIBUX_OUTPUTS=$outputs_val)
-  fi
-  if [ -n "$cfg" ]; then
-    envs+=(GUIBUX_CONFIG=$cfg)
   fi
   env "${envs[@]}" "$COMP" >"$log" 2>&1 &
   comp=$!
