@@ -128,6 +128,7 @@ int tile_test_run(void *data) {
 	struct guibux_output *o;
 	wl_list_for_each(o, &server->outputs, link) {
 		o->tile_mode = mode;
+		o->tile_modes[o->current_workspace] = mode;
 		retile_output(o);
 		wlr_log(WLR_INFO, "tile-test: mode %d on %s", mode,
 			o->wlr_output->name ? o->wlr_output->name : "(unknown)");
