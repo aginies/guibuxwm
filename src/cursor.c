@@ -59,7 +59,6 @@ static void process_cursor_resize(struct guibux_server *server) {
 		}
 	}
 
-	struct wlr_box geo_box;
 	toplevel_get_geometry(toplevel, &geo_box);
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
 		new_left - geo_box.x, new_top - geo_box.y);
