@@ -1,7 +1,7 @@
 #!/bin/sh
 # guibuxwm build script
 # Builds wlroots 0.20.2 (if not installed) and the WM.
-# Usage: ./build.sh [clean]   (clean removes build/ including the binary)
+# Usage: ./build.sh [clean|debug|release|sanitize|verbose]
 
 set -e
 
@@ -46,11 +46,28 @@ if [ "${1:-}" = "clean" ]; then
 	exit 0
 fi
 
+MESON_ARGS=""
+VERBOSE=""
+case "${1:-}" in
+	debug)
+		MESON_ARGS="--buildtype=debug"
+		;;
+	release)
+		MESON_ARGS="--buildtype=release -Doptimization=o2"
+		;;
+	sanitize)
+		MESON_ARGS="--buildtype=debug -Db_sanitize=address,undefined"
+		;;
+	verbose)
+		VERBOSE="-v"
+		;;
+esac
+
 if [ -d build ]; then
-	meson setup build --reconfigure
+	meson setup build --reconfigure ${MESON_ARGS}
 else
-	meson setup build
+	meson setup build ${MESON_ARGS}
 fi
-ninja -C build
+ninja ${VERBOSE} -C build
 
 echo ">> done: ./build/guibuxwm"
