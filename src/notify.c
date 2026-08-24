@@ -593,8 +593,11 @@ void notify_panel_render(struct guibux_server *server) {
 
 		char lbuf[320];
 		if (items[i].app_name[0] != '\0' && items[i].body[0] != '\0') {
-			snprintf(lbuf, sizeof(lbuf), "%s: %s",
-				items[i].app_name, items[i].body);
+			int len = snprintf(lbuf, sizeof(lbuf), "%s",
+				items[i].app_name);
+			if (len > 0 && (size_t)len < sizeof(lbuf))
+				snprintf(lbuf + len, sizeof(lbuf) - len, ": %s",
+					items[i].body);
 		} else if (items[i].body[0] != '\0') {
 			snprintf(lbuf, sizeof(lbuf), "%s", items[i].body);
 		} else {
