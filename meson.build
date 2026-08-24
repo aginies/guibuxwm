@@ -1,5 +1,5 @@
 project('guibuxwm', 'c',
-  version: '0.1.0',
+  version: '2.0.0',
   default_options: ['c_std=gnu11', 'warning_level=2', 'buildtype=release'],
   meson_version: '>=0.56.0',
 )

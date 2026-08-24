@@ -278,10 +278,9 @@ static DBusHandlerResult notify_message_func(DBusConnection *conn,
 	if (strcmp(member, "GetServerInformation") == 0) {
 		DBusMessage *reply = dbus_message_new_method_return(msg);
 		if (reply != NULL) {
-			/* spec 1.3: (name, vendor, version, spec_version). Older
-			 * clients read the third value as the spec version, so it
-			 * must be a valid spec version there too: libnotify asserts
-			 * major > 0 and aborts on a project version like "0.1.0" */
+		/* spec 1.3: (name, vendor, version, spec_version). Older
+		 * clients read the third value as the spec version, so it
+		 * must be a valid spec version there, not the project version */
 			const char *name = "guibuxwm";
 			const char *vendor = "guibuxwm";
 			const char *version = "1.3";
