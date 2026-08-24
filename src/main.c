@@ -467,6 +467,14 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.outputs_test_timer, 2000);
 	}
 
+	const char *outputs_panel_test = getenv("GUIBUX_TEST_OUTPUTS_PANEL");
+	if (outputs_panel_test != NULL) {
+		server.outputs_panel_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			outputs_panel_test_run, &server);
+		wl_event_source_timer_update(server.outputs_panel_test_timer, 2000);
+	}
+
 	const char *keybind_test = getenv("GUIBUX_TEST_KEYBIND");
 	if (keybind_test != NULL) {
 		server.keybind_test_timer = wl_event_loop_add_timer(

@@ -45,6 +45,7 @@ At least one modifier is required:
 | `switch-ws-right` | Switch to the next workspace |
 | `show-help` | Show the keybinding help overlay |
 | `outputs-apply` | Re-apply the `outputs` config (monitor layout) without a restart |
+| `outputs-panel` | Open the monitor layout panel (`Mod+m`) |
 | `volume-up` | Raise default sink volume by 5% |
 | `volume-down` | Lower default sink volume by 5% |
 | `mute` | Toggle default sink mute |
@@ -74,6 +75,7 @@ At least one modifier is required:
 | `Mod+Ctrl+Shift+Up` / `Mod+Ctrl+Shift+Down` | Snap focused window to top/bottom half of its monitor |
 | `Mod+Up` | Fullscreen focused window |
 | `Mod+h` | Show the keybinding help overlay |
+| `Mod+m` | Open the monitor layout panel |
 | `Mod+Shift+q` | Quit |
 | `Alt+Escape` | Quit |
 | `Mod+Alt+Escape` | Quit |
@@ -158,6 +160,19 @@ The panel slide animation is controlled by `notify_effect` (and the global `effe
 | main+stack | focused window takes the left 50%, remaining windows stack vertically in the right 50% |
 
 In tile modes, new windows are placed into the layout (instead of cascading), closing a window repacks the remaining ones, and leaving fullscreen returns the window to its slot. Dragging or resizing a window takes it out of the layout until the next retiling (`Mod+t`, window map/close, fullscreen off, or moving a window between monitors).
+
+## Outputs Panel (`Mod+m`)
+
+`Mod+m` opens the monitor layout panel on the monitor under the cursor. Every connected output is listed (enabled or disabled), in the order of the `outputs` config line: `NAME  XxY  WxH  ROT  on/off`, with the selected row highlighted. Connected outputs that are not in the config yet (auto-arranged) are listed too; the first edit writes them into the config.
+
+- `Up`/`Down` select a row
+- `Left`/`Right` swap the selected output with the monitor to its left/right on screen, so the layout stays contiguous and the cursor crosses between the two (the rows swap list order, so the list stays the screen order)
+- `m` cycle the output's mode
+- `r` cycle the rotation (normal → 90 → 180 → 270)
+- `d` toggle the output on/off
+- `Esc`/`Enter` close
+
+Every change is saved to the `outputs` line of the config and applied live, the same as `guibuxwm-output set/enable/disable`. The status line at the bottom shows the result (`saved`, `no monitor to the left`, `not connected`, ...).
 
 ## Overriding Defaults
 

@@ -1264,3 +1264,357 @@ int outputs_test_run(void *data) {
 	wlr_log(WLR_ERROR, "outputs-test: FAIL unknown mode '%s'", mode);
 	return 0;
 }
+
+/* the runner starts us with a config placing both headless outputs; the
+ * panel must show both, and each key must move the layout + config */
+static void panel_box_by_name(struct guibux_server *server,
+		const char *name, struct wlr_box *box) {
+	box->x = box->y = box->width = box->height = 0;
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->wlr_output->name != NULL &&
+				strcmp(o->wlr_output->name, name) == 0) {
+			wlr_output_layout_get_box(server->output_layout,
+				o->wlr_output, box);
+			return;
+		}
+	}
+}
+
+static void panel_boxes_by_name(struct guibux_server *server,
+		struct wlr_box *b1, struct wlr_box *b2) {
+	panel_box_by_name(server, "HEADLESS-1", b1);
+	panel_box_by_name(server, "HEADLESS-2", b2);
+}
+
+/* three connected outputs: A(HEADLESS-1, rotated 90, effective 720 wide)
+ * B(HEADLESS-2) C(HEADLESS-3) in a row. Selecting B and pressing Left
+ * must yield the order B A C, repacked contiguously from the row's left
+ * edge by each monitor's effective (rotation-aware) width: B -> 0,
+ * A -> 1280, C -> 2000. Right moves B back to A B C: A -> 0, B -> 720,
+ * C -> 2000 */
+static int outputs_panel_test_three(struct guibux_server *server) {
+	struct guibux_outputs_panel *p = &server->outputs_panel;
+	struct wlr_box b1, b2, b3;
+	char spec[2048];
+
+	outputs_panel_show(server);
+	if (!p->active || p->num_entries != 3) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL show3 (active=%d, "
+			"entries=%d, want 3)", p->active, p->num_entries);
+		return 0;
+	}
+	wlr_log(WLR_INFO, "outputs-panel-test: OK show3 (3 entries)");
+
+	/* select B (HEADLESS-2), move it left of A */
+	outputs_panel_handle_key(server, XKB_KEY_Down);
+	outputs_panel_handle_key(server, XKB_KEY_Left);
+	panel_box_by_name(server, "HEADLESS-1", &b1);
+	panel_box_by_name(server, "HEADLESS-2", &b2);
+	panel_box_by_name(server, "HEADLESS-3", &b3);
+	if (b2.x != 0 || b2.y != 0 || b1.x != 1280 || b1.y != 0 ||
+			b3.x != 2000 || b3.y != 0) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL move3-left: "
+			"A(%d,%d) B(%d,%d) C(%d,%d), want B(0,0) A(1280,0) C(2000,0)",
+			b1.x, b1.y, b2.x, b2.y, b3.x, b3.y);
+		return 0;
+	}
+	if (p->selected != 0 || strcmp(p->entries[0].name, "HEADLESS-2") != 0) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL move3-left: list "
+			"order not swapped (selected=%d, entry=%s)", p->selected,
+			p->entries[p->selected].name);
+		return 0;
+	}
+	if (!outputs_config_read(server->config_path, spec, sizeof(spec)) ||
+			strstr(spec, "HEADLESS-2@0x0,HEADLESS-1@1280x0:90,"
+			"HEADLESS-3@2000x0") == NULL) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL move3-left: config "
+			"not repacked ('%s')", spec);
+		return 0;
+	}
+	wlr_log(WLR_INFO, "outputs-panel-test: OK move3-left (B A C, repacked "
+		"by effective widths)");
+
+	/* move B back right: A B C, A keeps its rotated 720 width */
+	outputs_panel_handle_key(server, XKB_KEY_Right);
+	panel_box_by_name(server, "HEADLESS-1", &b1);
+	panel_box_by_name(server, "HEADLESS-2", &b2);
+	panel_box_by_name(server, "HEADLESS-3", &b3);
+	if (b1.x != 0 || b1.y != 0 || b2.x != 720 || b2.y != 0 ||
+			b3.x != 2000 || b3.y != 0) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL move3-right: "
+			"A(%d,%d) B(%d,%d) C(%d,%d), want A(0,0) B(720,0) C(2000,0)",
+			b1.x, b1.y, b2.x, b2.y, b3.x, b3.y);
+		return 0;
+	}
+	if (p->selected != 1 || strcmp(p->entries[1].name, "HEADLESS-2") != 0) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL move3-right: list "
+			"order not swapped back (selected=%d, entry=%s)", p->selected,
+			p->entries[p->selected].name);
+		return 0;
+	}
+	wlr_log(WLR_INFO, "outputs-panel-test: OK move3-right (A B C restored)");
+
+	outputs_panel_handle_key(server, XKB_KEY_Escape);
+	if (p->active) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL close3 (still active)");
+		return 0;
+	}
+	wlr_log(WLR_INFO, "outputs-panel-test: OK3 (3-monitor reflow, close)");
+	return 0;
+}
+
+int outputs_panel_test_run(void *data) {
+	struct guibux_server *server = data;
+	struct guibux_outputs_panel *p = &server->outputs_panel;
+	struct wlr_output *outs[16];
+	struct wlr_box boxes[16];
+	int n;
+
+	if (server->config_path == NULL) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL: no config path");
+		return 0;
+	}
+	int nconn = 0;
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->wlr_output->name != NULL) {
+			nconn++;
+		}
+	}
+	if (nconn >= 3) {
+		return outputs_panel_test_three(server);
+	}
+	outputs_panel_show(server);
+	if (!p->active) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL show (active=%d)",
+			p->active);
+		return 0;
+	}
+	if (p->num_entries != 2) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL show: expected 2 "
+			"entries (both connected outputs), got %d", p->num_entries);
+		return 0;
+	}
+	wlr_log(WLR_INFO, "outputs-panel-test: OK show (2 entries)");
+
+	/* Right: HEADLESS-1 (0x0) swaps with the monitor to its right
+	 * (HEADLESS-2 at 1280x0): H1 -> 1280, H2 -> 0; the list order
+	 * swaps with it */
+	outputs_panel_handle_key(server, XKB_KEY_Right);
+	n = outputs_sorted_by_x(server, outs, boxes, 16);
+	struct wlr_box b1, b2;
+	panel_boxes_by_name(server, &b1, &b2);
+	if (n != 2 || b1.x != 1280 || b1.y != 0 || b2.x != 0 || b2.y != 0) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL move-right: n=%d "
+			"H1(%d,%d) H2(%d,%d), want H1(1280,0) H2(0,0)",
+			n, b1.x, b1.y, b2.x, b2.y);
+		return 0;
+	}
+	if (p->selected != 1 || strcmp(p->entries[1].name, "HEADLESS-1") != 0) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL move-right: list "
+			"order not swapped (selected=%d, entry=%s)", p->selected,
+			p->entries[p->selected].name);
+		return 0;
+	}
+	wlr_log(WLR_INFO, "outputs-panel-test: OK move-right (H1 -> 1280x0, "
+		"H2 -> 0x0, list swapped)");
+
+	/* Left: HEADLESS-1 (now at 1280) swaps back with the monitor to
+	 * its left (HEADLESS-2 at 0) */
+	outputs_panel_handle_key(server, XKB_KEY_Left);
+	n = outputs_sorted_by_x(server, outs, boxes, 16);
+	panel_boxes_by_name(server, &b1, &b2);
+	if (n != 2 || b1.x != 0 || b1.y != 0 || b2.x != 1280 || b2.y != 0) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL move-left: n=%d "
+			"H1(%d,%d) H2(%d,%d), want H1(0,0) H2(1280,0)",
+			n, b1.x, b1.y, b2.x, b2.y);
+		return 0;
+	}
+	/* Left again: HEADLESS-1 is leftmost, no monitor to its left: no-op */
+	outputs_panel_handle_key(server, XKB_KEY_Left);
+	panel_boxes_by_name(server, &b1, &b2);
+	if (b1.x != 0 || b1.y != 0 ||
+			strstr(p->status, "left") == NULL) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL move-left edge: "
+			"H1(%d,%d) status '%s', want no-op + 'left'",
+			b1.x, b1.y, p->status);
+		return 0;
+	}
+	wlr_log(WLR_INFO, "outputs-panel-test: OK move-left (H1 -> 0x0, "
+		"leftmost edge no-op)");
+
+	/* rotation-aware reflow: rotate HEADLESS-2 to 90 (effective
+	 * 720x1280), then move it left of HEADLESS-1: the row is repacked
+	 * from its left edge by effective widths, H2 -> 0x0, H1 -> 720x0 */
+	outputs_panel_handle_key(server, XKB_KEY_Down);
+	outputs_panel_handle_key(server, XKB_KEY_r);
+	outputs_panel_handle_key(server, XKB_KEY_r);
+	panel_boxes_by_name(server, &b1, &b2);
+	if (b2.width != 720 || b2.height != 1280) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL reflow: H2 box "
+			"%dx%d, want 720x1280 after 90 rotation", b2.width, b2.height);
+		return 0;
+	}
+	outputs_panel_handle_key(server, XKB_KEY_Left);
+	n = outputs_sorted_by_x(server, outs, boxes, 16);
+	panel_boxes_by_name(server, &b1, &b2);
+	if (n != 2 || b2.x != 0 || b2.y != 0 || b1.x != 720 || b1.y != 0) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL reflow: n=%d "
+			"H1(%d,%d) H2(%d,%d), want H2(0,0) H1(720,0)",
+			n, b1.x, b1.y, b2.x, b2.y);
+		return 0;
+	}
+	if (p->selected != 0 || strcmp(p->entries[0].name, "HEADLESS-2") != 0) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL reflow: list order "
+			"not swapped (selected=%d, entry=%s)", p->selected,
+			p->entries[p->selected].name);
+		return 0;
+	}
+	wlr_log(WLR_INFO, "outputs-panel-test: OK reflow (rotated H2 left of "
+		"H1, row repacked by effective widths)");
+
+	/* the topbar follows the moved outputs and is resized for the
+	 * rotation: node at the box origin, buffer at the box width */
+	{
+		struct guibux_output *go;
+		wl_list_for_each(go, &server->outputs, link) {
+			if (go->wlr_output->name == NULL) {
+				continue;
+			}
+			struct wlr_box ob;
+			wlr_output_layout_get_box(server->output_layout,
+				go->wlr_output, &ob);
+			int s = go->wlr_output->scale > 1 ?
+				(int)go->wlr_output->scale : 1;
+			if (go->topbar_node != NULL &&
+					(go->topbar_node->node.x != ob.x ||
+					 go->topbar_node->node.y != ob.y)) {
+				wlr_log(WLR_ERROR, "outputs-panel-test: FAIL "
+					"topbar-follow: %s topbar at (%d,%d), box at (%d,%d)",
+					go->wlr_output->name, go->topbar_node->node.x,
+					go->topbar_node->node.y, ob.x, ob.y);
+				return 0;
+			}
+			if (go->topbar_buffer != NULL &&
+					go->topbar_buffer_w != ob.width * s) {
+				wlr_log(WLR_ERROR, "outputs-panel-test: FAIL "
+					"topbar-size: %s topbar buffer %dpx, box %dpx "
+					"(scale %d)", go->wlr_output->name,
+					go->topbar_buffer_w, ob.width, s);
+				return 0;
+			}
+			if (go->bg_node != NULL &&
+					(go->bg_node->node.x != ob.x ||
+					 go->bg_node->node.y != ob.y)) {
+				wlr_log(WLR_ERROR, "outputs-panel-test: FAIL bg-follow: "
+					"%s background at (%d,%d), box at (%d,%d)",
+					go->wlr_output->name, go->bg_node->node.x,
+					go->bg_node->node.y, ob.x, ob.y);
+				return 0;
+			}
+		}
+	}
+	wlr_log(WLR_INFO, "outputs-panel-test: OK topbar (follows moves, "
+		"resized for rotation)");
+
+	/* m: cycle the mode. Headless outputs have an empty mode list, so
+	 * the panel must handle it gracefully: no crash, panel stays active */
+	outputs_panel_handle_key(server, XKB_KEY_m);
+	if (!p->active) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL mode: panel closed");
+		return 0;
+	}
+	wlr_log(WLR_INFO, "outputs-panel-test: OK mode (cycled, status '%s')",
+		p->status);
+
+	/* mode round-trip: seed a WxH section into the config, re-open the
+	 * panel, and verify the section survives an edit */
+	FILE *f = fopen(server->config_path, "w");
+	if (f == NULL) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL mode: cannot write "
+			"config");
+		return 0;
+	}
+	fprintf(f, "outputs = HEADLESS-1@0x0:1920x1080,HEADLESS-2@1280x0\n");
+	fclose(f);
+	outputs_panel_hide(server);
+	outputs_panel_show(server);
+	if (!p->active || p->num_entries != 2) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL mode: re-show "
+			"(active=%d, entries=%d)", p->active, p->num_entries);
+		return 0;
+	}
+	if (p->entries[0].mode_w != 1920 || p->entries[0].mode_h != 1080) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL mode: WxH section "
+			"not parsed (%dx%d)", p->entries[0].mode_w,
+			p->entries[0].mode_h);
+		return 0;
+	}
+	/* r: transform -1 -> normal: the commit must keep the mode section */
+	outputs_panel_handle_key(server, XKB_KEY_r);
+	char spec[2048];
+	if (!outputs_config_read(server->config_path, spec, sizeof(spec)) ||
+			strstr(spec, "HEADLESS-1@0x0:1920x1080:normal") == NULL) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL mode: section lost "
+			"on edit ('%s')", spec);
+		return 0;
+	}
+	/* r: -> 90, live transform follows */
+	outputs_panel_handle_key(server, XKB_KEY_r);
+	if (!outputs_config_read(server->config_path, spec, sizeof(spec)) ||
+			strstr(spec, "HEADLESS-1@0x0:1920x1080:90") == NULL) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL transform: config "
+			"lacks 1920x1080:90 ('%s')", spec);
+		return 0;
+	}
+	struct wlr_output *w1 = NULL;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->wlr_output->name != NULL &&
+				strcmp(o->wlr_output->name, "HEADLESS-1") == 0) {
+			w1 = o->wlr_output;
+		}
+	}
+	if (w1 == NULL || (int)w1->transform != 1) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL transform: "
+			"HEADLESS-1 transform=%d, want 1 (90)",
+			w1 != NULL ? (int)w1->transform : -1);
+		return 0;
+	}
+	wlr_log(WLR_INFO, "outputs-panel-test: OK mode+transform (section "
+		"kept, 90 applied)");
+
+	/* d: disable HEADLESS-1: one live output left, config has @off */
+	outputs_panel_handle_key(server, XKB_KEY_d);
+	n = outputs_sorted_by_x(server, outs, boxes, 16);
+	if (n != 1 || outs[0]->name == NULL ||
+			strcmp(outs[0]->name, "HEADLESS-2") != 0) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL disable: n=%d "
+			"first=%s, want 1 (HEADLESS-2)",
+			n, n > 0 && outs[0]->name != NULL ? outs[0]->name : "(none)");
+		return 0;
+	}
+	if (!outputs_config_read(server->config_path, spec, sizeof(spec)) ||
+			strstr(spec, "HEADLESS-1@off") == NULL) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL disable: config "
+			"lacks HEADLESS-1@off ('%s')", spec);
+		return 0;
+	}
+	wlr_log(WLR_INFO, "outputs-panel-test: OK disable (@off persisted)");
+
+	/* Down: selection moves to HEADLESS-2; Escape: close */
+	outputs_panel_handle_key(server, XKB_KEY_Down);
+	if (p->selected != 1) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL select: "
+			"selected=%d, want 1", p->selected);
+		return 0;
+	}
+	outputs_panel_handle_key(server, XKB_KEY_Escape);
+	if (p->active) {
+		wlr_log(WLR_ERROR, "outputs-panel-test: FAIL close (still active)");
+		return 0;
+	}
+	wlr_log(WLR_INFO, "outputs-panel-test: OK (show, move, mode, "
+		"transform, disable, close)");
+	return 0;
+}

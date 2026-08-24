@@ -148,6 +148,15 @@ run list >/dev/null 2>&1; rc=$?
 run set HEADLESS-1 0 0 --no-apply >/dev/null
 expect_line "save without state" "HEADLESS-1@0x0"
 
+# no state file + rotated configured mode: the next position must use the
+# rotation-aware mode width (1920x1080 rotated 90 is 1080 wide), not 1920
+cat >"$cfg" <<EOF
+outputs = HEADLESS-1@0x0:1920x1080:90
+EOF
+out=$(run enable HEADLESS-2 --no-apply 2>&1)
+expect_grep "enable rotated extends" "placing at 1080x0" "$out"
+expect_line "enable rotated" "HEADLESS-1@0x0:1920x1080:90,HEADLESS-2@1080x0"
+
 # apply with pid=0: no signal, friendly message, rc 0
 out=$(run apply 2>&1); rc=$?
 [ $rc -eq 0 ] || fail_msg "apply no pid rc $rc != 0"

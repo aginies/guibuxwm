@@ -20,11 +20,12 @@ effect_c_args = get_option('effects') ? ['-DGUIBUX_EFFECTS=1'] : ['-DGUIBUX_EFFE
 executable('guibuxwm',
   ['src/main.c', 'src/guibuxwm.h', 'src/output.c', 'src/toplevel.c',
     'src/window-layout.c', 'src/topbar.c', 'src/launcher.c', 'src/switcher.c',
-    'src/overview.c', 'src/help.c',
+    'src/overview.c', 'src/help.c', 'src/outputs-panel.c',
     'src/keyboard.c',
     'src/config.c', 'src/cursor.c', 'src/popup.c', 'tests/wm-test.c',
     'src/sysinfo.c', 'src/background.c', 'src/screensaver.c', 'src/notify.c',
-    'src/tooltip.c', 'src/effects.c', 'src/window-restore.c'],
+    'src/tooltip.c', 'src/effects.c', 'src/window-restore.c',
+    'src/outputs-config.c', 'src/outputs-config.h'],
   c_args: ['-DWLR_USE_UNSTABLE', '-Wno-unused-parameter'] + effect_c_args,
   include_directories: include_directories('src'),
   dependencies: [wlroots_dep, wayland_dep, xkbcommon_dep, freetype_dep, cairo_dep, dbus_dep, threads_dep],
@@ -34,7 +35,8 @@ executable('guibuxwm',
 # standalone monitor layout tool: edits the config `outputs` line and
 # signals the running compositor (SIGUSR1) to re-apply it
 executable('guibuxwm-output',
-  ['tools/guibuxwm-output.c'],
+  ['tools/guibuxwm-output.c', 'src/outputs-config.c', 'src/outputs-config.h'],
+  include_directories: include_directories('src'),
   install: true,
 )
 

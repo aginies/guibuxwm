@@ -33,16 +33,10 @@
 #include <strings.h>
 #include <unistd.h>
 
+#include "outputs-config.h"
+
 #define MAX_ENTRIES 16
 #define MAX_MODES 512
-
-struct entry {
-	char name[64];
-	int x, y;
-	int mode_w, mode_h;
-	int transform;  /* -1 = unset, else WL_OUTPUT_TRANSFORM_* (0..3) */
-	bool disabled;
-};
 
 struct state_output {
 	char name[64];
@@ -157,241 +151,6 @@ static int read_state(const char *path, int *pid, struct state_output *outs,
 	return n;
 }
 
-static const char *transform_name(int t) {
-	switch (t) {
-	case 1: return "90";
-	case 2: return "180";
-	case 3: return "270";
-	case 4: return "flipped";
-	case 5: return "90 flipped";
-	case 6: return "180 flipped";
-	default: return "normal";
-	}
-}
-
-static int transform_from_name(const char *s) {
-	if (!strcmp(s, "normal")) return 0;
-	if (!strcmp(s, "90")) return 1;
-	if (!strcmp(s, "180")) return 2;
-	if (!strcmp(s, "270")) return 3;
-	return -1;
-}
-
-/* spec: NAME@XxY[:WxH[:ROT]],NAME@off,... into entries */
-static int spec_parse(const char *spec, struct entry *arr, int cap, int *num) {
-	*num = 0;
-	if (spec == NULL || spec[0] == '\0' || !strcmp(spec, "auto")) {
-		return 0;
-	}
-	char *copy = strdup(spec);
-	if (copy == NULL) {
-		die("out of memory");
-	}
-	char *save = NULL;
-	for (char *tok = strtok_r(copy, ",", &save); tok != NULL;
-			tok = strtok_r(NULL, ",", &save)) {
-		char *at = strchr(tok, '@');
-		if (at == NULL) {
-			fprintf(stderr, "guibuxwm-output: bad entry '%s' in config, "
-				"skipping\n", tok);
-			continue;
-		}
-		*at = '\0';
-		if (*tok == '\0' || strlen(tok) >= sizeof(arr[0].name)) {
-			fprintf(stderr, "guibuxwm-output: bad name in '%s', skipping\n",
-				tok);
-			continue;
-		}
-		char *pos = at + 1;
-		if (*num >= cap) {
-			die("too many outputs in config (max 16)");
-		}
-		struct entry *e = &arr[(*num)++];
-		snprintf(e->name, sizeof(e->name), "%s", tok);
-		e->x = 0;
-		e->y = 0;
-		e->mode_w = 0;
-		e->mode_h = 0;
-		e->transform = -1;
-		e->disabled = false;
-		if (strcasecmp(pos, "off") == 0) {
-			e->disabled = true;
-			continue;
-		}
-		if (sscanf(pos, "%dx%d", &e->x, &e->y) != 2) {
-			fprintf(stderr, "guibuxwm-output: bad position in '%s', "
-				"skipping\n", tok);
-			(*num)--;
-			continue;
-		}
-		char *sec = strchr(pos, ':');
-		while (sec != NULL) {
-			sec[0] = '\0';
-			sec++;
-			int w = 0, h = 0;
-			if (sscanf(sec, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
-				e->mode_w = w;
-				e->mode_h = h;
-			} else {
-				int t = transform_from_name(sec);
-				if (t < 0) {
-					fprintf(stderr, "guibuxwm-output: bad section '%s' "
-						"in config, ignoring rest\n", sec);
-					break;
-				}
-				e->transform = t;
-			}
-			sec = strchr(sec, ':');
-		}
-	}
-	free(copy);
-	return *num;
-}
-
-static void spec_format(const struct entry *arr, int num, char *buf, size_t n) {
-	buf[0] = '\0';
-	for (int i = 0; i < num; i++) {
-		const struct entry *e = &arr[i];
-		/* bounded copy: -Wformat-truncation false-positives on e->name
-		 * (tracks the whole entries array) */
-		char nm[64];
-		size_t nlen = strlen(e->name);
-		if (nlen >= sizeof(nm)) {
-			nlen = sizeof(nm) - 1;
-		}
-		memcpy(nm, e->name, nlen);
-		nm[nlen] = '\0';
-		char part[256];
-		if (e->disabled) {
-			snprintf(part, sizeof(part), "%s@off", nm);
-		} else {
-			int off = snprintf(part, sizeof(part), "%s@%dx%d", nm,
-				e->x, e->y);
-			if (e->mode_w > 0 && e->mode_h > 0) {
-				off += snprintf(part + off, sizeof(part) - off, ":%dx%d",
-					e->mode_w, e->mode_h);
-			}
-			if (e->transform >= 0) {
-				off += snprintf(part + off, sizeof(part) - off, ":%s",
-					transform_name(e->transform));
-			}
-		}
-		if (i > 0) {
-			strncat(buf, ",", n - strlen(buf) - 1);
-		}
-		strncat(buf, part, n - strlen(buf) - 1);
-	}
-}
-
-/* read the `outputs` value from the config; 1 = found */
-static int config_read_outputs(const char *path, char *buf, size_t n) {
-	FILE *f = fopen(path, "r");
-	if (f == NULL) {
-		return 0;
-	}
-	char line[1024];
-	int found = 0;
-	while (fgets(line, sizeof(line), f) != NULL) {
-		char *p = line;
-		while (*p == ' ' || *p == '\t') {
-			p++;
-		}
-		if (*p == '\0' || *p == '#' || *p == '\n') {
-			continue;
-		}
-		char *eq = strchr(p, '=');
-		if (eq == NULL) {
-			continue;
-		}
-		*eq = '\0';
-		char *key = p;
-		char *val = eq + 1;
-		char *end = key + strlen(key);
-		while (end > key && (end[-1] == ' ' || end[-1] == '\t')) {
-			*--end = '\0';
-		}
-		while (*val == ' ' || *val == '\t') {
-			val++;
-		}
-		end = val + strlen(val);
-		while (end > val && (end[-1] == ' ' || end[-1] == '\t' ||
-				end[-1] == '\n' || end[-1] == '\r')) {
-			*--end = '\0';
-		}
-		if (!strcmp(key, "outputs")) {
-			snprintf(buf, n, "%s", val);
-			found = 1;
-			break;
-		}
-	}
-	fclose(f);
-	return found;
-}
-
-/* replace the `outputs` line, or append it when absent */
-static void config_write_outputs(const char *path, const char *spec) {
-	FILE *f = fopen(path, "r");
-	char *old = NULL;
-	long size = 0;
-	if (f != NULL) {
-		fseek(f, 0, SEEK_END);
-		size = ftell(f);
-		fseek(f, 0, SEEK_SET);
-		old = malloc(size + 1);
-		if (old != NULL) {
-			size_t r = fread(old, 1, size, f);
-			old[r] = '\0';
-		}
-		fclose(f);
-	}
-	char *out = malloc(size + 4096);
-	if (out == NULL) {
-		free(old);
-		die("out of memory");
-	}
-	out[0] = '\0';
-	if (old != NULL) {
-		char *save = NULL;
-		for (char *line = strtok_r(old, "\n", &save); line != NULL;
-				line = strtok_r(NULL, "\n", &save)) {
-			char *p = line;
-			while (*p == ' ' || *p == '\t') {
-				p++;
-			}
-			char *eq = (*p == '#' || *p == '\0') ? NULL : strchr(p, '=');
-			int is_outputs = 0;
-			if (eq != NULL) {
-				/* compare without mutating the line: it is copied back
-				 * verbatim for every non-outputs line */
-				size_t klen = eq - p;
-				while (klen > 0 && (p[klen - 1] == ' ' ||
-						p[klen - 1] == '\t')) {
-					klen--;
-				}
-				is_outputs = (klen == strlen("outputs") &&
-					strncmp(p, "outputs", klen) == 0);
-			}
-			if (is_outputs) {
-				continue;
-			}
-			strncat(out, line, 4096 + size - strlen(out));
-			strncat(out, "\n", 4096 + size - strlen(out));
-		}
-	}
-	snprintf(out + strlen(out), 4096 + size - strlen(out),
-		"outputs = %s\n", spec);
-	FILE *w = fopen(path, "w");
-	if (w == NULL) {
-		free(old);
-		free(out);
-		die("cannot write config");
-	}
-	fputs(out, w);
-	fclose(w);
-	free(old);
-	free(out);
-}
-
 static struct state_output *state_find(const struct state_output *outs,
 		int n, const char *name) {
 	for (int i = 0; i < n; i++) {
@@ -404,7 +163,7 @@ static struct state_output *state_find(const struct state_output *outs,
 
 /* true when another enabled entry sits at the same position: two outputs
  * at one XxY mirror the screen instead of extending it */
-static bool position_taken(const struct entry *arr, int num,
+static bool position_taken(const struct guibux_output_entry *arr, int num,
 		const char *name, int x, int y) {
 	for (int i = 0; i < num; i++) {
 		if (arr[i].disabled || !strcmp(arr[i].name, name)) {
@@ -417,9 +176,28 @@ static bool position_taken(const struct entry *arr, int num,
 	return false;
 }
 
+/* effective width of an entry: the live box width from the state file
+ * (rotation already applied), else the configured mode (width and height
+ * swapped for 90/270 rotations), else 1920 */
+static int entry_width(const struct guibux_output_entry *e,
+		const struct state_output *outs, int nouts) {
+	const struct state_output *so = state_find(outs, nouts, e->name);
+	if (so != NULL && so->w > 0) {
+		return so->w;
+	}
+	if (e->mode_w > 0 && e->mode_h > 0) {
+		if (e->transform == 1 || e->transform == 3) {
+			return e->mode_h;
+		}
+		return e->mode_w;
+	}
+	return 1920;
+}
+
 /* first free slot right of every enabled entry except name: extends the
- * row instead of mirroring; width from the state file, 1920 when unknown */
-static void position_next(const struct entry *arr, int num,
+ * row instead of mirroring; widths from the state file (rotation-aware),
+ * falling back to the configured mode, then 1920 */
+static void position_next(const struct guibux_output_entry *arr, int num,
 		const char *name, const struct state_output *outs, int nouts,
 		int *x, int *y) {
 	int right = 0;
@@ -427,12 +205,7 @@ static void position_next(const struct entry *arr, int num,
 		if (arr[i].disabled || !strcmp(arr[i].name, name)) {
 			continue;
 		}
-		int w = 1920;
-		const struct state_output *so = state_find(outs, nouts,
-			arr[i].name);
-		if (so != NULL && so->w > 0) {
-			w = so->w;
-		}
+		int w = entry_width(&arr[i], outs, nouts);
 		if (arr[i].x + w > right) {
 			right = arr[i].x + w;
 		}
@@ -475,27 +248,30 @@ static int send_apply(int pid) {
 }
 
 /* load the current config entries; returns the config spec string owner */
-static int load_entries(const char *config, struct entry *arr, int *num,
-		char *spec_buf, size_t spec_n) {
-	if (!config_read_outputs(config, spec_buf, spec_n)) {
+static int load_entries(const char *config, struct guibux_output_entry *arr,
+		int *num, char *spec_buf, size_t spec_n) {
+	if (!outputs_config_read(config, spec_buf, spec_n)) {
 		spec_buf[0] = '\0';
 		*num = 0;
 		return 0;
 	}
-	return spec_parse(spec_buf, arr, MAX_ENTRIES, num);
+	if (outputs_spec_parse(spec_buf, arr, OUTPUTS_CONFIG_MAX_ENTRIES, num) < 0) {
+		die("bad outputs spec in config");
+	}
+	return *num;
 }
 
-static struct entry *entry_upsert(struct entry *arr, int *num,
-		const char *name) {
+static struct guibux_output_entry *entry_upsert(struct guibux_output_entry *arr,
+		int *num, const char *name) {
 	for (int i = 0; i < *num; i++) {
 		if (!strcmp(arr[i].name, name)) {
 			return &arr[i];
 		}
 	}
-	if (*num >= MAX_ENTRIES) {
+	if (*num >= OUTPUTS_CONFIG_MAX_ENTRIES) {
 		die("too many outputs (max 16)");
 	}
-	struct entry *e = &arr[(*num)++];
+	struct guibux_output_entry *e = &arr[(*num)++];
 	snprintf(e->name, sizeof(e->name), "%s", name);
 	e->x = 0;
 	e->y = 0;
@@ -530,7 +306,7 @@ int main(int argc, char *argv[]) {
 			}
 		} else if (!strcmp(argv[j], "--transform")) {
 			if (j + 1 >= argc ||
-					(transform = transform_from_name(argv[++j])) < 0) {
+					(transform = outputs_transform_from_name(argv[++j])) < 0) {
 				fprintf(stderr,
 					"guibuxwm-output: bad --transform (expected normal|90|180|270)\n");
 				return 1;
@@ -573,7 +349,7 @@ int main(int argc, char *argv[]) {
 				snprintf(mode, sizeof(mode), "%dx%d", o->mode_w, o->mode_h);
 			}
 			printf("%-16s %-12s %-12s %-10s %-5s\n",
-				o->name, pos, mode, transform_name(o->transform),
+				o->name, pos, mode, outputs_transform_name(o->transform),
 				o->enabled ? "on" : "off");
 		}
 		printf("\nAvailable modes:\n");
@@ -606,10 +382,10 @@ int main(int argc, char *argv[]) {
 		config = cfg_buf;
 	}
 	char spec_buf[2048];
-	struct entry entries[MAX_ENTRIES];
+	struct guibux_output_entry entries[OUTPUTS_CONFIG_MAX_ENTRIES];
 	int num = 0;
 	load_entries(config, entries, &num, spec_buf, sizeof(spec_buf));
-	struct entry *e = entry_upsert(entries, &num, name);
+	struct guibux_output_entry *e = entry_upsert(entries, &num, name);
 
 	if (!strcmp(cmd, "set")) {
 		if (npos < 4) {
@@ -688,8 +464,10 @@ int main(int argc, char *argv[]) {
 	}
 
 	char spec[2048];
-	spec_format(entries, num, spec, sizeof(spec));
-	config_write_outputs(config, spec);
+	outputs_spec_format(entries, num, spec, sizeof(spec));
+	if (outputs_config_write(config, spec) != 0) {
+		die("cannot write config");
+	}
 	printf("guibuxwm-output: saved to %s: %s\n", config, spec);
 	if (!no_apply) {
 		return send_apply(pid);

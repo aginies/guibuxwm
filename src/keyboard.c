@@ -431,6 +431,13 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 	case GUIBUX_ACT_OUTPUTS_APPLY:
 		outputs_apply(server);
 		break;
+	case GUIBUX_ACT_OUTPUTS_PANEL:
+		if (server->outputs_panel.active) {
+			outputs_panel_hide(server);
+		} else {
+			outputs_panel_show(server);
+		}
+		break;
 	}
 }
 
@@ -497,6 +504,8 @@ void keybinds_defaults(struct guibux_server *server) {
 		GUIBUX_ACT_QUIT, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_h,
 		GUIBUX_ACT_SHOW_HELP, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_m,
+		GUIBUX_ACT_OUTPUTS_PANEL, 0);
 }
 
 bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
@@ -592,6 +601,8 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 				handled = help_handle_key(server, syms[i]);
 			} else if (server->notify_panel.active) {
 				handled = notify_panel_handle_key(server, syms[i]);
+			} else if (server->outputs_panel.active) {
+				handled = outputs_panel_handle_key(server, syms[i]);
 			} else if (repeat) {
 				break;
 			} else if (syms[i] == XKB_KEY_F12) {

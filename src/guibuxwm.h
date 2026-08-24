@@ -31,6 +31,8 @@
 #include <wlr/xwayland.h>
 #endif
 
+#include "outputs-config.h"
+
 #define CASCADE_STEP 40
 #define CASCADE_MAX 6
 #define MAX_OUTPUT_PLACEMENTS 8
@@ -160,6 +162,7 @@ enum guibux_action {
 	GUIBUX_ACT_BRIGHTNESS_UP,
 	GUIBUX_ACT_BRIGHTNESS_DOWN,
 	GUIBUX_ACT_OUTPUTS_APPLY,
+	GUIBUX_ACT_OUTPUTS_PANEL,
 };
 
 struct guibux_keybind {
@@ -480,6 +483,18 @@ struct guibux_help {
 	int num_lines;
 };
 
+struct guibux_outputs_panel {
+	bool active;
+	struct wlr_output *output;
+	struct wlr_scene_buffer *scene_node;
+	struct wlr_buffer *buffer;
+	int box_w, box_h, box_scale;
+	struct guibux_output_entry entries[OUTPUTS_CONFIG_MAX_ENTRIES];
+	int num_entries;
+	int selected;
+	char status[160];
+};
+
 struct guibux_launcher {
 	bool active;
 	char text[512];
@@ -587,6 +602,7 @@ struct guibux_server {
 	struct wl_event_source *altdrag_test_timer;
 	struct wl_event_source *workspace_test_timer;
 	struct wl_event_source *outputs_test_timer;
+	struct wl_event_source *outputs_panel_test_timer;
 	struct wl_event_source *keybind_test_timer;
 	struct wl_event_source *overview_test_timer;
 	struct wl_event_source *psel_test_timer;
@@ -601,6 +617,7 @@ struct guibux_launcher launcher;
 	struct guibux_switcher switcher;
 	struct guibux_overview overview;
 	struct guibux_help help;
+	struct guibux_outputs_panel outputs_panel;
 	struct guibux_notify notify;
 	struct guibux_notif_panel notify_panel;
 	struct guibux_tooltip tooltip;
@@ -851,6 +868,11 @@ void help_show(struct guibux_server *server);
 void help_hide(struct guibux_server *server);
 bool help_handle_key(struct guibux_server *server, xkb_keysym_t sym);
 
+/* outputs-panel.c */
+void outputs_panel_show(struct guibux_server *server);
+void outputs_panel_hide(struct guibux_server *server);
+bool outputs_panel_handle_key(struct guibux_server *server, xkb_keysym_t sym);
+
 /* keyboard.c */
 void server_new_input(struct wl_listener *listener, void *data);
 void server_new_keyboard(struct guibux_server *server, struct wlr_input_device *device);
@@ -923,6 +945,7 @@ void end_seat_grabs(struct guibux_server *server);
 void test_seat_add_keyboard(struct guibux_server *server);
 int workspace_test_run(void *data);
 int outputs_test_run(void *data);
+int outputs_panel_test_run(void *data);
 int tile_test_run(void *data);
 int overview_test_run(void *data);
 int keybind_test_run(void *data);

@@ -285,6 +285,9 @@ void output_frame(struct wl_listener *listener, void *data) {
 			 output->topbar_buffer_h != server->topbar_height * scale)) {
 		output->topbar_dirty = true;
 	}
+	if (output->topbar_dirty) {
+		topbar_render(output);
+	}
 
 	/* advance animations before the commit renders the frame */
 	effects_tick(server);
@@ -421,6 +424,9 @@ void output_destroy(struct wl_listener *listener, void *data) {
 	}
 	if (server->launcher.output == output->wlr_output) {
 		launcher_hide(server);
+	}
+	if (server->outputs_panel.output == output->wlr_output) {
+		outputs_panel_hide(server);
 	}
 	if (server->help.output == output->wlr_output) {
 		help_hide(server);
@@ -619,6 +625,38 @@ static void output_apply_placement(struct guibux_server *server,
 	}
 }
 
+/* the topbar and background nodes are children of the root scene tree in
+ * global coordinates: they do not follow the output when the layout moves
+ * or resizes it. Sync their position, re-render the background at the new
+ * size, and resize the topbar buffer when stale */
+static void output_sync_overlays(struct guibux_output *o) {
+	struct guibux_server *server = o->server;
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+	if (o->topbar_node != NULL &&
+			(o->topbar_node->node.x != box.x ||
+			 o->topbar_node->node.y != box.y)) {
+		wlr_scene_node_set_position(&o->topbar_node->node, box.x, box.y);
+	}
+	if (o->bg_node != NULL) {
+		if (o->bg_node->node.x != box.x || o->bg_node->node.y != box.y) {
+			wlr_scene_node_set_position(&o->bg_node->node, box.x, box.y);
+		}
+		if (o->bg_w != box.width || o->bg_h != box.height) {
+			background_render(o);
+		}
+	}
+	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+	if (o->topbar_buffer != NULL &&
+			(o->topbar_buffer_w != box.width * scale ||
+			 o->topbar_buffer_h != server->topbar_height * scale)) {
+		o->topbar_dirty = true;
+	}
+	if (o->topbar_dirty) {
+		topbar_render(o);
+	}
+}
+
 void outputs_apply(struct guibux_server *server) {
 	/* the config file wins when it has an `outputs` line (the tool edits
 	 * it live); otherwise fall back to the spec used at startup */
@@ -649,12 +687,17 @@ void outputs_apply(struct guibux_server *server) {
 		}
 		output_apply_placement(server, o, p);
 	}
-	/* geometry may have changed: re-pack tiled windows */
+	/* geometry may have changed: re-pack tiled windows, sync the
+	 * topbar/background overlay nodes with the new boxes, and renumber
+	 * the topbars (the A/B/C letters follow the x order) */
 	wl_list_for_each(o, &server->outputs, link) {
-		if (!o->disabled) {
-			retile_output(o);
+		if (o->disabled) {
+			continue;
 		}
+		retile_output(o);
+		output_sync_overlays(o);
 	}
+	topbar_renumber(server);
 	outputs_state_write(server);
 }
 
