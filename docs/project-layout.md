@@ -11,6 +11,7 @@ src/output.c     output lifecycle, background/topbar creation
 src/topbar.c     per-monitor topbar rendering
 src/toplevel.c   xdg-shell toplevel handling
 src/window-layout.c  tiling, workspaces, snap
+src/window-restore.c remember/restore window positions (state file)
 src/launcher.c   command box
 src/keyboard.c   key handling, keybinds, volume, session env
 src/config.c     config file parsing
@@ -68,6 +69,25 @@ Window layout management:
 - **Workspaces**: 4 workspaces per monitor, visibility tracking
 - **Snap**: half-screen snap to left/right/top/bottom
 - **Repack**: re-arrange windows after close/fullscreen changes
+
+## src/window-restore.c
+
+Window position restore (config `restore_positions`): remembers each app's
+last monitor, workspace, position and size in a plain text state file at
+`$XDG_STATE_HOME/guibuxwm/window-positions` (or
+`~/.local/state/guibuxwm/window-positions`). One line per app:
+`app_id|output|box_x|box_y|workspace|x|y|w|h`.
+
+- saved when a window closes and on a clean compositor exit
+  (`restore_save_all`, before the clients are destroyed)
+- restored on map: the window goes back to its saved monitor/workspace
+  (tile mode: placed by the tile layout instead)
+- the monitor must exist at the same layout box (`box_x`/`box_y`): a
+  same-name monitor at a different position is a replugged physical
+  monitor and gets normal placement; so do missing monitors and
+  off-screen positions
+- the terminal app id is excluded; legacy 7-field lines (without the box)
+  still load, with the monitor identity check disabled
 
 ## src/launcher.c
 
@@ -165,6 +185,7 @@ Uses ease-out cubic easing. Configurable duration via `effects_duration_ms`.
 - `tile-test` — maps 3 toplevels, verifies tile mode layouts and re-packing
 - `effects-test` — verifies window close retile + open scale-in animations
 - `psel-test` — primary selection test
+- `restore-test` — maps a toplevel, used by the window position restore test
 - `run-all.sh` — runs all tests
 - `run-ws-test.sh` — workspace state machine test
 - `run-tile-test.sh` — tiling test
@@ -180,6 +201,7 @@ Uses ease-out cubic easing. Configurable duration via `effects_duration_ms`.
 - `run-resize-test.sh` — window resize
 - `run-overview-test.sh` — F12 overview
 - `run-xwayland-test.sh` — XWayland support
+- `run-restore-test.sh` — window position restore (save, restore, clean exit, replugged monitor, missing monitor)
 - `xdg-shell-protocol.c/h` — xdg-shell client protocol
 - `primary-selection-client-protocol.c/h` — primary selection protocol
 - `meson.build` — test client build rules

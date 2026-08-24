@@ -40,6 +40,9 @@ Derived from [tinywl](https://github.com/swaywm/wlroots/tree/master/tinywl).
 - **Multi-monitor support:** new windows open under the mouse cursor, move
   windows between monitors, optional manual monitor arrangement
 - **Cascading window placement**
+- **Window position restore:** each app's last monitor, workspace,
+  position and size are remembered and restored on the next launch
+  (state file under `XDG_STATE_HOME`, terminal excluded)
 - **Session environment:** sets `XDG_SESSION_TYPE` / `XDG_CURRENT_DESKTOP`
   for spawned apps, imports `DISPLAY` / `WAYLAND_DISPLAY` into the systemd
   user manager (restarting xdg-desktop-portal), so clicking a URL in an
@@ -354,6 +357,34 @@ from the log, or use `xrandr --query | grep connected` (X11/XWayland) or
 - **Fullscreen** fills the monitor the window is on. A client that requests
   fullscreen on a specific monitor (e.g. some terminals) is honored.
 
+### Window position restore
+
+With `restore_positions` (default `true`), each app's last monitor,
+workspace, position and size are remembered and restored on the next
+launch. The terminal is excluded.
+
+The state is a plain text file, one line per app:
+
+```
+app_id|output|box_x|box_y|workspace|x|y|w|h
+```
+
+- **Location:** `$XDG_STATE_HOME/guibuxwm/window-positions`, or
+  `~/.local/state/guibuxwm/window-positions` when `XDG_STATE_HOME` is
+  unset. Delete the file to forget all positions.
+- `app_id`: the Wayland app id (X11: WM_CLASS instance)
+- `output`: monitor name; `box_x`/`box_y`: that monitor's position in the
+  virtual layout
+- `workspace`: 1–4; `x`/`y`/`w`/`h`: window geometry (layout coordinates)
+
+Positions are saved when a window closes and again on a clean compositor
+exit (for every still-mapped window). On launch, a window is restored only
+if its saved monitor exists at the same layout position: a monitor that
+reappears under the same name but at a different position is a different
+(replugged) physical monitor, and the window is placed normally instead.
+A missing monitor or an off-screen saved position also falls back to
+normal cascading placement.
+
 ## Testing
 
 Tests live in `tests/` and run headless (no real display). Each is a
@@ -384,6 +415,7 @@ tests/run-psel-test.sh           # primary selection
 tests/run-resize-test.sh         # window resize
 tests/run-overview-test.sh       # F12 overview
 tests/run-xwayland-test.sh       # XWayland support
+tests/run-restore-test.sh        # window position restore (save, restore, clean exit, replugged monitor)
 ```
 
 The compositor can also be run headless directly for smoke testing:

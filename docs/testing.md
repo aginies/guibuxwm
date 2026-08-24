@@ -30,6 +30,7 @@ tests/run-psel-test.sh           # primary selection
 tests/run-resize-test.sh         # window resize
 tests/run-overview-test.sh       # F12 overview
 tests/run-xwayland-test.sh       # XWayland support
+tests/run-restore-test.sh        # window position restore (save, restore, clean exit, replugged monitor)
 ```
 
 ## Headless mode
@@ -158,12 +159,24 @@ needed.
 tests/run-notify-test.sh
 ```
 
+## GUIBUX_TEST_QUIT
+
+`GUIBUX_TEST_QUIT=<ms>` terminates the compositor after `<ms>` (default
+2000) — the same clean exit as the quit keybind. Used by the restore test
+to verify that still-mapped windows are saved on a clean exit:
+
+```sh
+GUIBUX_TEST_QUIT=3000 WLR_RENDERER=gles2 ./build/guibuxwm
+```
+
 ## Test clients
 
 Test clients are built by the main build and live in `tests/`:
 
 - `ws-test` — maps 2 toplevels, used by the workspace state machine test
 - `tile-test` — maps 3 toplevels, verifies tile mode layouts and re-packing
+- `restore-test` — maps a toplevel with a fixed app id; `keep` mode stays
+  mapped so the compositor exits first (clean-exit save)
 
 ## Summary of env vars
 
@@ -177,6 +190,7 @@ Test clients are built by the main build and live in `tests/`:
 | `GUIBUX_TEST_WORKSPACES=N` | Exercise workspace state machine (default 2) |
 | `GUIBUX_TEST_KEYBIND="key"` | Verify a custom keybind opens the launcher |
 | `GUIBUX_TEST_NOTIFY=1` | Verify notifications (D-Bus, auto-show, auto-hide, panel) |
+| `GUIBUX_TEST_QUIT=<ms>` | Terminate the compositor after `<ms>` (clean exit, same as the quit keybind) |
 | `GUIBUX_TEST_SCROLL=1` | Scroll over VOL/MIC indicators in the topbar |
 | `GUIBUX_TEST_ALTDRAG=1` | Alt+drag window move |
 | `GUIBUX_TEST_PRIMARY_SELECTION=1` | Primary selection (middle-click paste) |

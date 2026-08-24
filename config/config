@@ -123,7 +123,8 @@ effects_duration_ms = 300
 window_open_effect = scale
 
 # remember each app's last monitor/workspace/position/size and restore
-# it on the next launch (default: true); the terminal is excluded
+# it on the next launch (default: true); the terminal is excluded.
+# state file: $XDG_STATE_HOME/guibuxwm/window-positions
 restore_positions = true
 
 # notification panel animation: slide, none (default: slide)

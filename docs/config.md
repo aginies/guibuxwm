@@ -430,6 +430,32 @@ window_open_effect = slide
 
 ---
 
+### `restore_positions`
+
+Remember each app's last monitor, workspace, position and size and restore
+them on the next launch. The terminal is excluded.
+
+The state is a plain text file, one line per app
+(`app_id|output|box_x|box_y|workspace|x|y|w|h`), stored at
+`$XDG_STATE_HOME/guibuxwm/window-positions` (or
+`~/.local/state/guibuxwm/window-positions` when `XDG_STATE_HOME` is unset).
+`box_x`/`box_y` is the monitor's position in the virtual layout: a monitor
+that reappears under the same name but at a different position is treated
+as a different (replugged) physical monitor and does not receive the
+restored window. Positions are saved when a window closes and on a clean
+compositor exit; a missing monitor or an off-screen position falls back to
+normal cascading placement.
+
+**Default:** `true`
+
+**Example:**
+
+```
+restore_positions = false
+```
+
+---
+
 ### `notify_effect`
 
 Notification panel animation: `slide` (panel slides in from the right edge)
