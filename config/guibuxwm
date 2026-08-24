@@ -139,3 +139,8 @@ restore_positions = true
 
 # notification panel animation: slide, none (default: slide)
 notify_effect = slide
+
+# monitor arrangement (default: auto-arrange; wins over GUIBUX_OUTPUTS)
+# entry: NAME@XxY[:WxH[:ROT]] or NAME@off; edited live by the
+# guibuxwm-output tool (see docs/multi-monitor.md)
+#outputs = DP-1@0x0,HDMI-A-1@1920x0

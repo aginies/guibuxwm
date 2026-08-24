@@ -4,7 +4,7 @@
 # Every line mirrors the built-in default; change what you want.
 # A keybind with the same modifiers+key as a default replaces it.
 
-# terminal command started at launch (and by Mod+Return)
+# terminal command started by Mod+Return
 term = gnome-terminal
 
 # preferred apps shown above the command box (Mod+e) prompt, up to 5.
@@ -33,7 +33,9 @@ xkb_layout = fr
 #          quit, workspace:N, move-workspace:N,
 #          move-monitor-left, move-monitor-right,
 #          snap-left, snap-right, snap-top, snap-bottom,
-#          switch-ws-left, switch-ws-right
+#          switch-ws-left, switch-ws-right,
+#          volume-up, volume-down, mute, mic-up, mic-down, mic-mute,
+#          brightness-up, brightness-down
 keybind = Mod+Return: terminal
 keybind = Mod+q: close
 keybind = Mod+f: fullscreen
@@ -61,6 +63,17 @@ keybind = Mod+Alt+Escape: quit
 keybind = Ctrl+Alt+Left: switch-ws-left
 keybind = Ctrl+Alt+Right: switch-ws-right
 keybind = Mod+h: show-help
+
+# audio (media keys XF86AudioRaiseVolume/LowerVolume/Mute/MicMute also
+# work without any binding; topbar: scroll adjusts, left click mutes,
+# right click opens pavucontrol)
+#keybind = Mod+m: mute
+#keybind = Mod+Shift+m: mic-mute
+
+# brightness (hardware keys XF86MonBrightnessUp/Down also work without
+# any binding)
+#keybind = Mod+Prior: brightness-up
+#keybind = Mod+Next: brightness-down
 
 # colors (#rrggbb)
 color_bg = #1e1e2e
@@ -129,4 +142,9 @@ restore_positions = true
 
 # notification panel animation: slide, none (default: slide)
 notify_effect = slide
+
+# monitor arrangement (default: auto-arrange; wins over GUIBUX_OUTPUTS)
+# entry: NAME@XxY[:WxH[:ROT]] or NAME@off; edited live by the
+# guibuxwm-output tool (see docs/multi-monitor.md)
+#outputs = DP-1@0x0,HDMI-A-1@1920x0
 

@@ -143,6 +143,8 @@ bool parse_keybind(struct guibux_server *server, const char *value) {
 		action = GUIBUX_ACT_BRIGHTNESS_UP;
 	} else if (!strcmp(action_str, "brightness-down")) {
 		action = GUIBUX_ACT_BRIGHTNESS_DOWN;
+	} else if (!strcmp(action_str, "outputs-apply")) {
+		action = GUIBUX_ACT_OUTPUTS_APPLY;
 	} else {
 		wlr_log(WLR_ERROR, "config: bad keybind '%s' (unknown action '%s')",
 			value, action_str);
@@ -450,7 +452,55 @@ void load_config(struct guibux_server *server, const char *path) {
 	fclose(f);
 }
 
-void parse_output_placements(struct guibux_server *server, const char *spec) {
+/* Re-read just the `outputs` value from a config file (live re-apply:
+ * the guibuxwm-output tool edits the file while the compositor runs).
+ * Returns a malloc'd string, or NULL when the file or key is missing. */
+char *config_read_outputs_line(const char *path) {
+	FILE *f = fopen(path, "r");
+	if (f == NULL) {
+		return NULL;
+	}
+	char line[512];
+	char *result = NULL;
+	while (fgets(line, sizeof(line), f) != NULL) {
+		char *p = line;
+		while (*p == ' ' || *p == '\t') {
+			p++;
+		}
+		if (*p == '\0' || *p == '#' || *p == '\n') {
+			continue;
+		}
+		char *eq = strchr(p, '=');
+		if (eq == NULL) {
+			continue;
+		}
+		*eq = '\0';
+		char *key = p;
+		char *val = eq + 1;
+		char *end = key + strlen(key);
+		while (end > key && (end[-1] == ' ' || end[-1] == '\t')) {
+			*--end = '\0';
+		}
+		while (*val == ' ' || *val == '\t') {
+			val++;
+		}
+		end = val + strlen(val);
+		while (end > val && (end[-1] == ' ' || end[-1] == '\t' ||
+				end[-1] == '\n' || end[-1] == '\r')) {
+			*--end = '\0';
+		}
+		if (!strcmp(key, "outputs")) {
+			result = strdup(val);
+			break;
+		}
+	}
+	fclose(f);
+	return result;
+}
+
+void parse_output_placements_to(struct output_placement *arr, int cap,
+		const char *spec, int *num) {
+	*num = 0;
 	if (spec == NULL || spec[0] == '\0' || !strcmp(spec, "auto")) {
 		return;
 	}
@@ -463,7 +513,7 @@ void parse_output_placements(struct guibux_server *server, const char *spec) {
 			tok = strtok_r(NULL, ",", &save)) {
 		char *at = strchr(tok, '@');
 		if (at == NULL) {
-			wlr_log(WLR_ERROR, "outputs: bad entry '%s' (expected NAME@XxY[:ROT] or NAME@off)", tok);
+			wlr_log(WLR_ERROR, "outputs: bad entry '%s' (expected NAME@XxY[:WxH[:ROT]] or NAME@off)", tok);
 			continue;
 		}
 		*at = '\0';
@@ -474,46 +524,65 @@ void parse_output_placements(struct guibux_server *server, const char *spec) {
 			wlr_log(WLR_ERROR, "outputs: bad position in '%s'", tok);
 			continue;
 		}
+		/* sections after the position: WxH (mode) and normal|90|180|270
+		 * (rotation), in that order */
 		int transform = -1;
-		char *rot = strchr(pos, ':');
-		if (rot != NULL) {
-			rot[0] = '\0';
-			rot++;
-			if (!strcmp(rot, "normal")) {
+		int mode_w = 0, mode_h = 0;
+		bool bad = false;
+		char *sec = strchr(pos, ':');
+		while (sec != NULL) {
+			sec[0] = '\0';
+			sec++;
+			int w = 0, h = 0;
+			if (sscanf(sec, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
+				mode_w = w;
+				mode_h = h;
+			} else if (!strcmp(sec, "normal")) {
 				transform = WL_OUTPUT_TRANSFORM_NORMAL;
-			} else if (!strcmp(rot, "90")) {
+			} else if (!strcmp(sec, "90")) {
 				transform = WL_OUTPUT_TRANSFORM_90;
-			} else if (!strcmp(rot, "180")) {
+			} else if (!strcmp(sec, "180")) {
 				transform = WL_OUTPUT_TRANSFORM_180;
-			} else if (!strcmp(rot, "270")) {
+			} else if (!strcmp(sec, "270")) {
 				transform = WL_OUTPUT_TRANSFORM_270;
 			} else {
-				wlr_log(WLR_ERROR, "outputs: bad rotation '%s' (expected normal|90|180|270)", rot);
-				continue;
+				wlr_log(WLR_ERROR, "outputs: bad section '%s' (expected WxH or normal|90|180|270)", sec);
+				bad = true;
+				break;
 			}
+			sec = strchr(sec, ':');
 		}
-		if (server->num_placements >= MAX_OUTPUT_PLACEMENTS) {
-			wlr_log(WLR_ERROR, "outputs: too many outputs (max %d)",
-				MAX_OUTPUT_PLACEMENTS);
-			break;
-		}
-		if (strlen(tok) >= sizeof(server->placements[0].name)) {
-			wlr_log(WLR_ERROR, "outputs: output name too long (max %zu chars) in '%s'",
-				sizeof(server->placements[0].name) - 1, tok);
+		if (bad) {
 			continue;
 		}
-		struct output_placement *p = &server->placements[server->num_placements++];
+		if (*num >= cap) {
+			wlr_log(WLR_ERROR, "outputs: too many outputs (max %d)", cap);
+			break;
+		}
+		if (strlen(tok) >= sizeof(arr[0].name)) {
+			wlr_log(WLR_ERROR, "outputs: output name too long (max %zu chars) in '%s'",
+				sizeof(arr[0].name) - 1, tok);
+			continue;
+		}
+		struct output_placement *p = &arr[(*num)++];
 		snprintf(p->name, sizeof(p->name), "%s", tok);
 		p->x = x;
 		p->y = y;
 		p->transform = transform;
+		p->mode_w = mode_w;
+		p->mode_h = mode_h;
 		p->disabled = off;
 		if (off) {
 			wlr_log(WLR_INFO, "outputs: %s disabled", p->name);
 		} else {
-			wlr_log(WLR_INFO, "outputs: %s at %dx%d transform %d",
-				p->name, x, y, transform);
+			wlr_log(WLR_INFO, "outputs: %s at %dx%d mode %dx%d transform %d",
+				p->name, x, y, mode_w, mode_h, transform);
 		}
 	}
 	free(copy);
+}
+
+void parse_output_placements(struct guibux_server *server, const char *spec) {
+	parse_output_placements_to(server->placements, MAX_OUTPUT_PLACEMENTS,
+		spec, &server->num_placements);
 }

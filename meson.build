@@ -31,4 +31,11 @@ executable('guibuxwm',
   install: true,
 )
 
+# standalone monitor layout tool: edits the config `outputs` line and
+# signals the running compositor (SIGUSR1) to re-apply it
+executable('guibuxwm-output',
+  ['tools/guibuxwm-output.c'],
+  install: true,
+)
+
 subdir('tests')

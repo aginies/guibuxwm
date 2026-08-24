@@ -23,6 +23,7 @@ run() {
 run "workspace (ws 2)" ./run-ws-test.sh 2
 run "workspace (ws 4)" ./run-ws-test.sh 4
 run "outputs" ./run-outputs-test.sh
+run "output tool" ./run-output-tool-test.sh
 run "effects" ./run-effects-test.sh
 run "overview" ./run-overview-test.sh
 run "tile mode 1 (split)" ./run-tile-test.sh 1

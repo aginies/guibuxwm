@@ -428,6 +428,9 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 	case GUIBUX_ACT_BRIGHTNESS_DOWN:
 		brightness_change(server, -5);
 		break;
+	case GUIBUX_ACT_OUTPUTS_APPLY:
+		outputs_apply(server);
+		break;
 	}
 }
 

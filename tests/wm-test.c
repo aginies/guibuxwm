@@ -1183,6 +1183,84 @@ int outputs_test_run(void *data) {
 		return 0;
 	}
 
+	if (!strcmp(mode, "apply")) {
+		/* live re-apply: the runner started us with a config file
+		 * (GUIBUX_CONFIG) placing both outputs; rewrite it, call
+		 * outputs_apply and verify the layout follows. Disabling must
+		 * keep the output object alive (re-enable without replug) */
+		if (server->config_path == NULL) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL apply: no config path");
+			return 0;
+		}
+		FILE *f = fopen(server->config_path, "w");
+		if (f == NULL) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL apply: cannot write config");
+			return 0;
+		}
+		fprintf(f, "outputs = HEADLESS-1@0x0,HEADLESS-2@off\n");
+		fclose(f);
+		outputs_apply(server);
+		n = outputs_sorted_by_x(server, outs, boxes, 16);
+		if (n != 1 || strcmp(outs[0]->name, "HEADLESS-1") != 0) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL apply: after disable "
+				"expected 1 live output HEADLESS-1, got %d", n);
+			return 0;
+		}
+		struct guibux_output *o2 = NULL;
+		struct guibux_output *o;
+		wl_list_for_each(o, &server->outputs, link) {
+			if (o->wlr_output->name != NULL &&
+					strcmp(o->wlr_output->name, "HEADLESS-2") == 0) {
+				o2 = o;
+			}
+		}
+		if (o2 == NULL || !o2->disabled) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL apply: HEADLESS-2 not "
+				"kept alive and disabled");
+			return 0;
+		}
+		/* re-enable at 1280x0, then move it below HEADLESS-1 */
+		f = fopen(server->config_path, "w");
+		fprintf(f, "outputs = HEADLESS-1@0x0,HEADLESS-2@1280x0\n");
+		fclose(f);
+		outputs_apply(server);
+		n = outputs_sorted_by_x(server, outs, boxes, 16);
+		if (n != 2 || boxes[0].x != 0 || boxes[0].y != 0 ||
+				boxes[1].x != 1280 || boxes[1].y != 0) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL apply: after re-enable "
+				"got n=%d (%d,%d)/(%d,%d), want (0,0)/(1280,0)",
+				n, boxes[0].x, boxes[0].y, boxes[1].x, boxes[1].y);
+			return 0;
+		}
+		f = fopen(server->config_path, "w");
+		fprintf(f, "outputs = HEADLESS-1@0x0,HEADLESS-2@0x720\n");
+		fclose(f);
+		outputs_apply(server);
+		n = outputs_sorted_by_x(server, outs, boxes, 16);
+		/* both at x=0: check the boxes by name, not sort order */
+		struct wlr_box b1 = {0}, b2 = {0};
+		struct guibux_output *oo;
+		wl_list_for_each(oo, &server->outputs, link) {
+			if (oo->wlr_output->name != NULL &&
+					strcmp(oo->wlr_output->name, "HEADLESS-1") == 0) {
+				wlr_output_layout_get_box(server->output_layout,
+					oo->wlr_output, &b1);
+			} else if (oo->wlr_output->name != NULL &&
+					strcmp(oo->wlr_output->name, "HEADLESS-2") == 0) {
+				wlr_output_layout_get_box(server->output_layout,
+					oo->wlr_output, &b2);
+			}
+		}
+		if (n != 2 || b1.x != 0 || b1.y != 0 || b2.x != 0 || b2.y != 720) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL apply: after move "
+				"got n=%d H1(%d,%d) H2(%d,%d), want H1(0,0) H2(0,720)",
+				n, b1.x, b1.y, b2.x, b2.y);
+			return 0;
+		}
+		wlr_log(WLR_INFO, "outputs-test: OK apply (disable, re-enable, move)");
+		return 0;
+	}
+
 	wlr_log(WLR_ERROR, "outputs-test: FAIL unknown mode '%s'", mode);
 	return 0;
 }

@@ -44,6 +44,7 @@ At least one modifier is required:
 | `switch-ws-left` | Switch to the previous workspace |
 | `switch-ws-right` | Switch to the next workspace |
 | `show-help` | Show the keybinding help overlay |
+| `outputs-apply` | Re-apply the `outputs` config (monitor layout) without a restart |
 | `volume-up` | Raise default sink volume by 5% |
 | `volume-down` | Lower default sink volume by 5% |
 | `mute` | Toggle default sink mute |

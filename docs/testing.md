@@ -23,6 +23,8 @@ tests/run-audio-test.sh          # audio sysinfo poll + VOL/MIC indicators
 tests/run-battery-test.sh        # battery sysinfo poll (UPower) + topbar indicator
 tests/run-launcher-test.sh       # command box (show/type/enter/escape, preferred apps)
 tests/run-config-test.sh         # config file (term, keybind, colors)
+tests/run-outputs-test.sh        # monitor arrangement (auto, manual, @off, unplug, live re-apply)
+tests/run-output-tool-test.sh    # guibuxwm-output tool (config editing, state file, SIGUSR1)
 tests/run-notify-test.sh         # notifications (D-Bus round-trip, auto-show, auto-hide, panel)
 tests/run-effects-test.sh        # window close retile + open scale-in animations
 tests/run-scroll-test.sh         # scroll over VOL/MIC indicators

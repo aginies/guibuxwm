@@ -119,6 +119,7 @@ int main(int argc, char *argv[]) {
 		}
 	}
 	if (config_path != NULL) {
+		server.config_path = strdup(config_path);
 		load_config(&server, config_path);
 	}
 	/* the build option can force effects off regardless of config */
@@ -145,10 +146,15 @@ int main(int argc, char *argv[]) {
 		server.xkb_layout = strdup(xkb_layout);
 	}
 	/* config `outputs` wins over the GUIBUX_OUTPUTS env; both default
-	 * to auto-arranging every connected monitor */
+	 * to auto-arranging every connected monitor. The effective spec is
+	 * remembered: outputs_apply falls back to it when the config file
+	 * has no `outputs` line */
 	const char *outputs_spec = server.outputs_spec;
 	if (outputs_spec == NULL) {
 		outputs_spec = getenv("GUIBUX_OUTPUTS");
+	}
+	if (outputs_spec != NULL) {
+		server.outputs_env_spec = strdup(outputs_spec);
 	}
 	parse_output_placements(&server, outputs_spec);
 	/* term_cmd is final here (config + env + -t flag): derive the
@@ -280,6 +286,10 @@ int main(int argc, char *argv[]) {
 			notify_new_readable, &server);
 	}
 	notify_init(&server);
+
+	/* SIGUSR1 (sent by the guibuxwm-output tool): re-apply the outputs
+	 * config live */
+	outputs_apply_init(&server);
 
 	if (!wlr_backend_start(server.backend)) {
 		wlr_backend_destroy(server.backend);
@@ -499,6 +509,9 @@ int main(int argc, char *argv[]) {
 	if (server.notify_pipe_source != NULL) {
 		wl_event_source_remove(server.notify_pipe_source);
 	}
+	if (server.outputs_signal_source != NULL) {
+		wl_event_source_remove(server.outputs_signal_source);
+	}
 	if (server.notify_pipe[0] >= 0) {
 		close(server.notify_pipe[0]);
 		close(server.notify_pipe[1]);
@@ -601,6 +614,8 @@ int main(int argc, char *argv[]) {
 	free(server.terminal_app_id);
 	free(server.term_cmd);
 	free(server.outputs_spec);
+	free(server.outputs_env_spec);
+	free(server.config_path);
 	free(server.xkb_layout);
 	free(server.xkb_variant);
 	free(server.xkb_options);

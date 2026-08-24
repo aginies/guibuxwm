@@ -63,6 +63,7 @@ struct output_placement {
 	char name[64];
 	int x, y;
 	int transform;
+	int mode_w, mode_h;  /* 0 = preferred mode */
 	bool disabled;  /* NAME@off: the output is intentionally turned off */
 	bool used;      /* matched a connected output */
 };
@@ -158,6 +159,7 @@ enum guibux_action {
 	GUIBUX_ACT_MIC_MUTE,
 	GUIBUX_ACT_BRIGHTNESS_UP,
 	GUIBUX_ACT_BRIGHTNESS_DOWN,
+	GUIBUX_ACT_OUTPUTS_APPLY,
 };
 
 struct guibux_keybind {
@@ -315,6 +317,8 @@ struct guibux_output {
 	struct wl_list link;
 	struct guibux_server *server;
 	struct wlr_output *wlr_output;
+	struct wlr_scene_output *scene_output;  /* created once, even when disabled */
+	bool disabled;  /* placement @off: kept alive, out of the layout */
 	int tile_modes[NUM_WORKSPACES + 1];  // 1-indexed, per-workspace persistence
 	int tile_mode;                       // active (tile_modes[current_workspace])
 	int current_workspace;
@@ -570,6 +574,9 @@ struct guibux_server {
 	struct output_placement placements[MAX_OUTPUT_PLACEMENTS];
 	int num_placements;
 	char *outputs_spec;  /* config `outputs` key; NULL = GUIBUX_OUTPUTS env */
+	char *outputs_env_spec;  /* effective spec at start (config, else env) */
+	char *config_path;  /* resolved config file path; NULL = none */
+	struct wl_event_source *outputs_signal_source;  /* SIGUSR1 = re-apply */
 
 	struct wl_event_source *tile_test_timer;
 	struct wl_event_source *topbar_timer;
@@ -654,6 +661,14 @@ void topbar_create(struct guibux_output *o);
 void topbar_destroy(struct guibux_output *o);
 void topbar_renumber(struct guibux_server *server);
 int outputs_sorted_by_x(struct guibux_server *server, struct wlr_output **sorted, struct wlr_box *boxes, int cap);
+/* re-read the config `outputs` spec (else the startup spec) and apply it
+ * to the connected outputs live: position, mode, transform, enable/off */
+void outputs_apply(struct guibux_server *server);
+/* publish the current outputs (name, box, mode, transform, enabled,
+ * available modes) to the state file for the guibuxwm-output tool */
+void outputs_state_write(struct guibux_server *server);
+/* SIGUSR1 event source: the guibuxwm-output tool triggers a re-apply */
+void outputs_apply_init(struct guibux_server *server);
 
 struct guibux_toplevel *topbar_win_at(struct guibux_output *o, double lx, double ly);
 bool topbar_network_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
@@ -861,10 +876,20 @@ void load_config(struct guibux_server *server, const char *path);
 bool parse_keybind(struct guibux_server *server, const char *value);
 bool parse_color(const char *value, uint32_t *out);
 /* spec: config `outputs` value or GUIBUX_OUTPUTS env; NULL/empty/"auto"
- * = arrange every connected output automatically */
+ * = arrange every connected output automatically. Entry:
+ * NAME@XxY[:WxH[:ROT]] or NAME@off */
 void parse_output_placements(struct guibux_server *server, const char *spec);
+/* parse into a caller array (does not touch the server) */
+void parse_output_placements_to(struct output_placement *arr, int cap,
+	const char *spec, int *num);
+/* re-read the `outputs` value from a config file; malloc'd, NULL if absent */
+char *config_read_outputs_line(const char *path);
 
 /* window-restore.c */
+/* XDG state file path: $XDG_STATE_HOME/guibuxwm/<file> */
+void guibux_state_path(char *path, size_t path_size, const char *file);
+/* create the directory chain of a state file path */
+void guibux_state_mkdir(const char *path);
 void restore_derive_terminal_id(struct guibux_server *server);
 void restore_load(struct guibux_server *server);
 void restore_save(struct guibux_server *server, struct guibux_toplevel *toplevel);

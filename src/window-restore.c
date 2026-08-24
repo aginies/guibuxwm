@@ -16,24 +16,21 @@
 // restored window.
 // ---------------------------------------------------------------------------
 
-static void restore_state_path(char *path, size_t path_size) {
+void guibux_state_path(char *path, size_t path_size, const char *file) {
 	const char *state_home = getenv("XDG_STATE_HOME");
 	if (state_home != NULL && state_home[0] != '\0') {
-		snprintf(path, path_size, "%s/guibuxwm/window-positions", state_home);
+		snprintf(path, path_size, "%s/guibuxwm/%s", state_home, file);
 		return;
 	}
 	const char *home = getenv("HOME");
 	if (home != NULL) {
-		snprintf(path, path_size,
-			"%s/.local/state/guibuxwm/window-positions", home);
+		snprintf(path, path_size, "%s/.local/state/guibuxwm/%s", home, file);
 		return;
 	}
-	snprintf(path, path_size, "/tmp/guibuxwm-window-positions");
+	snprintf(path, path_size, "/tmp/guibuxwm-%s", file);
 }
 
-static void restore_write_file(struct guibux_server *server) {
-	char path[PATH_MAX];
-	restore_state_path(path, sizeof(path));
+void guibux_state_mkdir(const char *path) {
 	/* create the directory chain if it does not exist yet: parent
 	 * first, then the state dir itself */
 	char dir[PATH_MAX];
@@ -49,6 +46,16 @@ static void restore_write_file(struct guibux_server *server) {
 		}
 		mkdir(dir, 0755);
 	}
+}
+
+static void restore_state_path(char *path, size_t path_size) {
+	guibux_state_path(path, path_size, "window-positions");
+}
+
+static void restore_write_file(struct guibux_server *server) {
+	char path[PATH_MAX];
+	restore_state_path(path, sizeof(path));
+	guibux_state_mkdir(path);
 	FILE *f = fopen(path, "w");
 	if (f == NULL) {
 		wlr_log(WLR_ERROR, "restore: cannot write %s: %m", path);

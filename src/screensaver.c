@@ -93,6 +93,10 @@ void screensaver_notify_activity(struct guibux_server *server) {
 static void set_outputs_power(struct guibux_server *server, bool on) {
 	struct guibux_output *o;
 	wl_list_for_each(o, &server->outputs, link) {
+		/* @off outputs stay off: DPMS must not re-enable them */
+		if (o->disabled) {
+			continue;
+		}
 		struct wlr_output_state state;
 		wlr_output_state_init(&state);
 		wlr_output_state_set_enabled(&state, on);

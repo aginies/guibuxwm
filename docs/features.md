@@ -40,7 +40,8 @@
 
 ## Multi-monitor
 
-- **Multi-monitor support:** new windows open under the mouse cursor, move windows between monitors, optional manual monitor arrangement
+- **Multi-monitor support:** new windows open under the mouse cursor, move windows between monitors, optional manual monitor arrangement (position, per-monitor mode, rotation, disable) via the `outputs` config key or `GUIBUX_OUTPUTS`
+- **Live monitor layout:** the `guibuxwm-output` tool places, re-modes, rotates, enables and disables monitors of a running compositor without a restart
 
 ## Window Position Restore
 

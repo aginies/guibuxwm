@@ -471,6 +471,26 @@ notify_effect = none
 
 ---
 
+### `outputs`
+
+Monitor arrangement spec, see [Multi-monitor](multi-monitor.md).
+Entries: `NAME@XxY[:WxH[:ROT]]` (place at XxY, optional mode, optional
+rotation) or `NAME@off` (disable). `auto` or unset = arrange every
+connected output automatically. Wins over the `GUIBUX_OUTPUTS` env var.
+
+The `guibuxwm-output` tool edits this line while the compositor runs
+and signals a re-apply, so changes take effect without a restart.
+
+**Default:** unset (auto-arrange)
+
+**Example:**
+
+```
+outputs = DP-1@0x0,HDMI-A-1@1920x0:1920x1080:90
+```
+
+---
+
 ## Overview (F12)
 
 `F12` shows a GNOME-style overview: every output displays its 4 workspaces
