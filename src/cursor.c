@@ -26,12 +26,15 @@ static void process_cursor_move(struct guibux_server *server) {
 
 static void process_cursor_resize(struct guibux_server *server) {
 	struct guibux_toplevel *toplevel = server->grabbed_toplevel;
+	struct wlr_box geo_box;
+	toplevel_get_geometry(toplevel, &geo_box);
+
 	double border_x = server->cursor->x - server->grab_x;
 	double border_y = server->cursor->y - server->grab_y;
-	int new_left = server->grab_geobox.x;
-	int new_right = server->grab_geobox.x + server->grab_geobox.width;
-	int new_top = server->grab_geobox.y;
-	int new_bottom = server->grab_geobox.y + server->grab_geobox.height;
+	int new_left = geo_box.x;
+	int new_right = geo_box.x + geo_box.width;
+	int new_top = geo_box.y;
+	int new_bottom = geo_box.y + geo_box.height;
 
 	if (server->resize_edges & WLR_EDGE_TOP) {
 		new_top = border_y;
