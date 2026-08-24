@@ -37,6 +37,8 @@ static const char *action_name(enum guibux_action action, int arg) {
 	case GUIBUX_ACT_MIC_UP:        return "mic-up";
 	case GUIBUX_ACT_MIC_DOWN:      return "mic-down";
 	case GUIBUX_ACT_MIC_MUTE:      return "mic-mute";
+	case GUIBUX_ACT_BRIGHTNESS_UP: return "brightness-up";
+	case GUIBUX_ACT_BRIGHTNESS_DOWN: return "brightness-down";
 	default:                       return "unknown";
 	}
 }

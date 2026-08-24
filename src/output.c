@@ -133,18 +133,24 @@ void server_new_output(struct wl_listener *listener, void *data) {
 
 	wlr_output_init_render(wlr_output, server->allocator, server->renderer);
 
-	const struct output_placement *placement = NULL;
+	struct output_placement *placement = NULL;
 	for (int i = 0; i < server->num_placements; i++) {
 		if (strcmp(wlr_output->name, server->placements[i].name) == 0) {
 			placement = &server->placements[i];
 			break;
 		}
 	}
-
-	if (server->num_placements > 0 && placement == NULL) {
-		wlr_log(WLR_INFO, "%s: not in GUIBUX_OUTPUTS, disabling", wlr_output->name);
-		wlr_output_destroy(wlr_output);
-		return;
+	if (placement != NULL) {
+		placement->used = true;
+		if (placement->disabled) {
+			wlr_log(WLR_INFO, "%s: disabled in outputs config", wlr_output->name);
+			wlr_output_destroy(wlr_output);
+			return;
+		}
+	} else if (server->num_placements > 0) {
+		/* not in the config: still usable, auto-arranged. A config that
+		 * names no connected output must not black out the session */
+		wlr_log(WLR_INFO, "%s: not in outputs config, auto-arranging", wlr_output->name);
 	}
 
 	struct wlr_output_state state;
@@ -259,24 +265,106 @@ void output_request_state(struct wl_listener *listener, void *data) {
 	wlr_output_commit_state(output->wlr_output, event->state);
 }
 
+// ---------------------------------------------------------------------------
+// Unplug: rehome the windows of a removed output
+// ---------------------------------------------------------------------------
+
+/* where the windows of a removed output go: the output under the cursor,
+ * else the leftmost of the remaining ones */
+static struct guibux_output *unplug_fallback(struct guibux_server *server,
+		struct guibux_output *dead) {
+	struct wlr_output *at = wlr_output_layout_output_at(server->output_layout,
+		server->cursor->x, server->cursor->y);
+	if (at != NULL) {
+		struct guibux_output *o = guibux_output_for(server, at);
+		if (o != NULL && o != dead) {
+			return o;
+		}
+	}
+	struct guibux_output *best = NULL;
+	struct wlr_box box;
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o == dead) {
+			continue;
+		}
+		if (best == NULL) {
+			best = o;
+			continue;
+		}
+		wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+		struct wlr_box bb;
+		wlr_output_layout_get_box(server->output_layout, best->wlr_output, &bb);
+		if (box.x < bb.x) {
+			best = o;
+		}
+	}
+	return best;
+}
+
+void output_rehome_toplevels(struct guibux_server *server,
+		struct guibux_output *dead, struct guibux_output *fallback) {
+	struct guibux_toplevel *t;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->output != dead) {
+			continue;
+		}
+		if (fallback != NULL) {
+			move_toplevel_to_output(t, fallback->wlr_output);
+		} else {
+			t->output = NULL;
+		}
+	}
+}
+
+/* the focused window may have been on the removed output: give focus to
+ * a visible window, or clear it when nothing is left */
+static void fix_focus_after_unplug(struct guibux_server *server) {
+	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
+	if (focused == NULL) {
+		return;
+	}
+	struct guibux_toplevel *ft = NULL;
+	struct guibux_toplevel *t;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (toplevel_get_surface(t) == focused) {
+			ft = t;
+			break;
+		}
+	}
+	if (ft != NULL && toplevel_visible(ft)) {
+		return;
+	}
+	struct guibux_toplevel *next = NULL;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (toplevel_visible(t)) {
+			next = t;
+			break;
+		}
+	}
+	if (next != NULL) {
+		focus_toplevel(next, true);
+	} else {
+		clear_keyboard_focus(server);
+	}
+}
+
 void output_destroy(struct wl_listener *listener, void *data) {
 	struct guibux_output *output = wl_container_of(listener, output, destroy);
 	struct guibux_server *server = output->server;
 
-	/* windows on this output keep a back-pointer to it: clear it before
-	 * the struct is freed or toplevel_output_for() would dereference it */
-	struct guibux_toplevel *t;
-	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->output == output) {
-			t->output = NULL;
-		}
-	}
+	/* windows on this output keep a back-pointer to it: rehome them to a
+	 * live output before the struct is freed, or they would stay mapped at
+	 * coordinates outside the layout (invisible, unreachable) */
+	struct guibux_output *fallback = unplug_fallback(server, output);
+	output_rehome_toplevels(server, output, fallback);
+	fix_focus_after_unplug(server);
 	if (server->cursor_topbar_output == output) {
 		server->cursor_topbar_output = NULL;
 	}
-	/* a panel open on this output would keep a dangling output pointer:
-	 * free it now, without the slide-out (the animation would ref the
-	 * dead output) */
+	/* a panel open on this output would keep a dangling output pointer
+	 * (schedule_frame on a dead output): close it now, without the
+	 * slide-out (the animation would ref the dead output) */
 	if (server->notify_panel.output == output->wlr_output) {
 		if (server->notify_panel.hiding) {
 			effects_cancel_node(server,
@@ -284,6 +372,18 @@ void output_destroy(struct wl_listener *listener, void *data) {
 		}
 		notify_panel_free_node(server);
 		server->notify_panel.active = false;
+	}
+	if (server->launcher.output == output->wlr_output) {
+		launcher_hide(server);
+	}
+	if (server->help.output == output->wlr_output) {
+		help_hide(server);
+	}
+	if (server->switcher.output == output->wlr_output) {
+		switcher_hide(server);
+	}
+	if (server->overview.hover_output == output->wlr_output) {
+		server->overview.hover_output = NULL;
 	}
 
 	topbar_destroy(output);

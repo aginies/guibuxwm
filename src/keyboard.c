@@ -268,6 +268,22 @@ void volume_toggle_mute(struct guibux_server *server, bool mic) {
 	}
 }
 
+/*
+ * Adjust screen brightness by delta_pct via brightnessctl.
+ * Uses `brightnessctl set +5%` / `-5%` syntax.
+ */
+static void brightness_change(struct guibux_server *server, int delta_pct) {
+	char cmd[128];
+	if (delta_pct > 0) {
+		snprintf(cmd, sizeof(cmd),
+			"brightnessctl set +%d%% 2>/dev/null", delta_pct);
+	} else {
+		snprintf(cmd, sizeof(cmd),
+			"brightnessctl set %d%%- 2>/dev/null", abs(delta_pct));
+	}
+	spawn_cmd(cmd);
+}
+
 // ---------------------------------------------------------------------------
 // Keybind actions
 // ---------------------------------------------------------------------------
@@ -408,6 +424,12 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 		break;
 	case GUIBUX_ACT_MIC_MUTE:
 		volume_toggle_mute(server, true);
+		break;
+	case GUIBUX_ACT_BRIGHTNESS_UP:
+		brightness_change(server, 5);
+		break;
+	case GUIBUX_ACT_BRIGHTNESS_DOWN:
+		brightness_change(server, -5);
 		break;
 	}
 }
@@ -590,6 +612,12 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 				handled = true;
 			} else if (syms[i] == XKB_KEY_XF86AudioMicMute) {
 				volume_toggle_mute(server, true);
+				handled = true;
+			} else if (syms[i] == XKB_KEY_XF86MonBrightnessUp) {
+				brightness_change(server, 5);
+				handled = true;
+			} else if (syms[i] == XKB_KEY_XF86MonBrightnessDown) {
+				brightness_change(server, -5);
 				handled = true;
 			} else if (server->overview.active) {
 				handled = overview_handle_key(server, syms[i]);

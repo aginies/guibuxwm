@@ -1,4 +1,5 @@
 #include "guibuxwm.h"
+#include <strings.h>
 
 bool parse_color(const char *value, uint32_t *out) {
 	uint32_t c;
@@ -138,6 +139,10 @@ bool parse_keybind(struct guibux_server *server, const char *value) {
 		action = GUIBUX_ACT_MIC_DOWN;
 	} else if (!strcmp(action_str, "mic-mute")) {
 		action = GUIBUX_ACT_MIC_MUTE;
+	} else if (!strcmp(action_str, "brightness-up")) {
+		action = GUIBUX_ACT_BRIGHTNESS_UP;
+	} else if (!strcmp(action_str, "brightness-down")) {
+		action = GUIBUX_ACT_BRIGHTNESS_DOWN;
 	} else {
 		wlr_log(WLR_ERROR, "config: bad keybind '%s' (unknown action '%s')",
 			value, action_str);
@@ -361,6 +366,10 @@ void load_config(struct guibux_server *server, const char *path) {
 				wlr_log(WLR_ERROR, "config: %s:%d: bad background_scale '%s' (expected stretch|fit|fill|tile)", path, lineno, val);
 			}
 			wlr_log(WLR_INFO, "config: background_scale = %s", val);
+		} else if (!strcmp(key, "outputs")) {
+			free(server->outputs_spec);
+			server->outputs_spec = strdup(val);
+			wlr_log(WLR_INFO, "config: outputs = %s", val);
 		} else if (!strcmp(key, "screensaver_timeout")) {
 			screensaver_set_timeout(&server->screensaver, atoi(val));
 			wlr_log(WLR_INFO, "config: screensaver_timeout = %d", server->screensaver.timeout);
@@ -441,12 +450,11 @@ void load_config(struct guibux_server *server, const char *path) {
 	fclose(f);
 }
 
-void parse_output_placements(struct guibux_server *server) {
-	const char *env = getenv("GUIBUX_OUTPUTS");
-	if (env == NULL) {
+void parse_output_placements(struct guibux_server *server, const char *spec) {
+	if (spec == NULL || spec[0] == '\0' || !strcmp(spec, "auto")) {
 		return;
 	}
-	char *copy = strdup(env);
+	char *copy = strdup(spec);
 	if (copy == NULL) {
 		return;
 	}
@@ -455,17 +463,19 @@ void parse_output_placements(struct guibux_server *server) {
 			tok = strtok_r(NULL, ",", &save)) {
 		char *at = strchr(tok, '@');
 		if (at == NULL) {
-			wlr_log(WLR_ERROR, "GUIBUX_OUTPUTS: bad entry '%s' (expected NAME@XxY[:ROT])", tok);
+			wlr_log(WLR_ERROR, "outputs: bad entry '%s' (expected NAME@XxY[:ROT] or NAME@off)", tok);
 			continue;
 		}
 		*at = '\0';
-		int x, y;
-		if (sscanf(at + 1, "%dx%d", &x, &y) != 2) {
-			wlr_log(WLR_ERROR, "GUIBUX_OUTPUTS: bad position in '%s'", tok);
+		char *pos = at + 1;
+		bool off = strcasecmp(pos, "off") == 0;
+		int x = 0, y = 0;
+		if (!off && sscanf(pos, "%dx%d", &x, &y) != 2) {
+			wlr_log(WLR_ERROR, "outputs: bad position in '%s'", tok);
 			continue;
 		}
 		int transform = -1;
-		char *rot = strchr(at + 1, ':');
+		char *rot = strchr(pos, ':');
 		if (rot != NULL) {
 			rot[0] = '\0';
 			rot++;
@@ -478,17 +488,17 @@ void parse_output_placements(struct guibux_server *server) {
 			} else if (!strcmp(rot, "270")) {
 				transform = WL_OUTPUT_TRANSFORM_270;
 			} else {
-				wlr_log(WLR_ERROR, "GUIBUX_OUTPUTS: bad rotation '%s' (expected normal|90|180|270)", rot);
+				wlr_log(WLR_ERROR, "outputs: bad rotation '%s' (expected normal|90|180|270)", rot);
 				continue;
 			}
 		}
 		if (server->num_placements >= MAX_OUTPUT_PLACEMENTS) {
-			wlr_log(WLR_ERROR, "GUIBUX_OUTPUTS: too many outputs (max %d)",
+			wlr_log(WLR_ERROR, "outputs: too many outputs (max %d)",
 				MAX_OUTPUT_PLACEMENTS);
 			break;
 		}
 		if (strlen(tok) >= sizeof(server->placements[0].name)) {
-			wlr_log(WLR_ERROR, "GUIBUX_OUTPUTS: output name too long (max %zu chars) in '%s'",
+			wlr_log(WLR_ERROR, "outputs: output name too long (max %zu chars) in '%s'",
 				sizeof(server->placements[0].name) - 1, tok);
 			continue;
 		}
@@ -497,8 +507,13 @@ void parse_output_placements(struct guibux_server *server) {
 		p->x = x;
 		p->y = y;
 		p->transform = transform;
-		wlr_log(WLR_INFO, "GUIBUX_OUTPUTS: %s at %dx%d transform %d",
-			p->name, x, y, transform);
+		p->disabled = off;
+		if (off) {
+			wlr_log(WLR_INFO, "outputs: %s disabled", p->name);
+		} else {
+			wlr_log(WLR_INFO, "outputs: %s at %dx%d transform %d",
+				p->name, x, y, transform);
+		}
 	}
 	free(copy);
 }

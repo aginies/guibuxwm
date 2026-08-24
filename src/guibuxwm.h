@@ -63,6 +63,8 @@ struct output_placement {
 	char name[64];
 	int x, y;
 	int transform;
+	bool disabled;  /* NAME@off: the output is intentionally turned off */
+	bool used;      /* matched a connected output */
 };
 
 enum guibux_cursor_mode {
@@ -154,6 +156,8 @@ enum guibux_action {
 	GUIBUX_ACT_MIC_UP,
 	GUIBUX_ACT_MIC_DOWN,
 	GUIBUX_ACT_MIC_MUTE,
+	GUIBUX_ACT_BRIGHTNESS_UP,
+	GUIBUX_ACT_BRIGHTNESS_DOWN,
 };
 
 struct guibux_keybind {
@@ -537,6 +541,7 @@ struct guibux_server {
 	uint32_t color_topbar_bg, color_topbar_text;
 	struct output_placement placements[MAX_OUTPUT_PLACEMENTS];
 	int num_placements;
+	char *outputs_spec;  /* config `outputs` key; NULL = GUIBUX_OUTPUTS env */
 
 	struct wl_event_source *tile_test_timer;
 	struct wl_event_source *topbar_timer;
@@ -545,6 +550,7 @@ struct guibux_server {
 	struct wl_event_source *scroll_test_timer;
 	struct wl_event_source *altdrag_test_timer;
 	struct wl_event_source *workspace_test_timer;
+	struct wl_event_source *outputs_test_timer;
 	struct wl_event_source *keybind_test_timer;
 	struct wl_event_source *overview_test_timer;
 	struct wl_event_source *psel_test_timer;
@@ -609,6 +615,10 @@ void server_new_output(struct wl_listener *listener, void *data);
 void output_frame(struct wl_listener *listener, void *data);
 void output_request_state(struct wl_listener *listener, void *data);
 void output_destroy(struct wl_listener *listener, void *data);
+/* move the toplevels of a removed output to a live one (unplug);
+ * fallback NULL = no output left, the windows stay orphaned */
+void output_rehome_toplevels(struct guibux_server *server,
+	struct guibux_output *dead, struct guibux_output *fallback);
 void topbar_create(struct guibux_output *o);
 void topbar_destroy(struct guibux_output *o);
 void topbar_renumber(struct guibux_server *server);
@@ -806,7 +816,9 @@ void spawn_track(pid_t pid);
 void load_config(struct guibux_server *server, const char *path);
 bool parse_keybind(struct guibux_server *server, const char *value);
 bool parse_color(const char *value, uint32_t *out);
-void parse_output_placements(struct guibux_server *server);
+/* spec: config `outputs` value or GUIBUX_OUTPUTS env; NULL/empty/"auto"
+ * = arrange every connected output automatically */
+void parse_output_placements(struct guibux_server *server, const char *spec);
 
 /* window-restore.c */
 void restore_derive_terminal_id(struct guibux_server *server);
@@ -841,6 +853,7 @@ void end_seat_grabs(struct guibux_server *server);
 /* wm-test.c */
 void test_seat_add_keyboard(struct guibux_server *server);
 int workspace_test_run(void *data);
+int outputs_test_run(void *data);
 int tile_test_run(void *data);
 int overview_test_run(void *data);
 int keybind_test_run(void *data);

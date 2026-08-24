@@ -1072,3 +1072,117 @@ int effects_test_run(void *data) {
 	}
 	return 0;
 }
+
+int outputs_test_run(void *data) {
+	struct guibux_server *server = data;
+	const char *mode = getenv("GUIBUX_TEST_OUTPUTS");
+	if (mode == NULL) {
+		mode = "bogus";
+	}
+	struct wlr_output *outs[16];
+	struct wlr_box boxes[16];
+	int n = outputs_sorted_by_x(server, outs, boxes, 16);
+
+	if (!strcmp(mode, "bogus")) {
+		/* a name that matches nothing must not kill the session: both
+		 * headless outputs stay alive, auto-arranged */
+		if (server->num_placements != 1 || server->placements[0].used) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL bogus: placement "
+				"not parsed or unexpectedly matched (n=%d)",
+				server->num_placements);
+			return 0;
+		}
+		if (n != 2) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL bogus: expected 2 "
+				"live outputs, got %d", n);
+			return 0;
+		}
+		if (boxes[0].x == boxes[1].x && boxes[0].y == boxes[1].y) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL bogus: outputs not "
+				"arranged (both at %d,%d)", boxes[0].x, boxes[0].y);
+			return 0;
+		}
+		wlr_log(WLR_INFO, "outputs-test: OK bogus (%d outputs auto-arranged)", n);
+		return 0;
+	}
+
+	if (!strcmp(mode, "placement")) {
+		if (n != 2) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL placement: expected 2 outputs, got %d", n);
+			return 0;
+		}
+		if (boxes[0].x != 0 || boxes[0].y != 0 ||
+				boxes[1].x != 1280 || boxes[1].y != 0) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL placement: got (%d,%d)/(%d,%d), want (0,0)/(1280,0)",
+				boxes[0].x, boxes[0].y, boxes[1].x, boxes[1].y);
+			return 0;
+		}
+		wlr_log(WLR_INFO, "outputs-test: OK placement (manual boxes applied)");
+		return 0;
+	}
+
+	if (!strcmp(mode, "off")) {
+		if (n != 1) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL off: expected 1 live output, got %d", n);
+			return 0;
+		}
+		if (outs[0]->name == NULL || strcmp(outs[0]->name, "HEADLESS-1") != 0) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL off: expected HEADLESS-1, got %s",
+				outs[0]->name ? outs[0]->name : "(unknown)");
+			return 0;
+		}
+		wlr_log(WLR_INFO, "outputs-test: OK off (@off disabled the second output)");
+		return 0;
+	}
+
+	if (!strcmp(mode, "unplug")) {
+		if (n != 2) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL unplug: expected 2 outputs, got %d", n);
+			return 0;
+		}
+		struct guibux_output *o1 = guibux_output_for(server, outs[0]);
+		struct guibux_output *o2 = guibux_output_for(server, outs[1]);
+		if (o1 == NULL || o2 == NULL) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL unplug: no guibux outputs");
+			return 0;
+		}
+		struct guibux_toplevel *t = NULL;
+		wl_list_for_each(t, &server->toplevels, link) {
+			break;
+		}
+		if (t == NULL) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL unplug: no mapped toplevel");
+			return 0;
+		}
+		/* move the window to the second output and focus it, then
+		 * simulate that output being unplugged */
+		move_toplevel_to_output(t, outs[1]);
+		focus_toplevel(t, true);
+		struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
+		output_rehome_toplevels(server, o2, o1);
+		if (t->output != o1) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL unplug: window not rehomed "
+				"(output=%p, want %p)", (void *)t->output, (void *)o1);
+			return 0;
+		}
+		struct wlr_box box;
+		wlr_output_layout_get_box(server->output_layout, outs[0], &box);
+		int32_t nx = t->scene_tree->node.x;
+		int32_t ny = t->scene_tree->node.y;
+		if (nx < box.x || ny < box.y ||
+				nx >= box.x + box.width || ny >= box.y + box.height) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL unplug: window at %d,%d "
+				"outside %d,%d %dx%d", nx, ny, box.x, box.y, box.width, box.height);
+			return 0;
+		}
+		if (server->seat->keyboard_state.focused_surface != focused) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL unplug: focus lost after rehome");
+			return 0;
+		}
+		wlr_log(WLR_INFO, "outputs-test: OK unplug (window rehomed, focus kept)");
+		return 0;
+	}
+
+	wlr_log(WLR_ERROR, "outputs-test: FAIL unknown mode '%s'", mode);
+	return 0;
+}

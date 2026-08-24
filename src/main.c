@@ -144,7 +144,13 @@ int main(int argc, char *argv[]) {
 		free(server.xkb_layout);
 		server.xkb_layout = strdup(xkb_layout);
 	}
-	parse_output_placements(&server);
+	/* config `outputs` wins over the GUIBUX_OUTPUTS env; both default
+	 * to auto-arranging every connected monitor */
+	const char *outputs_spec = server.outputs_spec;
+	if (outputs_spec == NULL) {
+		outputs_spec = getenv("GUIBUX_OUTPUTS");
+	}
+	parse_output_placements(&server, outputs_spec);
 	/* term_cmd is final here (config + env + -t flag): derive the
 	 * terminal app_id and load saved window positions */
 	restore_derive_terminal_id(&server);
@@ -299,6 +305,16 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
+	/* a configured output that never showed up (typo'd name, monitor not
+	 * connected at start) must not disable the real ones: those were
+	 * auto-arranged, so this is a warning, not a failure */
+	for (int i = 0; i < server.num_placements; i++) {
+		if (!server.placements[i].used && !server.placements[i].disabled) {
+			wlr_log(WLR_ERROR, "outputs: '%s' not connected, ignoring",
+				server.placements[i].name);
+		}
+	}
+
 	const char *launcher_test_cmd = getenv("GUIBUX_TEST_LAUNCHER_CMD");
 	if (launcher_test_cmd != NULL) {
 		server.launcher.test_timer = wl_event_loop_add_timer(
@@ -404,6 +420,14 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.workspace_test_timer, 2000);
 	}
 
+	const char *outputs_test = getenv("GUIBUX_TEST_OUTPUTS");
+	if (outputs_test != NULL) {
+		server.outputs_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			outputs_test_run, &server);
+		wl_event_source_timer_update(server.outputs_test_timer, 2000);
+	}
+
 	const char *keybind_test = getenv("GUIBUX_TEST_KEYBIND");
 	if (keybind_test != NULL) {
 		server.keybind_test_timer = wl_event_loop_add_timer(
@@ -502,6 +526,9 @@ int main(int argc, char *argv[]) {
 	if (server.workspace_test_timer != NULL) {
 		wl_event_source_remove(server.workspace_test_timer);
 	}
+	if (server.outputs_test_timer != NULL) {
+		wl_event_source_remove(server.outputs_test_timer);
+	}
 	if (server.keybind_test_timer != NULL) {
 		wl_event_source_remove(server.keybind_test_timer);
 	}
@@ -546,6 +573,7 @@ int main(int argc, char *argv[]) {
 	restore_free(&server);
 	free(server.terminal_app_id);
 	free(server.term_cmd);
+	free(server.outputs_spec);
 	free(server.xkb_layout);
 	free(server.xkb_variant);
 	free(server.xkb_options);

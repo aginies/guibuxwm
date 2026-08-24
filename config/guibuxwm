@@ -34,7 +34,8 @@ xkb_layout = fr
 #          move-monitor-left, move-monitor-right,
 #          snap-left, snap-right, snap-top, snap-bottom,
 #          switch-ws-left, switch-ws-right,
-#          volume-up, volume-down, mute, mic-up, mic-down, mic-mute
+#          volume-up, volume-down, mute, mic-up, mic-down, mic-mute,
+#          brightness-up, brightness-down
 keybind = Mod+Return: terminal
 keybind = Mod+q: close
 keybind = Mod+f: fullscreen
@@ -68,6 +69,11 @@ keybind = Mod+h: show-help
 # right click opens pavucontrol)
 #keybind = Mod+m: mute
 #keybind = Mod+Shift+m: mic-mute
+
+# brightness (hardware keys XF86MonBrightnessUp/Down also work without
+# any binding)
+#keybind = Mod+Prior: brightness-up
+#keybind = Mod+Next: brightness-down
 
 # colors (#rrggbb)
 color_bg = #1e1e2e

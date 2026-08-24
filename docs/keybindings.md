@@ -50,6 +50,8 @@ At least one modifier is required:
 | `mic-up` | Raise default source (mic) volume by 5% |
 | `mic-down` | Lower default source (mic) volume by 5% |
 | `mic-mute` | Toggle default source (mic) mute |
+| `brightness-up` | Increase brightness by 5% |
+| `brightness-down` | Decrease brightness by 5% |
 
 ## Default Keybindings
 
@@ -97,6 +99,8 @@ Hardware media keys work without any keybind:
 | `XF86AudioLowerVolume` | Lower volume by 5% |
 | `XF86AudioMute` | Toggle mute |
 | `XF86AudioMicMute` | Toggle mic mute |
+| `XF86MonBrightnessUp` | Increase brightness by 5% |
+| `XF86MonBrightnessDown` | Decrease brightness by 5% |
 
 ## Network
 
