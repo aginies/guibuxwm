@@ -101,6 +101,12 @@ void process_cursor_motion(struct guibux_server *server, uint32_t time) {
 		process_cursor_resize(server);
 		return;
 	}
+	/* the auto-hidden panel must not close while the user reads it */
+	if (server->notify_panel.active &&
+			notify_panel_contains(server, server->cursor->x,
+				server->cursor->y)) {
+		notify_autohide_start(server);
+	}
 
 	double sx, sy;
 	struct wlr_seat *seat = server->seat;
@@ -212,6 +218,8 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 					notify_panel_hide(server);
 				} else {
 					notify_panel_render(server);
+					/* the panel stays open: give it a fresh delay */
+					notify_autohide_start(server);
 				}
 			} else {
 				uint32_t id = notify_panel_row_at(server,

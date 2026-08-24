@@ -1,6 +1,7 @@
 project('guibuxwm', 'c',
   version: '0.1.0',
   default_options: ['c_std=gnu11', 'warning_level=2', 'buildtype=release'],
+  meson_version: '>=0.56.0',
 )
 
 add_project_arguments('-ffunction-sections', '-fdata-sections', language: 'c')
@@ -14,14 +15,17 @@ cairo_dep = dependency('cairo')
 dbus_dep = dependency('dbus-1')
 threads_dep = dependency('threads')
 
+effect_c_args = get_option('effects') ? ['-DGUIBUX_EFFECTS=1'] : ['-DGUIBUX_EFFECTS=0']
+
 executable('guibuxwm',
   ['src/main.c', 'src/guibuxwm.h', 'src/output.c', 'src/toplevel.c',
     'src/window-layout.c', 'src/topbar.c', 'src/launcher.c', 'src/switcher.c',
     'src/overview.c', 'src/help.c',
     'src/keyboard.c',
     'src/config.c', 'src/cursor.c', 'src/popup.c', 'tests/wm-test.c',
-    'src/sysinfo.c', 'src/background.c', 'src/screensaver.c', 'src/notify.c'],
-  c_args: ['-DWLR_USE_UNSTABLE', '-Wno-unused-parameter'],
+    'src/sysinfo.c', 'src/background.c', 'src/screensaver.c', 'src/notify.c',
+    'src/effects.c'],
+  c_args: ['-DWLR_USE_UNSTABLE', '-Wno-unused-parameter'] + effect_c_args,
   include_directories: include_directories('src'),
   dependencies: [wlroots_dep, wayland_dep, xkbcommon_dep, freetype_dep, cairo_dep, dbus_dep, threads_dep],
   install: true,

@@ -3,11 +3,13 @@
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_buffer.h>
 #include <drm_fourcc.h>
+#include <errno.h>
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <unistd.h>
 
 /*
  * notify - desktop notifications via org.freedesktop.Notifications (D-Bus)
@@ -215,6 +217,16 @@ static DBusHandlerResult notify_message_func(DBusConnection *conn,
 			id = replaces_id;
 		} else {
 			id = notify_add(n, app_name, summary, body, expire);
+			/* wake the main loop: a brand-new notification pops the
+			 * panel (a replace only updates an existing row). A byte
+			 * write to the pipe is atomic and thread-safe */
+			struct guibux_server *server = wl_container_of(n, server, notify);
+			if (server->notify_pipe[1] >= 0) {
+				ssize_t rc;
+				do {
+					rc = write(server->notify_pipe[1], "n", 1);
+				} while (rc < 0 && errno == EINTR);
+			}
 		}
 		DBusMessage *reply = dbus_message_new_method_return(msg);
 		if (reply != NULL) {
@@ -614,11 +626,18 @@ void notify_panel_render(struct guibux_server *server) {
 	}
 }
 
+void notify_panel_free_node(struct guibux_server *server);
+
 void notify_panel_show(struct guibux_server *server,
 		struct wlr_output *output) {
 	struct guibux_notif_panel *p = &server->notify_panel;
 	if (p->active) {
 		return;
+	}
+	/* a slide-out may still be in flight: cancel it and start fresh */
+	if (p->hiding) {
+		effects_cancel_node(server, &p->scene_node->node);
+		notify_panel_free_node(server);
 	}
 	if (server->launcher.face == NULL || server->launcher.shm_alloc == NULL) {
 		return;
@@ -682,15 +701,12 @@ void notify_panel_show(struct guibux_server *server,
 
 	p->active = true;
 	notify_panel_render(server);
+	effects_notify_show(server, output);
 }
 
-void notify_panel_hide(struct guibux_server *server) {
+void notify_panel_free_node(struct guibux_server *server) {
 	struct guibux_notif_panel *p = &server->notify_panel;
-	if (!p->active) {
-		return;
-	}
-	p->active = false;
-	p->num_rows = 0;
+	p->hiding = false;
 	p->output = NULL;
 	if (p->scene_node != NULL) {
 		wlr_scene_node_destroy(&p->scene_node->node);
@@ -700,6 +716,85 @@ void notify_panel_hide(struct guibux_server *server) {
 		wlr_buffer_drop(p->buffer);
 		p->buffer = NULL;
 	}
+}
+
+/* completion of the slide-out animation */
+void notify_panel_hide_done(void *data) {
+	struct guibux_server *server = data;
+	struct guibux_notif_panel *p = &server->notify_panel;
+	if (!p->hiding) {
+		return;
+	}
+	notify_panel_free_node(server);
+}
+
+void notify_panel_hide(struct guibux_server *server) {
+	struct guibux_notif_panel *p = &server->notify_panel;
+	if (!p->active) {
+		return;
+	}
+	notify_autohide_cancel(server);
+	p->active = false;
+	p->num_rows = 0;
+	if (effects_notify_hide(server)) {
+		p->hiding = true;
+		return;
+	}
+	notify_panel_free_node(server);
+}
+
+// ---------------------------------------------------------------------------
+// Auto-hide: a new notification pops the panel like an indicator click;
+// it closes after a delay unless the user keeps interacting with it
+// ---------------------------------------------------------------------------
+
+#define NOTIF_AUTOHIDE_MS 2000
+
+void notify_autohide_start(struct guibux_server *server) {
+	if (server->notify_autohide_timer != NULL) {
+		wl_event_source_timer_update(server->notify_autohide_timer,
+			NOTIF_AUTOHIDE_MS);
+	}
+}
+
+void notify_autohide_cancel(struct guibux_server *server) {
+	if (server->notify_autohide_timer != NULL) {
+		wl_event_source_timer_update(server->notify_autohide_timer, 0);
+	}
+}
+
+int notify_autohide_run(void *data) {
+	struct guibux_server *server = data;
+	if (server->notify_panel.active) {
+		notify_panel_hide(server);
+	}
+	return 0;
+}
+
+/* main-loop side of the worker's new-notification wake-up: show the panel
+ * on the output under the cursor (or refresh it if already open) and arm
+ * the auto-hide */
+int notify_new_readable(int fd, uint32_t mask, void *data) {
+	struct guibux_server *server = data;
+	struct guibux_notif_panel *p = &server->notify_panel;
+	/* drain the pipe: several notifications may have piled up */
+	char buf[64];
+	while (read(fd, buf, sizeof buf) > 0) {
+	}
+	if (notify_count(&server->notify) == 0) {
+		return 0;
+	}
+	if (p->active) {
+		notify_panel_render(server);
+	} else {
+		struct wlr_output *out = output_at_cursor(server);
+		if (out == NULL) {
+			return 0;
+		}
+		notify_panel_show(server, out);
+	}
+	notify_autohide_start(server);
+	return 0;
 }
 
 bool notify_panel_handle_key(struct guibux_server *server, xkb_keysym_t sym) {
@@ -840,6 +935,12 @@ static uint32_t test_send_notify(DBusConnection *c, bool spec13,
 	return id;
 }
 
+static int64_t notify_test_now_ms(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
 int notify_test_run(void *data) {
 	struct guibux_server *server = data;
 	struct guibux_notify *n = &server->notify;
@@ -862,6 +963,11 @@ int notify_test_run(void *data) {
 	 * and produce empty rows). Skipped when there is no session bus or
 	 * another daemon owns the name */
 	static bool dbus_checked = false;
+	static int64_t dbus_done_ms = 0;
+	static bool dbus_skipped = false;
+	static bool autohide_checked = false;
+	static bool autohidden_checked = false;
+	static bool autohide_done = false;
 	if (!dbus_checked) {
 		dbus_checked = true;
 		if (!n->daemon) {
@@ -915,10 +1021,52 @@ int notify_test_run(void *data) {
 				wlr_log(WLR_INFO,
 					"notify-test: dbus round-trip OK (old=%u new=%u replaced=%u)",
 					id1, id2, id3);
+				dbus_done_ms = notify_test_now_ms();
 				dbus_connection_close(c);
 				dbus_connection_unref(c);
 			}
 		}
+	}
+	/* auto-show + auto-hide: the D-Bus notification above must have popped
+	 * the panel (worker -> pipe -> main loop), and the auto-hide must close
+	 * it again after the delay. The pipe wake-up is only processed once this
+	 * timer callback returns, so the first check happens on the next tick */
+	if (dbus_checked && dbus_done_ms == 0 && !dbus_skipped) {
+		/* round-trip was skipped: nothing to auto-show/hide */
+		dbus_skipped = true;
+		autohide_done = true;
+	}
+	if (dbus_done_ms > 0) {
+		int64_t dt = notify_test_now_ms() - dbus_done_ms;
+		if (dt == 0) {
+			/* same tick as the round-trip: the pipe is not processed yet */
+		} else if (!autohide_checked) {
+			if (!server->notify_panel.active) {
+				wlr_log(WLR_ERROR,
+					"notify-test: FAIL panel not auto-shown on new notification");
+				return 0;
+			}
+			autohide_checked = true;
+			wlr_log(WLR_INFO, "notify-test: auto-show OK");
+		} else if (!autohidden_checked && dt < 1500) {
+			/* well inside the 2s window: the panel must stay open */
+			if (!server->notify_panel.active) {
+				wlr_log(WLR_ERROR,
+					"notify-test: FAIL panel closed before the auto-hide delay");
+				return 0;
+			}
+		} else if (!autohidden_checked && dt >= 3000) {
+			/* safely past the 2s delay: the panel must be gone */
+			if (server->notify_panel.active) {
+				wlr_log(WLR_ERROR,
+					"notify-test: FAIL panel not auto-hidden after the delay");
+				return 0;
+			}
+			autohidden_checked = true;
+			autohide_done = true;
+			wlr_log(WLR_INFO, "notify-test: auto-hide OK");
+		}
+		/* 1500 <= dt < 3000: race window around the 2s timer, no check */
 	}
 	if (notify_count(n) < 1) {
 		wlr_log(WLR_ERROR, "notify-test: FAIL no notifications (count=%d)",
@@ -945,8 +1093,10 @@ int notify_test_run(void *data) {
 	/* panel: hit areas must match the visible (right-aligned) position,
 	 * and the rows must actually render text pixels */
 	static bool panel_checked = false;
-	if (!panel_checked && nn > 0) {
+	if (!panel_checked && nn > 0 && autohide_done) {
 		panel_checked = true;
+		/* the auto-show may have popped the panel on another output */
+		notify_panel_hide(server);
 		notify_panel_show(server, sorted[0]);
 		struct guibux_notif_panel *p = &server->notify_panel;
 		if (!p->active || p->buffer == NULL || p->num_rows < 2) {
@@ -1012,7 +1162,7 @@ int notify_test_run(void *data) {
 	/* clicking the bell must open the panel: the net hit area used to
 	 * span the whole indicator block and swallowed the bell click */
 	static bool click_checked = false;
-	if (!click_checked && nn > 0) {
+	if (!click_checked && nn > 0 && autohide_done) {
 		click_checked = true;
 		struct guibux_output *o = guibux_output_for(server, sorted[0]);
 		if (o != NULL && o->topbar_notif_w > 0) {
@@ -1033,7 +1183,18 @@ int notify_test_run(void *data) {
 			notify_panel_hide(server);
 		}
 	}
-	wlr_log(WLR_INFO, "notify-test: OK (%d outputs, %d notifications)",
-		nn, notify_count(n));
+	/* all checks done: log OK once and stop the timer. Until then keep
+	 * ticking — the auto-show/auto-hide sequence spans several ticks */
+	static bool ok_logged = false;
+	if (autohide_done && panel_checked && click_checked) {
+		if (!ok_logged) {
+			ok_logged = true;
+			wlr_log(WLR_INFO,
+				"notify-test: OK (%d outputs, %d notifications)",
+				nn, notify_count(n));
+		}
+		return 0;
+	}
+	wl_event_source_timer_update(server->notify_test_timer, 500);
 	return 0;
 }

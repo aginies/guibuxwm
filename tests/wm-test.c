@@ -1,6 +1,7 @@
 #include "guibuxwm.h"
 #include <wlr/util/log.h>
 #include <stdlib.h>
+#include <time.h>
 
 void test_seat_add_keyboard(struct guibux_server *server) {
 	if (wlr_seat_get_keyboard(server->seat) != NULL) {
@@ -72,6 +73,9 @@ int workspace_test_run(void *data) {
 			return 0;
 		}
 	}
+	/* a transition animation may still be sliding the old windows out:
+	 * settle it before asserting the visibility state */
+	effects_flush(server);
 	wl_list_for_each(t, &server->toplevels, link) {
 		if (t->scene_tree->node.enabled) {
 			wlr_log(WLR_ERROR, "workspace-test: FAIL toplevel visible "
@@ -105,6 +109,7 @@ int workspace_test_run(void *data) {
 	wl_list_for_each(o, &server->outputs, link) {
 		switch_workspace(o, 1);
 	}
+	effects_flush(server);
 	wl_list_for_each(t, &server->toplevels, link) {
 		if (!t->scene_tree->node.enabled) {
 			wlr_log(WLR_ERROR, "workspace-test: FAIL toplevel still "
@@ -681,6 +686,206 @@ int resize_test_run(void *data) {
 			s->current.width, s->current.height,
 			(double)t->scene_tree->node.x, (double)t->scene_tree->node.y);
 		return 0;
+	}
+	return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Effects test: close (frozen-buffer shrink + animated retile) and open
+// (scale-in). The client (effects-test) maps A+B, destroys A when the
+// compositor sends a close request, and maps C late. The phases verify
+// each animation in flight and at rest.
+// ---------------------------------------------------------------------------
+
+static struct {
+	int phase;
+	int64_t start_ms;         /* overall start (global timeout) */
+	int64_t phase_start_ms;   /* current polling phase start (per-phase timeout) */
+	struct guibux_output *o;
+	struct guibux_toplevel *b;
+	struct guibux_toplevel *c;
+	struct wlr_buffer *a_buf;   /* A's last buffer: the close snapshot holds it */
+	int b_x1;   /* B's cell x after A's close */
+	bool saw_in_flight;       /* at least one animation observed mid-way */
+	bool saw_snap;            /* the close snapshot node was observed */
+} effects_test_state;
+
+static int64_t effects_test_now(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static void effects_test_next(struct guibux_server *server, int ms) {
+	wl_event_source_timer_update(server->effects_test_timer, ms);
+}
+
+int effects_test_run(void *data) {
+	struct guibux_server *server = data;
+	struct guibux_toplevel *t;
+
+	/* global safety timeout: a stuck polling phase ends up here */
+	if (effects_test_state.start_ms > 0 &&
+			effects_test_now() - effects_test_state.start_ms > 15000) {
+		wlr_log(WLR_ERROR, "effects-test: FAIL timeout (phase %d)",
+			effects_test_state.phase);
+		return 0;
+	}
+
+	switch (effects_test_state.phase) {
+	case 0: {
+		/* setup: 2 mapped windows, split tiling, slow animations, close one */
+		int n = 0;
+		struct guibux_toplevel *first = NULL;
+		wl_list_for_each(t, &server->toplevels, link) {
+			if (first == NULL) {
+				first = t;
+			}
+			n++;
+		}
+		/* the output the toplevels are on: xwayland warps the wl cursor
+		 * to the X pointer position, so the first output in the list is
+		 * not necessarily the one the windows landed on */
+		struct guibux_output *o = first != NULL
+			? guibux_output_for(server, toplevel_output_for(first)) : NULL;
+		if (n < 2 || o == NULL) {
+			wlr_log(WLR_ERROR, "effects-test: FAIL need 2 toplevels (got %d)", n);
+			return 0;
+		}
+		if (!server->effects_enabled || server->effects_duration_ms <= 0) {
+			wlr_log(WLR_ERROR, "effects-test: FAIL effects disabled");
+			return 0;
+		}
+		/* slow the animations down so the in-flight states are reliably
+		 * observable by the polling checks that follow */
+		server->effects_duration_ms = 500;
+		o->tile_mode = GUIBUX_TILE_SPLIT;
+		retile_output(o);
+		effects_test_state.o = o;
+		struct guibux_toplevel *a = NULL;
+		wl_list_for_each(t, &server->toplevels, link) {
+			if (toplevel_output_for(t) != o->wlr_output) {
+				continue;
+			}
+			if (a == NULL) {
+				a = t;
+			} else {
+				effects_test_state.b = t;
+				break;
+			}
+		}
+		if (a == NULL || effects_test_state.b == NULL) {
+			wlr_log(WLR_ERROR, "effects-test: FAIL need 2 toplevels on one output");
+			return 0;
+		}
+		struct wlr_box box;
+		wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+		effects_test_state.b_x1 = box.x;
+		struct wlr_scene_buffer *ab = toplevel_inner_buffer(a);
+		effects_test_state.a_buf = ab != NULL ? ab->buffer : NULL;
+		effects_test_state.start_ms = effects_test_now();
+		toplevel_close(a);   /* the client destroys A: snapshot + animated retile */
+		effects_test_state.phase = 1;
+		effects_test_next(server, 20);
+		return 0;
+	}
+	case 1: {
+		/* poll: B settles into the freed cell at full height; the close
+		 * snapshot (a root-tree scene buffer holding A's last buffer)
+		 * appears during the animation and is destroyed when it ends */
+		struct guibux_toplevel *b = effects_test_state.b;
+		struct guibux_output *o = effects_test_state.o;
+		if (b->scene_tree == NULL) {
+			effects_test_next(server, 20);
+			return 0;
+		}
+		struct wlr_box box;
+		wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+		bool settled = (b->scene_tree->node.x == effects_test_state.b_x1 &&
+			b->scene_tree->node.y == box.y + server->topbar_height);
+		bool snap = false;
+		struct wlr_scene_node *child;
+		wl_list_for_each(child, &server->scene->tree.children, link) {
+			if (child->type == WLR_SCENE_NODE_BUFFER &&
+					wlr_scene_buffer_from_node(child)->buffer ==
+					effects_test_state.a_buf) {
+				snap = true;
+				break;
+			}
+		}
+		if (snap) {
+			effects_test_state.saw_snap = true;
+			effects_test_state.saw_in_flight = true;
+		}
+		if (!settled) {
+			effects_test_state.saw_in_flight = true;
+			effects_test_next(server, 20);
+			return 0;
+		}
+		struct wlr_box geo;
+		toplevel_get_geometry(b, &geo);
+		if (geo.height != box.height - server->topbar_height) {
+			effects_test_next(server, 20);
+			return 0;
+		}
+		if (!effects_test_state.saw_snap || snap) {
+			effects_test_next(server, 20);
+			return 0;
+		}
+		effects_test_state.phase = 2;
+		effects_test_next(server, 20);
+		return 0;
+	}
+	case 2: {
+		/* poll: the late-mapped window C shows up with buffer content */
+		wl_list_for_each(t, &server->toplevels, link) {
+			if (t == effects_test_state.b ||
+					toplevel_output_for(t) != effects_test_state.o->wlr_output) {
+				continue;
+			}
+			struct wlr_scene_buffer *sb = toplevel_inner_buffer(t);
+			if (sb != NULL && sb->buffer != NULL) {
+				effects_test_state.c = t;
+				break;
+			}
+		}
+		if (effects_test_state.c == NULL) {
+			effects_test_next(server, 20);
+			return 0;
+		}
+		effects_test_state.phase = 3;
+		effects_test_next(server, 20);
+		return 0;
+	}
+	case 3: {
+		/* poll: C's open scale settles at its natural size */
+		struct guibux_toplevel *c = effects_test_state.c;
+		struct wlr_scene_buffer *sb = toplevel_inner_buffer(c);
+		struct wlr_scene_surface *ss =
+			sb != NULL ? wlr_scene_surface_try_from_buffer(sb) : NULL;
+		int nw = ss != NULL ? ss->surface->current.width : 0;
+		if (sb == NULL || nw <= 0) {
+			effects_test_next(server, 20);
+			return 0;
+		}
+		if (sb->dst_width < nw) {
+			effects_test_state.saw_in_flight = true;
+			effects_test_next(server, 20);
+			return 0;
+		}
+		effects_test_state.phase = 4;
+		effects_test_next(server, 20);
+		return 0;
+	}
+	case 4: {
+		if (!effects_test_state.saw_in_flight) {
+			wlr_log(WLR_ERROR, "effects-test: FAIL no animation observed in flight "
+				"(effects instant or disabled)");
+			return 0;
+		}
+		wlr_log(WLR_INFO, "effects-test: OK (close snapshot+retile, open scale)");
+		return 0;
+	}
 	}
 	return 0;
 }

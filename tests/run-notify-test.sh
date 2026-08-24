@@ -12,7 +12,7 @@ log=$(mktemp)
 dbus-run-session -- bash -c '
 GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_NET=testnet GUIBUX_TEST_NOTIFY=1 GUIBUX_TERM=true WLR_RENDERER=gles2 "$0" >"$1" 2>&1 &
 comp=$!
-sleep 4
+sleep 6
 kill $comp 2>/dev/null
 wait $comp 2>/dev/null
 ' "$COMP" "$log"

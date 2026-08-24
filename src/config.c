@@ -355,6 +355,38 @@ void load_config(struct guibux_server *server, const char *path) {
 		} else if (!strcmp(key, "focus_follow_mouse")) {
 			server->focus_follow_mouse = !strcmp(val, "true");
 			wlr_log(WLR_INFO, "config: focus_follow_mouse = %s", val);
+		} else if (!strcmp(key, "effects")) {
+			server->effects_enabled = !strcmp(val, "true");
+			wlr_log(WLR_INFO, "config: effects = %s", val);
+		} else if (!strcmp(key, "effects_duration_ms")) {
+			server->effects_duration_ms = atoi(val);
+			if (server->effects_duration_ms < 0 ||
+					server->effects_duration_ms > 1000) {
+				wlr_log(WLR_ERROR, "config: %s:%d: effects_duration_ms %d out of range 0..1000, using default",
+					path, lineno, server->effects_duration_ms);
+				server->effects_duration_ms = 200;
+			}
+			wlr_log(WLR_INFO, "config: effects_duration_ms = %d", server->effects_duration_ms);
+		} else if (!strcmp(key, "window_open_effect")) {
+			if (!strcmp(val, "scale")) {
+				server->window_open_effect = OPEN_EFFECT_SCALE;
+			} else if (!strcmp(val, "slide")) {
+				server->window_open_effect = OPEN_EFFECT_SLIDE;
+			} else if (!strcmp(val, "none")) {
+				server->window_open_effect = OPEN_EFFECT_NONE;
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad window_open_effect '%s' (expected scale|slide|none)", path, lineno, val);
+			}
+			wlr_log(WLR_INFO, "config: window_open_effect = %s", val);
+		} else if (!strcmp(key, "notify_effect")) {
+			if (!strcmp(val, "slide")) {
+				server->notify_effect_slide = true;
+			} else if (!strcmp(val, "none")) {
+				server->notify_effect_slide = false;
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad notify_effect '%s' (expected slide|none)", path, lineno, val);
+			}
+			wlr_log(WLR_INFO, "config: notify_effect = %s", val);
 		} else if (!strcmp(key, "overview_workspace_colors")) {
 			server->overview.ws_colors_enabled = !strcmp(val, "true");
 			wlr_log(WLR_INFO, "config: overview_workspace_colors = %s", val);

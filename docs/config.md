@@ -359,6 +359,64 @@ overview_ws_color4 = #c084fc
 
 ---
 
+### `effects`
+
+Master switch for animations (window open/close, notification panel slide).
+
+**Default:** `true`
+
+**Example:**
+
+```
+effects = false
+```
+
+---
+
+### `effects_duration_ms`
+
+Animation duration in milliseconds. `0` disables animations.
+
+**Default:** `200`
+
+**Example:**
+
+```
+effects_duration_ms = 300
+```
+
+---
+
+### `window_open_effect`
+
+Animation when a window opens: `scale` (grow from 85% to full size),
+`slide` (slide in from the center of its monitor), or `none`.
+
+**Default:** `scale`
+
+**Example:**
+
+```
+window_open_effect = slide
+```
+
+---
+
+### `notify_effect`
+
+Notification panel animation: `slide` (panel slides in from the right edge)
+or `none`.
+
+**Default:** `slide`
+
+**Example:**
+
+```
+notify_effect = none
+```
+
+---
+
 ## Overview (F12)
 
 `F12` shows a GNOME-style overview: every output displays its 4 workspaces
@@ -376,3 +434,32 @@ workspace color — that is where the window will be dropped.
 - click an empty area to switch to the workspace of the clicked row
 - click a window to select it (switches to its workspace)
 - `1`..`4` switch to that workspace, `Esc`/`F12` close the overview
+
+## Notifications
+
+guibuxwm registers as the session-bus notification daemon
+(`org.freedesktop.Notifications`, like dunst/mako), so any app that sends
+desktop notifications (via `libnotify`/D-Bus) is handled by the compositor
+itself. It implements `Notify`, `CloseNotification`, `GetCapabilities`
+(`body`) and `GetServerInformation` (spec 1.3).
+
+- **Topbar indicator:** a bell + pending count on each monitor, shown while
+  there are unread notifications. Click it to open the panel on that monitor.
+- **Panel:** a right-aligned list (up to 10 rows) below the topbar, with a
+  "Clear all" button in the header.
+  - click a row to focus the window that sent the notification (best-effort
+    app-name match, switching to its workspace if needed), dismiss that
+    notification and close the panel
+  - "Clear all" dismisses everything; the panel closes when empty
+  - click empty panel space or press `Esc` to close without dismissing
+- **Auto-show:** a new notification pops the panel on the monitor under the
+  cursor.
+- **Auto-hide:** the panel closes again after 2 seconds unless the cursor is
+  over it (hovering keeps it open and restarts the delay).
+
+If there is no session bus, or another daemon already owns the name, the
+D-Bus side stays off but the indicator and panel still work for
+notifications added internally.
+
+The panel slide animation is controlled by `notify_effect` (and the global
+`effects` / `effects_duration_ms` keys).

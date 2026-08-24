@@ -7,27 +7,30 @@
 // Tiling layout
 // ---------------------------------------------------------------------------
 
-void retile_output(struct guibux_output *output) {
+/* compute the tile cells for every visible, non-fullscreen window on
+ * the output; absolute node positions and logical sizes */
+int retile_compute(struct guibux_output *output, struct guibux_tile_target *out,
+		int cap) {
 	struct guibux_server *server = output->server;
 	if (server->overview.active) {
-		return;
+		return 0;
 	}
 	if (output->tile_mode == GUIBUX_TILE_FREE) {
-		return;
+		return 0;
 	}
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, output->wlr_output, &box);
 	if (box.width <= 0 || box.height <= 0) {
-		return;
+		return 0;
 	}
 	box.y += output->server->topbar_height;
 	box.height -= output->server->topbar_height;
 	if (box.height <= 0) {
-		return;
+		return 0;
 	}
 
-	struct guibux_toplevel *wins[MAX_WINDOWS];
 	int n = 0;
+	struct guibux_toplevel *wins[MAX_WINDOWS];
 	struct guibux_toplevel *t;
 	wl_list_for_each(t, &server->toplevels, link) {
 		if (t->is_fullscreen || !toplevel_visible(t)) {
@@ -36,12 +39,12 @@ void retile_output(struct guibux_output *output) {
 		if (toplevel_output_for(t) != output->wlr_output) {
 			continue;
 		}
-		if (n < MAX_WINDOWS) {
+		if (n < MAX_WINDOWS && n < cap) {
 			wins[n++] = t;
 		}
 	}
 	if (n == 0) {
-		return;
+		return 0;
 	}
 
 	for (int i = 0; i < n; i++) {
@@ -69,9 +72,27 @@ void retile_output(struct guibux_output *output) {
 				rh = (box.height * (row + 1)) / stack - ry;
 			}
 		}
-		wlr_scene_node_set_position(&wins[i]->scene_tree->node,
-			box.x + rx, box.y + ry);
-		toplevel_set_size(wins[i], rw, rh);
+		out[i].t = wins[i];
+		out[i].x = box.x + rx;
+		out[i].y = box.y + ry;
+		out[i].w = rw;
+		out[i].h = rh;
+	}
+	return n;
+}
+
+void retile_output(struct guibux_output *output) {
+	struct guibux_server *server = output->server;
+	/* an in-flight animation (close retile) would
+	 * overwrite the positions set here: settle it first */
+	effects_cancel_output(server, output);
+
+	struct guibux_tile_target targets[MAX_WINDOWS];
+	int n = retile_compute(output, targets, MAX_WINDOWS);
+	for (int i = 0; i < n; i++) {
+		wlr_scene_node_set_position(&targets[i].t->scene_tree->node,
+			targets[i].x, targets[i].y);
+		toplevel_set_size(targets[i].t, targets[i].w, targets[i].h);
 	}
 }
 
@@ -92,24 +113,15 @@ void end_seat_grabs(struct guibux_server *server) {
 	}
 }
 
-void switch_workspace(struct guibux_output *output, int ws) {
-	if (ws < 1 || ws > NUM_WORKSPACES || ws == output->current_workspace) {
-		return;
-	}
+/* state change only: current workspace, background, grabs, focus,
+ * topbar. Scene node visibility is applied by the caller (immediately,
+ * or by the transition animation) */
+void ws_switch_state(struct guibux_output *output, int ws) {
 	struct guibux_server *server = output->server;
 	output->current_workspace = ws;
 	background_render(output);
 
 	end_seat_grabs(server);
-
-	struct guibux_toplevel *t;
-	wl_list_for_each(t, &server->toplevels, link) {
-		if (toplevel_output_for(t) == output->wlr_output) {
-			wlr_scene_node_set_enabled(&t->scene_tree->node,
-				t->workspace == ws);
-		}
-	}
-	retile_output(output);
 
 	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
 	struct wlr_xdg_toplevel *focused_xdg = NULL;
@@ -120,6 +132,7 @@ void switch_workspace(struct guibux_output *output, int ws) {
 	}
 	struct guibux_toplevel *focused_toplevel = NULL;
 	if (focused_xdg != NULL || focused_xs != NULL) {
+		struct guibux_toplevel *t;
 		wl_list_for_each(t, &server->toplevels, link) {
 			if ((focused_xdg != NULL && t->xdg_toplevel == focused_xdg) ||
 					(focused_xs != NULL && t->xsurface == focused_xs)) {
@@ -129,6 +142,7 @@ void switch_workspace(struct guibux_output *output, int ws) {
 		}
 	}
 	if (focused_toplevel != NULL && !toplevel_visible(focused_toplevel)) {
+		struct guibux_toplevel *t;
 		struct guibux_toplevel *next = NULL;
 		wl_list_for_each(t, &server->toplevels, link) {
 			if (toplevel_visible(t)) {
@@ -143,6 +157,27 @@ void switch_workspace(struct guibux_output *output, int ws) {
 		}
 	}
 	topbar_mark_dirty(output);
+}
+
+void ws_switch_immediate(struct guibux_output *output, int ws) {
+	ws_switch_state(output, ws);
+	struct guibux_server *server = output->server;
+	struct guibux_toplevel *t;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->scene_tree != NULL &&
+				toplevel_output_for(t) == output->wlr_output) {
+			wlr_scene_node_set_enabled(&t->scene_tree->node,
+				t->workspace == ws);
+		}
+	}
+	retile_output(output);
+}
+
+void switch_workspace(struct guibux_output *output, int ws) {
+	if (ws < 1 || ws > NUM_WORKSPACES || ws == output->current_workspace) {
+		return;
+	}
+	ws_switch_immediate(output, ws);
 }
 
 void move_toplevel_to_workspace(struct guibux_toplevel *toplevel, int ws) {
@@ -218,6 +253,7 @@ void move_toplevel_to_output(struct guibux_toplevel *toplevel, struct wlr_output
 		output->name ? output->name : "(unknown)");
 	struct guibux_output *o = guibux_output_for(server, output);
 	if (o != NULL) {
+		toplevel->output = o;
 		toplevel->workspace = o->current_workspace;
 		if (o->tile_mode != GUIBUX_TILE_FREE) {
 			retile_output(o);

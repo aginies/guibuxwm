@@ -22,6 +22,8 @@ tests/run-topbar-test.sh         # per-output topbar (number + time)
 tests/run-audio-test.sh          # audio sysinfo poll + VOL/MIC indicators
 tests/run-launcher-test.sh       # command box (show/type/enter/escape, preferred apps)
 tests/run-config-test.sh         # config file (term, keybind, colors)
+tests/run-notify-test.sh         # notifications (D-Bus round-trip, auto-show, auto-hide, panel)
+tests/run-effects-test.sh        # window close retile + open scale-in animations
 ```
 
 ## Headless mode
@@ -124,6 +126,30 @@ GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_KEYBIND=g \
   GUIBUX_CONFIG=/path/to/config WLR_RENDERER=gles2 ./build/guibuxwm
 ```
 
+## GUIBUX_TEST_NOTIFY
+
+`GUIBUX_TEST_NOTIFY=1` exercises the notification stack. It runs under a
+private session bus (`dbus-run-session`) so the compositor owns the
+`org.freedesktop.Notifications` name. A ~0.5s hook seeds notifications and,
+on later ticks, verifies:
+
+- the D-Bus round-trip in both spec signatures (`Notify` with and without
+  `replaces_id`) parses the strings and the replace keeps the same id
+- a new notification **auto-shows** the panel, which **auto-hides** after the
+  2s delay (checked on later ticks, with a no-check window around the timer
+  to avoid a race)
+- the topbar bell indicator renders on every output
+- the panel hit areas (rows, "Clear all") match the visible position and the
+  rows render text pixels
+- clicking the bell opens the panel
+
+Logs `notify-test: OK (N outputs, K notifications)` on success. No client
+needed.
+
+```sh
+tests/run-notify-test.sh
+```
+
 ## Test clients
 
 Test clients are built by the main build and live in `tests/`:
@@ -142,6 +168,7 @@ Test clients are built by the main build and live in `tests/`:
 | `GUIBUX_TEST_AUDIO=1` | Verify audio poll + VOL/MIC indicators |
 | `GUIBUX_TEST_WORKSPACES=N` | Exercise workspace state machine (default 2) |
 | `GUIBUX_TEST_KEYBIND="key"` | Verify a custom keybind opens the launcher |
+| `GUIBUX_TEST_NOTIFY=1` | Verify notifications (D-Bus, auto-show, auto-hide, panel) |
 | `GUIBUX_TERM=true` | Spawn a terminal client for tests |
 | `WLR_BACKENDS=headless` | Force headless backend |
 | `WLR_RENDERER=gles2` | Use GLES2 renderer |

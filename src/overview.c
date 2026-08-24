@@ -451,6 +451,10 @@ void overview_show(struct guibux_server *server) {
 		return;
 	}
 
+	/* settle in-flight animations: the saved geometry below must be the
+	 * final one, not a mid-animation position */
+	effects_flush(server);
+
 	ov->num_wins = 0;
 	ov->hover_output = NULL;
 	ov->hover_ws = 0;
@@ -725,6 +729,7 @@ static void overview_drop(struct guibux_server *server,
 		ov->saved_x[idx] = nx;
 		ov->saved_y[idx] = ny;
 		ov->win_output[idx] = target;
+		t->output = guibux_output_for(server, target);
 	}
 	t->workspace = ws;
 

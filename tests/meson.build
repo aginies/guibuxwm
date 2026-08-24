@@ -15,6 +15,13 @@ executable('ws-test',
   dependencies: test_deps,
 )
 
+executable('effects-test',
+  'effects-test.c',
+  'xdg-shell-protocol.c',
+  c_args: test_c_args,
+  dependencies: test_deps,
+)
+
 executable('tile-test',
   'tile-test.c',
   'xdg-shell-protocol.c',

@@ -34,6 +34,11 @@ struct wlr_output *toplevel_output_for(struct guibux_toplevel *toplevel) {
 			toplevel->xdg_toplevel->requested.fullscreen_output != NULL) {
 		return toplevel->xdg_toplevel->requested.fullscreen_output;
 	}
+	/* prefer the stored output: the position-based fallback below is
+	 * wrong while a window is being dragged or animated off its cell */
+	if (toplevel->output != NULL) {
+		return toplevel->output->wlr_output;
+	}
 	struct wlr_box geo;
 	toplevel_get_geometry(toplevel, &geo);
 	int cx = toplevel->scene_tree->node.x + geo.width / 2;
@@ -215,6 +220,15 @@ void output_frame(struct wl_listener *listener, void *data) {
 			(output->topbar_buffer_w != box.width * scale ||
 			 output->topbar_buffer_h != server->topbar_height * scale)) {
 		output->topbar_dirty = true;
+	}
+
+	/* advance animations before the commit renders the frame */
+	effects_tick(server);
+
+	/* keep producing frames while an animation is in flight: without
+	 * this the output would go idle and the animation would stall */
+	if (effects_active(server)) {
+		wlr_output_schedule_frame(output->wlr_output);
 	}
 
 	struct wlr_scene_output *scene_output = wlr_scene_get_scene_output(

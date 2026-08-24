@@ -41,6 +41,8 @@
 #include <getopt.h>
 #include <limits.h>
 #include <signal.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <wlr/backend.h>
 #include <wlr/backend/headless.h>
 #include <wlr/render/allocator.h>
@@ -97,6 +99,10 @@ int main(int argc, char *argv[]) {
 	server.background_scale = BG_FILL;
 	server.screensaver.timeout = 300;
 	server.focus_follow_mouse = true;
+	server.effects_enabled = true;
+	server.effects_duration_ms = 200;
+	server.window_open_effect = OPEN_EFFECT_SCALE;
+	server.notify_effect_slide = true;
 	keybinds_defaults(&server);
 
 	if (config_path == NULL) {
@@ -114,6 +120,8 @@ int main(int argc, char *argv[]) {
 	if (config_path != NULL) {
 		load_config(&server, config_path);
 	}
+	/* the build option can force effects off regardless of config */
+	effects_init(&server);
 	background_load_images(&server);
 
 	if (server.term_cmd == NULL) {
@@ -250,6 +258,16 @@ int main(int argc, char *argv[]) {
 	}
 
 	sysinfo_init(&server);
+	/* the D-Bus worker may wake the main loop as soon as it starts, so
+	 * the pipe must exist before the worker thread does */
+	server.notify_pipe[0] = server.notify_pipe[1] = -1;
+	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0,
+			server.notify_pipe) == 0) {
+		server.notify_pipe_source = wl_event_loop_add_fd(
+			wl_display_get_event_loop(server.wl_display),
+			server.notify_pipe[0], WL_EVENT_READABLE,
+			notify_new_readable, &server);
+	}
 	notify_init(&server);
 
 	if (!wlr_backend_start(server.backend)) {
@@ -305,6 +323,10 @@ int main(int argc, char *argv[]) {
 		wl_display_get_event_loop(server.wl_display),
 		topbar_tick, &server);
 	wl_event_source_timer_update(server.topbar_timer, 500);
+
+	server.notify_autohide_timer = wl_event_loop_add_timer(
+		wl_display_get_event_loop(server.wl_display),
+		notify_autohide_run, &server);
 
 	const char *topbar_test = getenv("GUIBUX_TEST_TOPBAR");
 	if (topbar_test != NULL) {
@@ -384,11 +406,29 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.resize_test_timer, 3000);
 	}
 
+	const char *effects_test = getenv("GUIBUX_TEST_EFFECTS");
+	if (effects_test != NULL) {
+		server.effects_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			effects_test_run, &server);
+		wl_event_source_timer_update(server.effects_test_timer, 1000);
+	}
+
 	wlr_log(WLR_INFO, "guibuxwm running on WAYLAND_DISPLAY=%s", socket);
 	wl_display_run(server.wl_display);
 
 	sysinfo_destroy(&server);
 	notify_destroy(&server);
+	if (server.notify_autohide_timer != NULL) {
+		wl_event_source_remove(server.notify_autohide_timer);
+	}
+	if (server.notify_pipe_source != NULL) {
+		wl_event_source_remove(server.notify_pipe_source);
+	}
+	if (server.notify_pipe[0] >= 0) {
+		close(server.notify_pipe[0]);
+		close(server.notify_pipe[1]);
+	}
 
 	wl_display_destroy_clients(server.wl_display);
 
@@ -444,6 +484,9 @@ int main(int argc, char *argv[]) {
 	}
 	if (server.notify_test_timer != NULL) {
 		wl_event_source_remove(server.notify_test_timer);
+	}
+	if (server.effects_test_timer != NULL) {
+		wl_event_source_remove(server.effects_test_timer);
 	}
 
 	launcher_hide(&server);

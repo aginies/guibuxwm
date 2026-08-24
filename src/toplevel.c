@@ -147,6 +147,15 @@ void begin_interactive(struct guibux_toplevel *toplevel,
 // xdg_toplevel lifecycle
 // ---------------------------------------------------------------------------
 
+/* the scene tree is owned by wlroots (xdg) or destroyed on
+ * dissociate (xwayland): track its death so a dangling scene_tree
+ * pointer can never be used (effects anims, hit testing) */
+static void toplevel_scene_destroyed(struct wl_listener *listener, void *data) {
+	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, scene_destroy);
+	wl_list_remove(&toplevel->scene_destroy.link);
+	toplevel->scene_tree = NULL;
+}
+
 void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	struct guibux_server *server = wl_container_of(listener, server, new_xdg_toplevel);
 	struct wlr_xdg_toplevel *xdg_toplevel = data;
@@ -159,6 +168,10 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 		wlr_scene_xdg_surface_create(&toplevel->server->scene->tree, xdg_toplevel->base);
 	toplevel->scene_tree->node.data = toplevel;
 	xdg_toplevel->base->data = toplevel->scene_tree;
+
+	toplevel->scene_destroy.notify = toplevel_scene_destroyed;
+	wl_signal_add(&toplevel->scene_tree->node.events.destroy,
+		&toplevel->scene_destroy);
 
 	toplevel->map.notify = xdg_toplevel_map;
 	wl_signal_add(&xdg_toplevel->base->surface->events.map, &toplevel->map);
@@ -195,6 +208,7 @@ void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	struct wlr_output *output = output_at_cursor(toplevel->server);
 	struct guibux_output *o = output != NULL
 		? guibux_output_for(toplevel->server, output) : NULL;
+	toplevel->output = o;
 	toplevel->workspace = o != NULL ? o->current_workspace : 1;
 	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
 		struct wlr_box box;
@@ -210,6 +224,7 @@ void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 		toplevel_output_for(toplevel));
 	if (o2)
 		topbar_mark_dirty(o2);
+	effects_window_open(toplevel);
 }
 
 /* Pick a visible toplevel to focus after one was unmapped; the
@@ -244,11 +259,12 @@ void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 
 	struct guibux_output *o = guibux_output_for(server,
 		toplevel_output_for(toplevel));
+	toplevel->open_effect_pending = false;
 	wl_list_remove(&toplevel->link);
 	switcher_on_unmap(server, toplevel);
 	topbar_win_remove(o, toplevel);
-	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
-		retile_output(o);
+	if (o != NULL) {
+		effects_window_closed(toplevel, o);
 	}
 	topbar_mark_dirty(o);
 
@@ -257,6 +273,10 @@ void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 
 void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, commit);
+
+	if (toplevel->open_effect_pending) {
+		effects_window_open_start(toplevel);
+	}
 
 	if (toplevel->xdg_toplevel->base->initial_commit) {
 		struct guibux_output *o = guibux_output_for(toplevel->server,
@@ -283,6 +303,15 @@ void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	wl_list_remove(&toplevel->request_resize.link);
 	wl_list_remove(&toplevel->request_maximize.link);
 	wl_list_remove(&toplevel->request_fullscreen.link);
+
+	toplevel->open_effect_pending = false;
+	if (toplevel->scene_tree != NULL) {
+		effects_cancel_node(toplevel->server, &toplevel->scene_tree->node);
+		/* the scene tree may outlive the toplevel (the client can
+		 * destroy the role and keep the surface): drop the back-pointer
+		 * so hit testing and effects anims never dereference freed state */
+		toplevel->scene_tree->node.data = NULL;
+	}
 
 	struct guibux_output *fo = guibux_output_for(toplevel->server,
 		toplevel_output_for(toplevel));
@@ -533,6 +562,10 @@ static void xsurface_associate(struct wl_listener *listener, void *data) {
 	toplevel->scene_tree->node.data = toplevel;
 	wlr_scene_surface_create(toplevel->scene_tree, xsurface->surface);
 
+	toplevel->scene_destroy.notify = toplevel_scene_destroyed;
+	wl_signal_add(&toplevel->scene_tree->node.events.destroy,
+		&toplevel->scene_destroy);
+
 	toplevel->map.notify = xsurface_map;
 	wl_signal_add(&xsurface->surface->events.map, &toplevel->map);
 	toplevel->unmap.notify = xsurface_unmap;
@@ -582,6 +615,7 @@ static void xsurface_map(struct wl_listener *listener, void *data) {
 	struct wlr_output *output = output_at_cursor(toplevel->server);
 	struct guibux_output *o = output != NULL
 		? guibux_output_for(toplevel->server, output) : NULL;
+	toplevel->output = o;
 	toplevel->workspace = o != NULL ? o->current_workspace : 1;
 	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
 		struct wlr_box box;
@@ -600,6 +634,7 @@ static void xsurface_map(struct wl_listener *listener, void *data) {
 		toplevel_output_for(toplevel));
 	if (o2)
 		topbar_mark_dirty(o2);
+	effects_window_open(toplevel);
 }
 
 static void xsurface_unmap(struct wl_listener *listener, void *data) {
@@ -620,11 +655,12 @@ static void xsurface_unmap(struct wl_listener *listener, void *data) {
 
 	struct guibux_output *o = guibux_output_for(server,
 		toplevel_output_for(toplevel));
+	toplevel->open_effect_pending = false;
 	wl_list_remove(&toplevel->link);
 	switcher_on_unmap(server, toplevel);
 	topbar_win_remove(o, toplevel);
-	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
-		retile_output(o);
+	if (o != NULL) {
+		effects_window_closed(toplevel, o);
 	}
 	topbar_mark_dirty(o);
 
@@ -634,13 +670,19 @@ static void xsurface_unmap(struct wl_listener *listener, void *data) {
 static void xsurface_commit(struct wl_listener *listener, void *data) {
 	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, commit);
 
+	if (!toplevel->managed || !toplevel->xsurface->surface->mapped) {
+		return;
+	}
+	if (toplevel->open_effect_pending) {
+		effects_window_open_start(toplevel);
+	}
+
 	/* like xdg_toplevel_commit: only re-assert the tile geometry on the
 	 * first commit (the app may have mapped at its own size). Retiling on
 	 * every commit would fight apps that enforce a minimum size larger
 	 * than the tile cell (configure/commit loop) and would snap a window
 	 * being dragged back to its tile slot on every frame */
-	if (!toplevel->managed || !toplevel->xsurface->surface->mapped ||
-			!toplevel->initial_commit) {
+	if (!toplevel->initial_commit) {
 		return;
 	}
 	toplevel->initial_commit = false;
@@ -673,6 +715,12 @@ static void xsurface_destroy(struct wl_listener *listener, void *data) {
 	wl_list_remove(&toplevel->request_configure.link);
 	wl_list_remove(&toplevel->set_title.link);
 	wl_list_remove(&toplevel->ping_timeout.link);
+
+	toplevel->open_effect_pending = false;
+	if (toplevel->scene_tree != NULL) {
+		effects_cancel_node(toplevel->server, &toplevel->scene_tree->node);
+		toplevel->scene_tree->node.data = NULL;
+	}
 
 	struct guibux_output *fo = guibux_output_for(toplevel->server,
 		toplevel_output_for(toplevel));

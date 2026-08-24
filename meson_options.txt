@@ -1,0 +1,2 @@
+option('effects', type: 'boolean', value: true,
+  description: 'Window/workspace/notification animations (also disable-able at runtime via config)')

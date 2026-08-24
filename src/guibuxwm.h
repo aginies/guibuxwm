@@ -84,6 +84,51 @@ enum guibux_bg_scale {
 	BG_TILE,
 };
 
+/* effects.c - optional animations (build option 'effects', config 'effects') */
+enum guibux_open_effect {
+	OPEN_EFFECT_SCALE,
+	OPEN_EFFECT_SLIDE,
+	OPEN_EFFECT_NONE,
+};
+
+enum guibux_effect_kind {
+	EFFECT_POS,
+	EFFECT_SCALE_FACTOR,
+	EFFECT_SCALE_TO,
+};
+
+#define EFFECTS_MAX_ANIMS 64
+
+struct guibux_effects_anim {
+	bool used;
+	enum guibux_effect_kind kind;
+	struct wlr_scene_node *node;
+	struct wl_listener node_destroy;
+	/* POS: from (fx,fy) to (tx,ty) */
+	double fx, fy, tx, ty;
+	/* SCALE_FACTOR: factor from f0 to f1 of the surface's logical size
+	 * SCALE_TO: dest size from (sw,sh) to (tw,th) */
+	double f0, f1;
+	int sw, sh, tw, th;
+	int64_t start_ms;
+	int duration_ms;
+	/* POS on a toplevel: size configure to send when the anim ends */
+	int pw, ph;
+	void (*done)(void *data);
+	void *done_data;
+};
+
+struct guibux_effects {
+	struct guibux_effects_anim anims[EFFECTS_MAX_ANIMS];
+	int64_t last_tick_ms;
+};
+
+/* window-layout.c: absolute node position + logical size of one tile cell */
+struct guibux_tile_target {
+	struct guibux_toplevel *t;
+	int x, y, w, h;
+};
+
 enum guibux_action {
 	GUIBUX_ACT_TERMINAL,
 	GUIBUX_ACT_CLOSE,
@@ -182,6 +227,9 @@ struct guibux_notify {
 
 struct guibux_notif_panel {
     bool active;
+    /* slide-out in progress: the node and buffer are freed by the
+     * animation completion callback, not by notify_panel_hide */
+    bool hiding;
     struct wlr_output *output;
     struct wlr_scene_buffer *scene_node;
     struct wlr_buffer *buffer;
@@ -261,10 +309,17 @@ struct guibux_toplevel {
 	struct wlr_xdg_toplevel *xdg_toplevel;
 	struct wlr_xwayland_surface *xsurface;
 	struct wlr_scene_tree *scene_tree;
+	struct wl_listener scene_destroy;
 	bool is_fullscreen;
 	bool managed;
 	bool initial_commit;
+	/* open animation not started yet: the window has no buffer content
+	 * at map time, the effect starts on the first commit with a size */
+	bool open_effect_pending;
 	int workspace;
+	/* the output the window is tiled on; position-based lookup is wrong
+	 * while a workspace slide has the window off-screen */
+	struct guibux_output *output;
 	double saved_x, saved_y;
 	int saved_w, saved_h;
 	struct wl_listener map;
@@ -458,6 +513,12 @@ struct guibux_launcher launcher;
 	struct guibux_help help;
 	struct guibux_notify notify;
 	struct guibux_notif_panel notify_panel;
+	/* auto-hide: a new notification pops the panel (like an indicator
+	 * click); it closes after a delay unless the user interacts with it.
+	 * The D-Bus worker thread writes to notify_pipe to wake the main loop */
+	struct wl_event_source *notify_autohide_timer;
+	int notify_pipe[2];
+	struct wl_event_source *notify_pipe_source;
 	struct guibux_screensaver {
 		struct guibux_server *server;
 		int timeout;
@@ -473,6 +534,15 @@ struct guibux_launcher launcher;
     struct guibux_output *cursor_topbar_output;
     bool focus_follow_mouse;
     struct guibux_toplevel *last_ffm_toplevel;
+
+    /* effects (animations): enabled by default, off via config or the
+     * 'effects' build option */
+    bool effects_enabled;
+    int effects_duration_ms;
+    enum guibux_open_effect window_open_effect;
+    bool notify_effect_slide;
+    struct guibux_effects effects;
+    struct wl_event_source *effects_test_timer;
 };
 
 /* output.c */
@@ -524,7 +594,12 @@ struct guibux_toplevel *desktop_toplevel_at(struct guibux_server *server, double
 
 /* window-layout.c */
 void retile_output(struct guibux_output *output);
+int retile_compute(struct guibux_output *output, struct guibux_tile_target *out, int cap);
 void switch_workspace(struct guibux_output *output, int ws);
+void ws_switch_immediate(struct guibux_output *output, int ws);
+/* state change only (current ws, background, grabs, focus, topbar);
+ * scene node visibility is applied by the caller */
+void ws_switch_state(struct guibux_output *output, int ws);
 void move_toplevel_to_workspace(struct guibux_toplevel *toplevel, int ws);
 void place_toplevel(struct guibux_toplevel *toplevel);
 void move_toplevel_to_output(struct guibux_toplevel *toplevel, struct wlr_output *output);
@@ -533,6 +608,24 @@ void snap_toplevel_left(struct guibux_toplevel *toplevel);
 void snap_toplevel_right(struct guibux_toplevel *toplevel);
 void snap_toplevel_top(struct guibux_toplevel *toplevel);
 void snap_toplevel_bottom(struct guibux_toplevel *toplevel);
+
+/* effects.c */
+void effects_init(struct guibux_server *server);
+void effects_tick(struct guibux_server *server);
+bool effects_active(struct guibux_server *server);
+void effects_flush(struct guibux_server *server);
+void effects_cancel_node(struct guibux_server *server, struct wlr_scene_node *node);
+void effects_cancel_output(struct guibux_server *server, struct guibux_output *o);
+/* the scene buffer showing the toplevel's own surface (for dest-size
+ * scale animations); NULL before the first commit */
+struct wlr_scene_buffer *toplevel_inner_buffer(struct guibux_toplevel *toplevel);
+void effects_window_open(struct guibux_toplevel *toplevel);
+void effects_window_open_start(struct guibux_toplevel *toplevel);
+void effects_window_closed(struct guibux_toplevel *t, struct guibux_output *o);
+void effects_retile(struct guibux_output *o);
+void effects_notify_show(struct guibux_server *server, struct wlr_output *output);
+/* true when the hide animation takes over freeing the panel node */
+bool effects_notify_hide(struct guibux_server *server);
 
 /* topbar.c */
 void topbar_render(struct guibux_output *o);
@@ -574,11 +667,19 @@ void notify_draw_indicator(cairo_surface_t *cs, cairo_t *cr, FT_Face face,
 	int x, int baseline, int scale, int count, uint32_t color);
 void notify_panel_show(struct guibux_server *server, struct wlr_output *output);
 void notify_panel_hide(struct guibux_server *server);
+/* completion of the slide-out animation: frees the panel node */
+void notify_panel_hide_done(void *data);
 void notify_panel_render(struct guibux_server *server);
 bool notify_panel_handle_key(struct guibux_server *server, xkb_keysym_t sym);
 uint32_t notify_panel_row_at(struct guibux_server *server, double lx, double ly);
 bool notify_panel_clear_at(struct guibux_server *server, double lx, double ly);
 bool notify_panel_contains(struct guibux_server *server, double lx, double ly);
+/* auto-hide: (re)arm / cancel the close timer, its tick, and the main-loop
+ * wake-up the D-Bus worker thread triggers for new notifications */
+void notify_autohide_start(struct guibux_server *server);
+void notify_autohide_cancel(struct guibux_server *server);
+int notify_autohide_run(void *data);
+int notify_new_readable(int fd, uint32_t mask, void *data);
 int notify_test_run(void *data);
 
 /* background.c */
@@ -673,6 +774,7 @@ int tile_test_run(void *data);
 int overview_test_run(void *data);
 int keybind_test_run(void *data);
 int psel_test_run(void *data);
+int effects_test_run(void *data);
 
 /* screensaver.c */
 void screensaver_init(struct guibux_server *server);

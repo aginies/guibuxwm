@@ -109,3 +109,14 @@ overview_ws_color1 = #3a86ff
 overview_ws_color2 = #86efac
 overview_ws_color3 = #ffb703
 overview_ws_color4 = #c084fc
+
+# animations: master switch (default: true) and duration in ms
+# (default: 200, 0 = off)
+effects = true
+effects_duration_ms = 200
+
+# window open animation: scale, slide, none (default: scale)
+window_open_effect = scale
+
+# notification panel animation: slide, none (default: slide)
+notify_effect = slide
