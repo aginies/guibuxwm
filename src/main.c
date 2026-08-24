@@ -40,6 +40,7 @@
 #include "guibuxwm.h"
 #include <getopt.h>
 #include <limits.h>
+#include <pthread.h>
 #include <signal.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -54,6 +55,14 @@
 
 int main(int argc, char *argv[]) {
 	wlr_log_init(WLR_INFO, NULL);
+	/* SIGUSR1 (guibuxwm-output live re-apply) is read via a signalfd on
+	 * the main thread; block it process-wide so every worker thread
+	 * inherits the blocked mask and the kernel never delivers it to a
+	 * thread that would take the default action (terminate) */
+	sigset_t usr1_mask;
+	sigemptyset(&usr1_mask);
+	sigaddset(&usr1_mask, SIGUSR1);
+	pthread_sigmask(SIG_BLOCK, &usr1_mask, NULL);
 	/* spawned children (terminals, launcher commands) are reaped by a
 	 * targeted SIGCHLD handler instead of accumulating as zombies;
 	 * SIG_IGN is not an option: it is inherited by Xwayland and breaks
