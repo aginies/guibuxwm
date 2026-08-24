@@ -28,7 +28,7 @@ At least one modifier is required:
 |---|---|
 | `terminal` | Start a new terminal |
 | `close` | Close the focused window |
-| `fullscreen` | Toggle fullscreen of the focused window |
+| `fullscreen` | Toggle fullscreen of the focused window (`Mod+f` or `Mod+Up`) |
 | `tile` | Cycle tile mode of the focused window's monitor (free → split → main+stack) |
 | `launcher` | Open the command box (`Mod+e`) |
 | `focus-next` | Cycle window focus |
@@ -119,6 +119,8 @@ keybind = Mod+Left: snap-left
 keybind = Mod+Right: snap-right
 keybind = Mod+Shift+Up: snap-top
 keybind = Mod+Shift+Down: snap-bottom
+keybind = Mod+Ctrl+Shift+Up: snap-top
+keybind = Mod+Ctrl+Shift+Down: snap-bottom
 
 # Switch workspaces with Ctrl+Alt+Left/Right
 keybind = Ctrl+Alt+Left: switch-ws-left

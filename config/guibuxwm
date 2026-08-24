@@ -13,6 +13,7 @@ preferred_app1 = Firefox;firefox
 preferred_app2 = Slack;slack
 preferred_app3 = Nautilus;nautilus
 preferred_app4 = VirtUI-GUI;virtui-gui
+preferred_app5 = Chrome;flatpak run com.google.Chrome
 
 # keyboard (xkb names; leave unset for the system default)
 xkb_layout = fr
@@ -113,7 +114,7 @@ overview_ws_color4 = #c084fc
 # animations: master switch (default: true) and duration in ms
 # (default: 200, 0 = off)
 effects = true
-effects_duration_ms = 200
+effects_duration_ms = 300
 
 # window open animation: scale, slide, none (default: scale)
 window_open_effect = scale
