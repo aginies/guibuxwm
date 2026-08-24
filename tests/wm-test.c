@@ -135,6 +135,14 @@ int tile_test_run(void *data) {
 	return 0;
 }
 
+/* clean exit, same call as the quit keybind (GUIBUX_ACT_QUIT) */
+int quit_test_run(void *data) {
+	struct guibux_server *server = data;
+	wlr_log(WLR_INFO, "quit-test: terminating display");
+	wl_display_terminate(server->wl_display);
+	return 0;
+}
+
 /* position the cursor at the center of workspace row `ws` of output `o` */
 static void cursor_over_row(struct guibux_server *server,
 		struct guibux_output *o, int ws) {

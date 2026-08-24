@@ -152,6 +152,17 @@ int main(int argc, char *argv[]) {
 	}
 	printf("MAPPED %s\n", APP_ID);
 
+	if (argc > 1 && !strcmp(argv[1], "keep")) {
+		// stay alive with the window mapped: the compositor exits first
+		// (clean exit) and must save the position itself
+		while (wl_display_dispatch(display) >= 0) {
+			usleep(100000);
+		}
+		printf("DISCONNECTED\n");
+		wl_display_disconnect(display);
+		return 0;
+	}
+
 	// exit: the compositor sees the unmap and saves the position
 	wl_display_disconnect(display);
 	return 0;

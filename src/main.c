@@ -419,11 +419,26 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.effects_test_timer, 1000);
 	}
 
+	const char *quit_test = getenv("GUIBUX_TEST_QUIT");
+	if (quit_test != NULL) {
+		server.quit_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			quit_test_run, &server);
+		int delay = atoi(quit_test);
+		wl_event_source_timer_update(server.quit_test_timer,
+			delay > 0 ? delay : 2000);
+	}
+
 	wlr_log(WLR_INFO, "guibuxwm running on WAYLAND_DISPLAY=%s", socket);
 	wl_display_run(server.wl_display);
 
+	/* remember the final position of every still-mapped window before
+	 * the clients (and with them the windows) are destroyed */
+	restore_save_all(&server);
+
 	sysinfo_destroy(&server);
 	notify_destroy(&server);
+	screensaver_destroy(&server);
 	if (server.notify_autohide_timer != NULL) {
 		wl_event_source_remove(server.notify_autohide_timer);
 	}
@@ -492,6 +507,9 @@ int main(int argc, char *argv[]) {
 	}
 	if (server.effects_test_timer != NULL) {
 		wl_event_source_remove(server.effects_test_timer);
+	}
+	if (server.quit_test_timer != NULL) {
+		wl_event_source_remove(server.quit_test_timer);
 	}
 
 	launcher_hide(&server);

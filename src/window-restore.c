@@ -9,8 +9,11 @@
 #include <sys/types.h>
 
 // ---------------------------------------------------------------------------
-// State file: app_id|output|workspace|x|y|w|h per line, under
-// XDG_STATE_HOME (or ~/.local/state)
+// State file: app_id|output|box_x|box_y|workspace|x|y|w|h per line, under
+// XDG_STATE_HOME (or ~/.local/state). box_x/box_y is the output's position
+// in the layout: a monitor that reappears under the same name but at a
+// different box is a different physical monitor and must not receive the
+// restored window.
 // ---------------------------------------------------------------------------
 
 static void restore_state_path(char *path, size_t path_size) {
@@ -31,31 +34,34 @@ static void restore_state_path(char *path, size_t path_size) {
 static void restore_write_file(struct guibux_server *server) {
 	char path[PATH_MAX];
 	restore_state_path(path, sizeof(path));
-	/* create the directory chain if it does not exist yet */
+	/* create the directory chain if it does not exist yet: parent
+	 * first, then the state dir itself */
 	char dir[PATH_MAX];
 	snprintf(dir, sizeof(dir), "%s", path);
 	char *slash = strrchr(dir, '/');
 	if (slash != NULL && slash != dir) {
 		*slash = '\0';
-		mkdir(dir, 0755);
 		char *slash2 = strrchr(dir, '/');
 		if (slash2 != NULL && slash2 != dir) {
 			*slash2 = '\0';
 			mkdir(dir, 0755);
+			*slash2 = '/';
 		}
+		mkdir(dir, 0755);
 	}
 	FILE *f = fopen(path, "w");
 	if (f == NULL) {
 		wlr_log(WLR_ERROR, "restore: cannot write %s: %m", path);
 		return;
 	}
-	fprintf(f, "# guibuxwm window positions: app_id|output|workspace|x|y|w|h\n");
+	fprintf(f, "# guibuxwm window positions: "
+		"app_id|output|box_x|box_y|workspace|x|y|w|h\n");
 	for (int i = 0; i < server->window_restore.count; i++) {
 		struct guibux_window_restore_entry *e =
 			&server->window_restore.entries[i];
-		fprintf(f, "%s|%s|%d|%d|%d|%d|%d\n",
-			e->app_id, e->pos.output_name, e->pos.workspace,
-			e->pos.x, e->pos.y, e->pos.w, e->pos.h);
+		fprintf(f, "%s|%s|%d|%d|%d|%d|%d|%d|%d\n",
+			e->app_id, e->pos.output_name, e->pos.box_x, e->pos.box_y,
+			e->pos.workspace, e->pos.x, e->pos.y, e->pos.w, e->pos.h);
 	}
 	fclose(f);
 }
@@ -77,9 +83,25 @@ void restore_load(struct guibux_server *server) {
 			continue;
 		}
 		char app_id[256], output_name[64];
+		int box_x = 0, box_y = 0;
+		bool box_valid = false;
 		int ws, x, y, w, h;
-		if (sscanf(line, "%255[^|]|%63[^|]|%d|%d|%d|%d|%d",
-				app_id, output_name, &ws, &x, &y, &w, &h) != 7) {
+		int n = sscanf(line,
+			"%255[^|]|%63[^|]|%d|%d|%d|%d|%d|%d|%d",
+			app_id, output_name, &box_x, &box_y, &ws, &x, &y, &w, &h);
+		if (n == 9) {
+			box_valid = true;
+		} else if (n == 7) {
+			/* legacy format: app_id|output|ws|x|y|w|h. The 9-field
+			 * parse above left shifted values in place: re-parse */
+			if (sscanf(line, "%255[^|]|%63[^|]|%d|%d|%d|%d|%d",
+					app_id, output_name, &ws, &x, &y, &w, &h) != 7) {
+				wlr_log(WLR_ERROR, "restore: bad line '%s'", line);
+				continue;
+			}
+			wlr_log(WLR_INFO, "restore: legacy line for '%s', "
+				"monitor identity check disabled", app_id);
+		} else {
 			wlr_log(WLR_ERROR, "restore: bad line '%s'", line);
 			continue;
 		}
@@ -107,6 +129,9 @@ void restore_load(struct guibux_server *server) {
 		snprintf(e->app_id, sizeof(e->app_id), "%s", app_id);
 		snprintf(e->pos.output_name, sizeof(e->pos.output_name), "%s",
 			output_name);
+		e->pos.box_x = box_x;
+		e->pos.box_y = box_y;
+		e->pos.box_valid = box_valid;
 		e->pos.workspace = ws;
 		e->pos.x = x;
 		e->pos.y = y;
@@ -158,36 +183,41 @@ static bool restore_is_terminal(struct guibux_server *server,
 // Save / apply
 // ---------------------------------------------------------------------------
 
-void restore_save(struct guibux_server *server, struct guibux_toplevel *toplevel) {
-	if (!server->restore_positions) {
-		return;
-	}
+/* update the in-memory entry for one toplevel; false if the window is
+ * not eligible (terminal, fullscreen, no output, no geometry, ...) */
+static bool restore_update_entry(struct guibux_server *server,
+		struct guibux_toplevel *toplevel) {
 	const char *app_id = toplevel_app_id(toplevel);
 	if (app_id == NULL || app_id[0] == '\0' ||
 			restore_is_terminal(server, app_id)) {
-		return;
+		return false;
 	}
 	/* a fullscreen window's geometry is the whole output: keep the
 	 * last windowed position instead of remembering the fullscreen one */
 	if (toplevel->is_fullscreen) {
-		return;
+		return false;
 	}
 	if (toplevel->scene_tree == NULL) {
-		return;
+		return false;
 	}
 	struct guibux_output *o = guibux_output_for(server,
 		toplevel_output_for(toplevel));
 	if (o == NULL || o->wlr_output->name == NULL) {
-		return;
+		return false;
 	}
 	struct wlr_box geo;
 	toplevel_get_geometry(toplevel, &geo);
 	if (geo.width <= 0 || geo.height <= 0) {
-		return;
+		return false;
 	}
 	int x = (int)toplevel->scene_tree->node.x;
 	int y = (int)toplevel->scene_tree->node.y;
 	int ws = toplevel->workspace;
+	/* remember where this output sits in the layout: at restore time a
+	 * monitor with the same name but a different box is a replugged
+	 * (different physical) monitor and must not take the window */
+	struct wlr_box ob;
+	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &ob);
 
 	int idx = -1;
 	for (int i = 0; i < server->window_restore.count; i++) {
@@ -199,7 +229,7 @@ void restore_save(struct guibux_server *server, struct guibux_toplevel *toplevel
 	}
 	if (idx == -1) {
 		if (server->window_restore.count >= RESTORE_MAX_ENTRIES) {
-			return;
+			return false;
 		}
 		idx = server->window_restore.count++;
 	}
@@ -208,15 +238,45 @@ void restore_save(struct guibux_server *server, struct guibux_toplevel *toplevel
 	snprintf(e->app_id, sizeof(e->app_id), "%s", app_id);
 	snprintf(e->pos.output_name, sizeof(e->pos.output_name), "%s",
 		o->wlr_output->name);
+	e->pos.box_x = ob.x;
+	e->pos.box_y = ob.y;
+	e->pos.box_valid = true;
 	e->pos.workspace = ws;
 	e->pos.x = x;
 	e->pos.y = y;
 	e->pos.w = geo.width;
 	e->pos.h = geo.height;
-
-	restore_write_file(server);
 	wlr_log(WLR_INFO, "restore: saved '%s' -> %s ws%d %d,%d %dx%d",
 		app_id, o->wlr_output->name, ws, x, y, geo.width, geo.height);
+	return true;
+}
+
+void restore_save(struct guibux_server *server, struct guibux_toplevel *toplevel) {
+	if (!server->restore_positions) {
+		return;
+	}
+	if (restore_update_entry(server, toplevel)) {
+		restore_write_file(server);
+	}
+}
+
+/* save every mapped window: called on a clean WM exit, before the
+ * clients are destroyed */
+void restore_save_all(struct guibux_server *server) {
+	if (!server->restore_positions) {
+		return;
+	}
+	int saved = 0;
+	struct guibux_toplevel *t;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (restore_update_entry(server, t)) {
+			saved++;
+		}
+	}
+	if (saved > 0) {
+		restore_write_file(server);
+		wlr_log(WLR_INFO, "restore: saved %d positions on exit", saved);
+	}
 }
 
 enum restore_result restore_apply(struct guibux_server *server,
@@ -255,6 +315,21 @@ enum restore_result restore_apply(struct guibux_server *server,
 		wlr_log(WLR_INFO, "restore: '%s' was on missing output '%s', "
 			"placing normally", app_id, pos.output_name);
 		return RESTORE_NONE;
+	}
+	/* the name matched but the layout box differs: the monitor was
+	 * unplugged and a different one took its name. Never place the
+	 * window on a monitor the app was not last seen on */
+	if (pos.box_valid) {
+		struct wlr_box box;
+		wlr_output_layout_get_box(server->output_layout,
+			saved_o->wlr_output, &box);
+		if (box.x != pos.box_x || box.y != pos.box_y) {
+			wlr_log(WLR_INFO, "restore: '%s' output '%s' moved "
+				"(was %d,%d now %d,%d), placing normally",
+				app_id, pos.output_name, pos.box_x, pos.box_y,
+				box.x, box.y);
+			return RESTORE_NONE;
+		}
 	}
 	bool tiled = saved_o->tile_modes[pos.workspace] != GUIBUX_TILE_FREE;
 	/* a resolution change may have pushed the saved position off the

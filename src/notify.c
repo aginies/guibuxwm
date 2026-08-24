@@ -361,9 +361,12 @@ static void *notify_worker(void *data) {
 	}
 
 	if (n->session_bus != NULL) {
-		dbus_connection_unregister_object_path(n->session_bus,
-			"/org/freedesktop/Notifications");
-		dbus_connection_close(n->session_bus);
+		if (n->daemon) {
+			dbus_connection_unregister_object_path(n->session_bus,
+				"/org/freedesktop/Notifications");
+		}
+		/* dbus_bus_get returns the shared connection: unref only,
+		 * closing it aborts (libdbus) */
 		dbus_connection_unref(n->session_bus);
 		n->session_bus = NULL;
 	}

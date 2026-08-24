@@ -28,6 +28,13 @@ void screensaver_destroy(struct guibux_server *server) {
 		wl_event_source_remove(ss->timer);
 		ss->timer = NULL;
 	}
+	if (ss->idle_inhibit) {
+		/* the manager is torn down by wlroots on display destroy, but
+		 * it asserts that no new_inhibitor listeners remain */
+		wl_list_remove(&ss->inhibit_new.link);
+		wl_list_init(&ss->inhibit_new.link);
+		ss->idle_inhibit = NULL;
+	}
 }
 
 void screensaver_set_timeout(struct guibux_screensaver *ss, int seconds) {

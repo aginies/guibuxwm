@@ -249,6 +249,11 @@ struct guibux_notif_panel {
 
 struct guibux_window_pos {
 	char output_name[64];
+	/* layout box of the saved output: a monitor with the same name but
+	 * a different box is a different physical monitor (replugged) and
+	 * must not receive the restored window */
+	int box_x, box_y;
+	bool box_valid;
 	int workspace;
 	int x, y, w, h;
 };
@@ -545,6 +550,7 @@ struct guibux_server {
 	struct wl_event_source *psel_test_timer;
 	struct wl_event_source *resize_test_timer;
 	struct wl_event_source *notify_test_timer;
+	struct wl_event_source *quit_test_timer;
 	bool psel_test_enter_sent;
 struct guibux_launcher launcher;
     struct guibux_sysinfo sysinfo;
@@ -803,6 +809,7 @@ void parse_output_placements(struct guibux_server *server);
 void restore_derive_terminal_id(struct guibux_server *server);
 void restore_load(struct guibux_server *server);
 void restore_save(struct guibux_server *server, struct guibux_toplevel *toplevel);
+void restore_save_all(struct guibux_server *server);
 enum restore_result restore_apply(struct guibux_server *server, struct guibux_toplevel *toplevel);
 void restore_free(struct guibux_server *server);
 
@@ -836,6 +843,7 @@ int overview_test_run(void *data);
 int keybind_test_run(void *data);
 int psel_test_run(void *data);
 int effects_test_run(void *data);
+int quit_test_run(void *data);
 
 /* screensaver.c */
 void screensaver_init(struct guibux_server *server);

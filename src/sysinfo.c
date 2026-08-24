@@ -589,7 +589,8 @@ sysinfo_worker(void *data)
     }
 
     if (si->system_bus) {
-        dbus_connection_close(si->system_bus);
+        /* dbus_bus_get returns the shared connection: unref only,
+         * closing it aborts (libdbus) */
         dbus_connection_unref(si->system_bus);
         si->system_bus = NULL;
     }
