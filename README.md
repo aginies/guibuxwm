@@ -8,39 +8,46 @@ Derived from [tinywl](https://github.com/swaywm/wlroots/tree/master/tinywl).
 
 ## Features
 
-- xdg-shell application windows: focus, move, resize, fullscreen
-- X11 application support via XWayland: X11 windows (e.g. flatpak apps)
-  map as regular toplevels with focus, tiling, fullscreen, workspaces and
-  topbar entries; `DISPLAY` is set automatically for spawned clients, and
-  `Mod+drag` moves an X11 window (it has no titlebar)
-- Focus follows mouse (keyboard focus tracks cursor, configurable)
-- GNOME-style overview (`F12`): all workspaces and windows visible, click to
-  select, drag a window onto another workspace row (or another monitor) to move it
-- Tile modes (`Mod+t`): free / left-right split / main+stack, per monitor
-- Snap to half-screen (`Mod+Left` / `Mod+Right`): left or right 50% of monitor
-- Command box (`Mod+e`) to launch programs by typing a command, with
-  `$PATH` command suggestions (Up/Down to select) and up to 5 configurable
-  preferred apps listed above the input line
-- Topbar on each monitor: monitor letter (A, B, C, ...) on the left, date
-  and time on the right (updates every second); tiled windows are laid out
-  below it; network status indicator on the right (right-click to launch
-  `nmtui`)
-- Workspaces per monitor (4, numbered 1 2 3 4): `Mod+1..4` switch,
+- **xdg-shell windows:** focus, move, resize, fullscreen
+- **X11 via XWayland:** X11 windows (e.g. flatpak apps) map as regular
+  toplevels with focus, tiling, fullscreen, workspaces and topbar entries;
+  `DISPLAY` is set automatically for spawned clients, `Mod+drag` moves an
+  X11 window (it has no titlebar)
+- **Focus follows mouse** (keyboard focus tracks cursor, configurable)
+- **GNOME-style overview** (`F12`): all workspaces and windows visible,
+  click to select, drag a window onto another workspace row (or another
+  monitor) to move it
+- **Tile modes** (`Mod+t`): free / left-right split / main+stack, per monitor
+- **Snap to half-screen** (`Mod+Left` / `Mod+Right`): left or right 50% of monitor
+- **Command box** (`Mod+e`) with icon support: launch programs by typing,
+  with `$PATH` suggestions, up to 5 configurable preferred apps (each with
+  optional icons), and `.desktop` file icon resolution through the configured
+  icon theme
+- **Topbar** on each monitor: monitor letter (A, B, C, ...) on the left,
+  date and time on the right (updates every second); tiled windows laid out
+  below it; network status and audio indicators (scroll to adjust volume,
+  right-click to open `pavucontrol` or `nmtui`)
+- **Workspaces** per monitor (4, numbered 1–4): `Mod+1..4` switch,
   `Mod+Shift+1..4` move the focused window; workspace numbers shown in the
   topbar with the current one highlighted (clickable to switch)
-- Terminal command configurable (default: `gnome-terminal`), started by `Mod+Return`
-- Configurable keyboard layout (e.g. French), variant and options
-- Config file for keybinds, terminal, keyboard, colors, and background image
-- Desktop background image (PNG or JPEG) with configurable scale mode (stretch/fit/fill/tile)
-- Multi-monitor support:
-  - new windows open on the output under the mouse cursor
-  - move windows between monitors with a keybind
-  - optional manual monitor arrangement
-- Cascading window placement
-- Session environment: sets `XDG_SESSION_TYPE`/`XDG_CURRENT_DESKTOP` for
-  spawned apps and imports `DISPLAY`/`WAYLAND_DISPLAY` into the systemd
+- **Terminal** command configurable (default: `gnome-terminal`), started by
+  `Mod+Return`
+- **Keyboard layout** configurable (xkb layout, variant, options)
+- **Config file** for keybinds, terminal, keyboard, colors, backgrounds,
+  icons, effects, and more
+- **Desktop background** image (PNG or JPEG) with per-workspace images and
+  configurable scale mode (stretch / fit / fill / tile)
+- **Multi-monitor support:** new windows open under the mouse cursor, move
+  windows between monitors, optional manual monitor arrangement
+- **Cascading window placement**
+- **Session environment:** sets `XDG_SESSION_TYPE` / `XDG_CURRENT_DESKTOP`
+  for spawned apps, imports `DISPLAY` / `WAYLAND_DISPLAY` into the systemd
   user manager (restarting xdg-desktop-portal), so clicking a URL in an
   app opens the default browser
+- **Desktop notifications:** registers as the session notification daemon
+  (`org.freedesktop.Notifications`), shows a topbar bell indicator with
+  count, and a right-aligned panel with auto-show/auto-hide
+- **Optional animations** for window open/close, retile, and notification panel
 
 ## Requirements
 
@@ -115,8 +122,43 @@ Run:
 | `Alt+Escape` | Quit |
 | `Mod+Alt+Escape` | Quit |
 
-Mouse: click a window to focus it, drag its titlebar to move, drag its
-edges to resize. Dragging or resizing a fullscreen window leaves fullscreen.
+### Mouse
+
+- click a window to focus it, drag its titlebar to move, drag its edges to
+  resize. Dragging or resizing a fullscreen window leaves fullscreen.
+- `Alt` + left drag on a window: move the window (GNOME-style); the window
+  stays where it is dropped. Works on Wayland and X11 windows.
+- `Mod` + drag on an X11 window: move the window (X11 windows have no
+  titlebar to grab).
+
+### Audio
+
+The topbar shows `VOL <pct>%` and `MIC <pct>%` indicators (right side,
+next to the network indicator) when an audio system is available
+(PulseAudio or PipeWire, via `pactl`). `<pct>%` is replaced by `MUTE`
+while muted.
+
+- scroll up/down over an indicator: adjust that volume by 1% per step
+- left click: toggle mute
+- right click: open the mixer (`pavucontrol`)
+
+Hardware media keys work without any keybind:
+
+| Key | Action |
+|---|---|
+| `XF86AudioRaiseVolume` | Raise volume by 5% |
+| `XF86AudioLowerVolume` | Lower volume by 5% |
+| `XF86AudioMute` | Toggle mute |
+| `XF86AudioMicMute` | Toggle mic mute |
+
+### Network
+
+The topbar shows the network status on the right side (SSID for WiFi,
+interface name for Ethernet, or "No net"/"NM" when unavailable). Updated
+via NetworkManager D-Bus.
+
+- left click: no action
+- right click: launch `nmtui` in the configured terminal
 
 ### Command box (`Mod+e`)
 
@@ -132,11 +174,61 @@ selected command, with any arguments you typed after the first word appended
 no match, Enter runs exactly what you typed.
 
 Preferred apps configured with `preferred_app1..5` (see [Config](../docs/config.md#preferred-apps))
-are always listed above the input line, up to 5. With nothing selected, the
-first Up selects the preferred app closest to the input line; further Up/Down
-moves through the preferred apps and the matches. Enter on a selected
-preferred app runs its command (typed arguments after the first word are
-appended, same as for matches).
+are always listed above the input line, up to 5. Each preferred app can
+optionally include an icon (`Name;command;icon-name`). Icons are resolved
+from the configured `icon_theme` (or the system GTK icon theme, falling back
+to Adwaita) and drawn to the left of the app name. Matches from `$PATH`
+and `.desktop` files also show their icons when available.
+
+With nothing selected, the first Up selects the preferred app closest to the
+input line; further Up/Down moves through the preferred apps and the matches.
+Enter on a selected preferred app runs its command (typed arguments after the
+first word are appended, same as for matches).
+
+### Overview (F12)
+
+`F12` shows a GNOME-style overview: every output displays its 4 workspaces
+as rows (workspace 1 on top) with the windows of each workspace as
+equal-width cells labeled `A1: title` (monitor letter + workspace number).
+A semi-transparent dim covers each output.
+
+A workspace column on the left edge of each output lists all four
+workspaces (`A1`..`A4`), so empty workspaces stay visible. While a window
+is being dragged, the column cell under the cursor is highlighted in the
+workspace color — that is where the window will be dropped.
+
+- drag a window onto a row (or its column cell) to move it to that
+  workspace, including across monitors
+- click an empty area to switch to the workspace of the clicked row
+- click a window to select it (switches to its workspace)
+- `1`..`4` switch to that workspace, `Esc`/`F12` close the overview
+
+### Notifications
+
+guibuxwm registers as the session-bus notification daemon
+(`org.freedesktop.Notifications`, like dunst/mako), so any app that sends
+desktop notifications (via `libnotify`/D-Bus) is handled by the compositor
+itself.
+
+- **Topbar indicator:** a bell + pending count on each monitor, shown while
+  there are unread notifications. Click it to open the panel on that monitor.
+- **Panel:** a right-aligned list (up to 10 rows) below the topbar, with a
+  "Clear all" button in the header.
+  - click a row to focus the window that sent the notification, dismiss that
+    notification and close the panel
+  - "Clear all" dismisses everything; the panel closes when empty
+  - click empty panel space or press `Esc` to close without dismissing
+- **Auto-show:** a new notification pops the panel on the monitor under the
+  cursor.
+- **Auto-hide:** the panel closes again after 2 seconds unless the cursor is
+  over it (hovering keeps it open and restarts the delay).
+
+If there is no session bus, or another daemon already owns the name, the
+D-Bus side stays off but the indicator and panel still work for
+notifications added internally.
+
+The panel slide animation is controlled by `notify_effect` (and the global
+`effects` / `effects_duration_ms` keys).
 
 ### Tile modes (`Mod+t`)
 
@@ -281,8 +373,17 @@ Or individually:
 tests/run-ws-test.sh [ws]        # workspace state machine (default ws 2)
 tests/run-tile-test.sh <mode>    # tiling: 0=free, 1=split, 2=main+stack
 tests/run-topbar-test.sh         # per-output topbar (number + time)
-tests/run-launcher-test.sh       # command box (show/type/enter/escape, preferred apps)
+tests/run-audio-test.sh          # audio sysinfo poll + VOL/MIC indicators
+tests/run-launcher-test.sh       # command box (show/type/enter/escape, icons)
 tests/run-config-test.sh         # config file (term, keybind, colors)
+tests/run-notify-test.sh         # notifications (D-Bus, auto-show, auto-hide)
+tests/run-effects-test.sh        # window open/close animations
+tests/run-scroll-test.sh         # scroll over VOL/MIC indicators
+tests/run-altdrag-test.sh        # Alt+drag window move
+tests/run-psel-test.sh           # primary selection
+tests/run-resize-test.sh         # window resize
+tests/run-overview-test.sh       # F12 overview
+tests/run-xwayland-test.sh       # XWayland support
 ```
 
 The compositor can also be run headless directly for smoke testing:

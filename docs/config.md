@@ -46,7 +46,7 @@ the first word are appended, same as for `$PATH` matches).
 **Example:**
 
 ```
-preferred_app1 = Firefox;firefox
+preferred_app1 = Firefox;firefox;firefox
 preferred_app2 = Slack;slack;slack-new
 preferred_app3 = Nautilus;nautilus
 preferred_app4 = VirtUI-GUI;virtui-gui

@@ -57,7 +57,9 @@ shortly after start it shows the box, types the command, presses Enter
 (then shows and Escapes again), logging `launcher-test: ENTER OK` /
 `ESCAPE OK` on success. If the config defines preferred apps, it also
 verifies that Up selects the one closest to the input line
-(`launcher-test: PREFERRED UP OK`):
+(`launcher-test: PREFERRED UP OK`). The icon probe logs the resolved icon
+path for the selected match (`launcher-test: ICON '...'`) or `(none)` if
+the theme has no such icon:
 
 ```sh
 GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_LAUNCHER_CMD="echo ok > /tmp/x" \
@@ -168,7 +170,7 @@ Test clients are built by the main build and live in `tests/`:
 | Variable | Purpose |
 |---|---|
 | `GUIBUX_TEST_EXTRA_OUTPUTS=N` | Force N+1 virtual 1280x720 outputs |
-| `GUIBUX_TEST_LAUNCHER_CMD="cmd"` | Type `cmd` in the launcher headlessly |
+| `GUIBUX_TEST_LAUNCHER_CMD="cmd"` | Type `cmd` in the launcher headlessly; also probes icon resolution for the selected match |
 | `GUIBUX_TEST_TILE_MODE=N` | Set tile mode (0=free, 1=split, 2=main+stack) |
 | `GUIBUX_TEST_TOPBAR=1` | Verify topbars after start |
 | `GUIBUX_TEST_AUDIO=1` | Verify audio poll + VOL/MIC indicators |

@@ -72,7 +72,11 @@ Window layout management:
 ## src/launcher.c
 
 Command box (`Mod+e`): shows an input field, matches `$PATH` commands,
-supports preferred apps, handles Enter/Escape/mouse click.
+supports preferred apps, handles Enter/Escape/mouse click. Includes icon
+support: resolves icons from a configurable icon theme (or GTK icon theme),
+loads PNG icons via stb_image, caches them per session, and draws them
+to the left of app names. Also parses `.desktop` files and resolves their
+`Icon=` entries through the same theme path.
 
 ## src/keyboard.c
 
