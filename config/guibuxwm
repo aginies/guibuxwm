@@ -13,10 +13,10 @@ term = gnome-terminal
 # theme or icon is skipped silently (no icon, no error). Up/Down
 # selects, Enter launches.
 preferred_app1 = Firefox;firefox;firefox
-preferred_app2 = Slack;slack
-preferred_app3 = Nautilus;nautilus
-preferred_app4 = VirtUI-GUI;virtui-gui
-preferred_app5 = Chrome;flatpak run com.google.Chrome
+preferred_app2 = Slack;slack;slack
+preferred_app3 = Nautilus;nautilus;nautilus
+preferred_app4 = VirtUI-GUI;virtui-gui;virtui-gui
+preferred_app5 = Chrome;flatpak run com.google.Chrome;chromium
 
 # icon theme for launcher icons (leave unset to use the gtk
 # gtk-icon-theme-name, then Adwaita)
