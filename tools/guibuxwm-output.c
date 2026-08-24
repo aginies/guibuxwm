@@ -74,7 +74,15 @@ static void usage(void) {
 		"  --transform T         rotation for 'set': normal|90|180|270\n"
 		"  --no-apply            save to the config without signaling the compositor\n"
 		"  -c FILE               config file (default: GUIBUX_CONFIG or\n"
-		"                        ~/.config/guibuxwm/config)\n");
+		"                        ~/.config/guibuxwm/config)\n"
+		"\n"
+		"Examples:\n"
+		"  guibuxwm-output list\n"
+		"  guibuxwm-output set HDMI-A-1 1920 0 --mode 1920x1080\n"
+		"  guibuxwm-output set DP-1 0 0 --transform 90\n"
+		"  guibuxwm-output enable HDMI-A-1\n"
+		"  guibuxwm-output disable HDMI-A-1\n"
+		"  guibuxwm-output apply\n");
 	exit(1);
 }
 
@@ -394,6 +402,45 @@ static struct state_output *state_find(const struct state_output *outs,
 	return NULL;
 }
 
+/* true when another enabled entry sits at the same position: two outputs
+ * at one XxY mirror the screen instead of extending it */
+static bool position_taken(const struct entry *arr, int num,
+		const char *name, int x, int y) {
+	for (int i = 0; i < num; i++) {
+		if (arr[i].disabled || !strcmp(arr[i].name, name)) {
+			continue;
+		}
+		if (arr[i].x == x && arr[i].y == y) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/* first free slot right of every enabled entry except name: extends the
+ * row instead of mirroring; width from the state file, 1920 when unknown */
+static void position_next(const struct entry *arr, int num,
+		const char *name, const struct state_output *outs, int nouts,
+		int *x, int *y) {
+	int right = 0;
+	for (int i = 0; i < num; i++) {
+		if (arr[i].disabled || !strcmp(arr[i].name, name)) {
+			continue;
+		}
+		int w = 1920;
+		const struct state_output *so = state_find(outs, nouts,
+			arr[i].name);
+		if (so != NULL && so->w > 0) {
+			w = so->w;
+		}
+		if (arr[i].x + w > right) {
+			right = arr[i].x + w;
+		}
+	}
+	*x = right;
+	*y = 0;
+}
+
 /* the modes list is "WxH@refresh,WxH@refresh,...": exact token match, so
  * 1920x1080 does not match inside 1920x10800 or 11920x1080 */
 static int mode_list_has(const char *modes, int w, int h) {
@@ -577,6 +624,12 @@ int main(int argc, char *argv[]) {
 			return 1;
 		}
 		e->disabled = false;
+		if (position_taken(entries, num, name, e->x, e->y)) {
+			fprintf(stderr,
+				"guibuxwm-output: warning: %s: %dx%d is already used by "
+				"another output; this mirrors, not extends\n",
+				name, e->x, e->y);
+		}
 		if (mode_w > 0) {
 			e->mode_w = mode_w;
 			e->mode_h = mode_h;
@@ -599,6 +652,16 @@ int main(int argc, char *argv[]) {
 				e->x = so->x;
 				e->y = so->y;
 			}
+		}
+		if (position_taken(entries, num, name, e->x, e->y)) {
+			int nx = 0, ny = 0;
+			position_next(entries, num, name, outs, nouts, &nx, &ny);
+			fprintf(stderr,
+				"guibuxwm-output: %s: %dx%d is taken by another output; "
+				"placing at %dx%d (extend, not mirror)\n",
+				name, e->x, e->y, nx, ny);
+			e->x = nx;
+			e->y = ny;
 		}
 	} else if (!strcmp(cmd, "disable")) {
 		if (npos > 2) {

@@ -91,11 +91,13 @@ expect_line "set exact mode" "HEADLESS-2@1920x0:640x480:90,HEADLESS-1@0x0:1280x7
 run disable HEADLESS-1 --no-apply >/dev/null
 expect_line "disable" "HEADLESS-2@1920x0:640x480:90,HEADLESS-1@off"
 
-# enable: x=y=0 entry takes the state position (1920x0). The mode is gone:
-# NAME@off does not encode a mode, so re-enabling falls back to the
-# preferred mode
-run enable HEADLESS-1 --no-apply >/dev/null
-expect_line "enable" "HEADLESS-2@1920x0:640x480:90,HEADLESS-1@1920x0"
+# enable: x=y=0 entry takes the state position (1920x0), but that is taken
+# by HEADLESS-2: auto-placed right of it (1920+1280) to extend, not mirror.
+# The mode is gone: NAME@off does not encode a mode, so re-enabling falls
+# back to the preferred mode
+out=$(run enable HEADLESS-1 --no-apply 2>&1)
+expect_grep "enable extends" "placing at 3200x0" "$out"
+expect_line "enable" "HEADLESS-2@1920x0:640x480:90,HEADLESS-1@3200x0"
 
 # brand-new enable on a config without an outputs line: appended, other
 # lines kept, state position taken
@@ -113,6 +115,31 @@ run set HEADLESS-1 640 0 --no-apply >/dev/null
 expect_line "replace" "HEADLESS-1@640x0"
 n=$(grep -c "^outputs = " "$cfg")
 [ "$n" -eq 1 ] || fail_msg "replace: $n outputs lines"
+
+# set on a position already used by another enabled output: mirror warning,
+# still saved (explicit coordinates are the user's call)
+out=$(run set HEADLESS-2 640 0 --no-apply 2>&1)
+expect_grep "set mirror warns" "mirrors, not extends" "$out"
+expect_line "set mirror saved" "HEADLESS-1@640x0,HEADLESS-2@640x0"
+
+# enable of a disabled output (state box 0x0) must not land on 0x0 under
+# the primary: auto-placed right of it (0+1280)
+cat >"$cfg" <<EOF
+outputs = HEADLESS-1@0x0
+EOF
+cat >"$state" <<EOF
+# guibuxwm outputs: pid=0
+# name x y w h mode_w mode_h transform enabled modes
+HEADLESS-1 0 0 1280 720 1280 720 0 1 1280x720@60
+HEADLESS-2 0 0 0 0 0 0 0 0 1280x720@60
+EOF
+out=$(run enable HEADLESS-2 --no-apply 2>&1)
+expect_grep "enable disabled extends" "placing at 1280x0" "$out"
+expect_line "enable disabled extends" "HEADLESS-1@0x0,HEADLESS-2@1280x0"
+write_state 0
+cat >"$cfg" <<EOF
+outputs = HEADLESS-1@0x0
+EOF
 
 # no state file: list fails, --no-apply still saves
 rm -f "$state"
