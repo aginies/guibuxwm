@@ -53,7 +53,7 @@ case "${1:-}" in
 		MESON_ARGS="--buildtype=debug"
 		;;
 	release)
-		MESON_ARGS="--buildtype=release -Doptimization=o2"
+		MESON_ARGS="--buildtype=release -Doptimization=2"
 		;;
 	sanitize)
 		MESON_ARGS="--buildtype=debug -Db_sanitize=address,undefined"
