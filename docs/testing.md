@@ -115,7 +115,10 @@ start, after the first UPower poll at ~5s). The runner script probes
 `upower -d` for ground truth and passes it via
 `GUIBUX_TEST_BATTERY_EXPECT=yes|""`: with a battery device the polled
 value must be a `NN%` string and the topbar indicator must be rendered;
-without one the value must stay empty. Logs
+without one the value must stay empty. When `upower -d` shows a
+"time to empty/full" line the runner also passes
+`GUIBUX_TEST_BATTERY_ETA=yes` and the polled time estimate must be
+non-zero (the topbar tooltip shows the remaining time). Logs
 `battery-test: OK (N outputs, battery NN%|off)` on success:
 
 ```sh

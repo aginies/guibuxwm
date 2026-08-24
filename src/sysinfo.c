@@ -179,6 +179,47 @@ dbus_get_property_uint32(DBusConnection *conn, const char *service,
 }
 
 /*
+ * Get a D-Bus property as int64 (e.g. UPower TimeToEmpty/TimeToFull,
+ * which newer UPower exposes as int64 instead of uint32).
+ * Returns 0 on failure or type mismatch.
+ */
+static int64_t
+dbus_get_property_int64(DBusConnection *conn, const char *service,
+                         const char *object_path,
+                         const char *interface, const char *property,
+                         DBusError *err)
+{
+    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
+        interface, property, err);
+    if (!reply) {
+        return 0;
+    }
+
+    DBusMessageIter iter, variant;
+    dbus_message_iter_init(reply, &iter);
+    dbus_message_iter_recurse(&iter, &variant);
+
+    int64_t val = 0;
+    dbus_uint32_t type = dbus_message_iter_get_arg_type(&variant);
+    if (type == DBUS_TYPE_INT64) {
+        dbus_int64_t v;
+        dbus_message_iter_get_basic(&variant, &v);
+        val = v;
+    } else if (type == DBUS_TYPE_INT32) {
+        dbus_int32_t v;
+        dbus_message_iter_get_basic(&variant, &v);
+        val = v;
+    } else if (type == DBUS_TYPE_INT16) {
+        dbus_int16_t v;
+        dbus_message_iter_get_basic(&variant, &v);
+        val = v;
+    }
+
+    dbus_message_unref(reply);
+    return val;
+}
+
+/*
  * Get a D-Bus property as double (e.g. UPower Percentage).
  * Returns -1 on failure or type mismatch.
  */
@@ -621,13 +662,13 @@ sysinfo_update_battery(struct guibux_sysinfo *si)
             if (dbus_error_is_set(&err)) {
                 dbus_error_free(&err);
             }
-            dbus_uint32_t tte = dbus_get_property_uint32(
+            int64_t tte = dbus_get_property_int64(
                 si->system_bus, UPower_SERVICE, dev_path,
                 UPower_DEVICE_IFACE, "TimeToEmpty", &err);
             if (dbus_error_is_set(&err)) {
                 dbus_error_free(&err);
             }
-            dbus_uint32_t ttf = dbus_get_property_uint32(
+            int64_t ttf = dbus_get_property_int64(
                 si->system_bus, UPower_SERVICE, dev_path,
                 UPower_DEVICE_IFACE, "TimeToFull", &err);
             if (dbus_error_is_set(&err)) {

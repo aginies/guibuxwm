@@ -1000,6 +1000,11 @@ int battery_test_run(void *data) {
 	 * "yes" = a battery device exists, "" = it must stay hidden */
 	const char *expect = getenv("GUIBUX_TEST_BATTERY_EXPECT");
 	bool want = expect != NULL && strcmp(expect, "yes") == 0;
+	/* the runner probes `upower -d` for a "time to empty/full" line:
+	 * when UPower has an estimate, the poll must carry it (tooltip
+	 * shows the remaining time) */
+	const char *expect_eta = getenv("GUIBUX_TEST_BATTERY_ETA");
+	bool want_eta = expect_eta != NULL && strcmp(expect_eta, "yes") == 0;
 	struct guibux_sysinfo_snapshot snap;
 	sysinfo_get(&server->sysinfo, &snap);
 	struct wlr_output *sorted[16];
@@ -1029,6 +1034,11 @@ int battery_test_run(void *data) {
 			}
 			if (strcmp(o->topbar_battery, snap.bat) != 0) {
 				wlr_log(WLR_ERROR, "battery-test: FAIL indicator not rendered");
+				return 0;
+			}
+			if (want_eta && snap.bat_eta_sec <= 0) {
+				wlr_log(WLR_ERROR, "battery-test: FAIL no time estimate (state %d)",
+					snap.bat_state);
 				return 0;
 			}
 		} else {

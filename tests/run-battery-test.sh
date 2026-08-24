@@ -9,10 +9,16 @@ ROOT="$SCRIPT_DIR/.."
 COMP="$ROOT/build/guibuxwm"
 log=$(mktemp)
 expect=""
+eta=""
 if command -v upower >/dev/null 2>&1 && upower -d 2>/dev/null | grep -q "battery"; then
   expect="yes"
+  # UPower prints a "time to empty/full" line only when it has an
+  # estimate; the poll must carry it for the tooltip remaining time
+  if upower -d 2>/dev/null | grep -qE "time to (empty|full):"; then
+    eta="yes"
+  fi
 fi
-GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_BATTERY=1 GUIBUX_TEST_BATTERY_EXPECT="$expect" GUIBUX_TERM=true WLR_RENDERER=gles2 "$COMP" >"$log" 2>&1 &
+GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_BATTERY=1 GUIBUX_TEST_BATTERY_EXPECT="$expect" GUIBUX_TEST_BATTERY_ETA="$eta" GUIBUX_TERM=true WLR_RENDERER=gles2 "$COMP" >"$log" 2>&1 &
 comp=$!
 sleep 8
 kill $comp 2>/dev/null
