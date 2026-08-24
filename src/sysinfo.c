@@ -213,6 +213,18 @@ dbus_get_property_int64(DBusConnection *conn, const char *service,
         dbus_int16_t v;
         dbus_message_iter_get_basic(&variant, &v);
         val = v;
+    } else if (type == DBUS_TYPE_UINT32) {
+        dbus_uint32_t v;
+        dbus_message_iter_get_basic(&variant, &v);
+        val = v;
+    } else if (type == DBUS_TYPE_UINT16) {
+        dbus_uint16_t v;
+        dbus_message_iter_get_basic(&variant, &v);
+        val = v;
+    } else if (type == DBUS_TYPE_BYTE) {
+        unsigned char v;
+        dbus_message_iter_get_basic(&variant, &v);
+        val = v;
     }
 
     dbus_message_unref(reply);

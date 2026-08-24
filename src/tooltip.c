@@ -77,7 +77,7 @@ static void tooltip_show(struct guibux_server *server, struct guibux_output *o) 
 	} else if (snap.bat_state == 2 && snap.bat_eta_sec > 0) {
 		fmt_eta(snap.bat_eta_sec, eta, sizeof(eta));
 		snprintf(text, sizeof(text), "BAT %s - %s left", snap.bat, eta);
-	} else if (snap.bat_state == 4) {
+	} else if (snap.bat_state == 3) {
 		snprintf(text, sizeof(text), "BAT %s - fully charged", snap.bat);
 	} else {
 		snprintf(text, sizeof(text), "BAT %s", snap.bat);
