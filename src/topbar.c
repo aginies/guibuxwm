@@ -813,9 +813,16 @@ void topbar_renumber(struct guibux_server *server) {
 	int n = outputs_sorted_by_x(server, sorted, boxes, 16);
 	for (int i = 0; i < n; i++) {
 		struct guibux_output *o = guibux_output_for(server, sorted[i]);
-		if (o != NULL && o->topbar_buffer != NULL) {
-			o->topbar_number = i + 1;
-			o->topbar_dirty = true;
+		/* the number must be set even without a buffer: an output created
+		 * before it has a mode (0x0 box) gets its buffer later, and a
+		 * missing number would render the labels as '@' until the next
+		 * output event */
+		if (o == NULL) {
+			continue;
+		}
+		o->topbar_number = i + 1;
+		o->topbar_dirty = true;
+		if (o->topbar_buffer != NULL) {
 			topbar_render(o);
 		}
 	}

@@ -251,6 +251,29 @@ void output_destroy(struct wl_listener *listener, void *data) {
 	struct guibux_output *output = wl_container_of(listener, output, destroy);
 	struct guibux_server *server = output->server;
 
+	/* windows on this output keep a back-pointer to it: clear it before
+	 * the struct is freed or toplevel_output_for() would dereference it */
+	struct guibux_toplevel *t;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->output == output) {
+			t->output = NULL;
+		}
+	}
+	if (server->cursor_topbar_output == output) {
+		server->cursor_topbar_output = NULL;
+	}
+	/* a panel open on this output would keep a dangling output pointer:
+	 * free it now, without the slide-out (the animation would ref the
+	 * dead output) */
+	if (server->notify_panel.output == output->wlr_output) {
+		if (server->notify_panel.hiding) {
+			effects_cancel_node(server,
+				&server->notify_panel.scene_node->node);
+		}
+		notify_panel_free_node(server);
+		server->notify_panel.active = false;
+	}
+
 	topbar_destroy(output);
 	background_destroy(output);
 	if (output->overview_dim) {

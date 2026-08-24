@@ -53,21 +53,27 @@ void background_load_images(struct guibux_server *server) {
 }
 
 void background_destroy_images(struct guibux_server *server) {
+	/* the fallback surface is shared between workspaces: the first slot
+	 * holding it destroys it, the rest skip. The slots must stay intact
+	 * during the scan (nulling them first would hide the share from the
+	 * later workspaces and free the surface once per workspace) */
 	for (int ws = 0; ws < NUM_WORKSPACES; ws++) {
-		if (server->bg_surfaces[ws]) {
-			/* the fallback surface is shared between workspaces */
-			bool shared = false;
-			for (int j = 0; j < ws; j++) {
-				if (server->bg_surfaces[j] == server->bg_surfaces[ws]) {
-					shared = true;
-					break;
-				}
-			}
-			if (!shared) {
-				cairo_surface_destroy(server->bg_surfaces[ws]);
-			}
-			server->bg_surfaces[ws] = NULL;
+		if (!server->bg_surfaces[ws]) {
+			continue;
 		}
+		bool shared = false;
+		for (int j = 0; j < ws; j++) {
+			if (server->bg_surfaces[j] == server->bg_surfaces[ws]) {
+				shared = true;
+				break;
+			}
+		}
+		if (!shared) {
+			cairo_surface_destroy(server->bg_surfaces[ws]);
+		}
+	}
+	for (int ws = 0; ws < NUM_WORKSPACES; ws++) {
+		server->bg_surfaces[ws] = NULL;
 		free(server->bg_paths[ws]);
 		server->bg_paths[ws] = NULL;
 	}

@@ -667,6 +667,9 @@ void notify_draw_indicator(cairo_surface_t *cs, cairo_t *cr, FT_Face face,
 	int x, int baseline, int scale, int count, uint32_t color);
 void notify_panel_show(struct guibux_server *server, struct wlr_output *output);
 void notify_panel_hide(struct guibux_server *server);
+/* free the panel node + buffer (also used when the panel's output is
+ * destroyed and the slide-out cannot run) */
+void notify_panel_free_node(struct guibux_server *server);
 /* completion of the slide-out animation: frees the panel node */
 void notify_panel_hide_done(void *data);
 void notify_panel_render(struct guibux_server *server);
