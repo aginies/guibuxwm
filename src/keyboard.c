@@ -2,6 +2,7 @@
 #include <wlr/util/log.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -96,6 +97,196 @@ void spawn_network_info(struct guibux_server *server) {
 	}
 	spawn_track(pid);
 	wlr_log(WLR_INFO, "spawned network info terminal pid %d", pid);
+}
+
+/* fork /bin/sh -c cmd, track the child for reaping */
+static void spawn_cmd(const char *cmd) {
+	pid_t pid = fork();
+	if (pid < 0) {
+		wlr_log(WLR_ERROR, "fork failed: %m");
+		return;
+	}
+	if (pid == 0) {
+		execl("/bin/sh", "/bin/sh", "-c", cmd, (void *)NULL);
+		_exit(127);
+	}
+	spawn_track(pid);
+}
+
+void spawn_mixer(struct guibux_server *server) {
+	(void)server;
+	spawn_cmd("pavucontrol 2>/dev/null");
+	wlr_log(WLR_INFO, "spawned pavucontrol");
+}
+
+/*
+ * Make the session environment complete so apps can open URLs:
+ *  - children we spawn (terminals, launcher apps) inherit our env, so
+ *    fix it here: a WM started from a TTY has XDG_SESSION_TYPE=tty and
+ *    no XDG_CURRENT_DESKTOP;
+ *  - xdg-desktop-portal, its backends and gnome-terminal-server are
+ *    systemd user services (D-Bus activated) started with the bare
+ *    user-manager env (no DISPLAY / WAYLAND_DISPLAY). A URL click in
+ *    such an app forks the browser with that env: no WAYLAND_DISPLAY
+ *    means the browser assumes an X11 session, no DISPLAY means it
+ *    dies with "no DISPLAY environment variable specified". Set the
+ *    display variables on the user manager (SetEnvironment via
+ *    busctl; the `systemd` binary is not always installed) and
+ *    restart the affected services so the running ones pick them up.
+ *    Best effort: never fail startup.
+ */
+void setup_session_environment(struct guibux_server *server) {
+	setenv("XDG_SESSION_TYPE", "wayland", true);
+	if (getenv("XDG_CURRENT_DESKTOP") == NULL) {
+		setenv("XDG_CURRENT_DESKTOP", "guibuxwm", true);
+		setenv("XDG_SESSION_DESKTOP", "guibuxwm", true);
+	}
+	if (getenv("DBUS_SESSION_BUS_ADDRESS") == NULL) {
+		wlr_log(WLR_INFO, "session env: no DBUS_SESSION_BUS_ADDRESS, "
+			"skipping portal environment import");
+		return;
+	}
+	if (getenv("GUIBUX_TEST_EXTRA_OUTPUTS") != NULL ||
+			(getenv("GUIBUX_OUTPUTS") != NULL &&
+			 getenv("GUIBUX_OUTPUTS")[0] == '\0')) {
+		/* headless test: don't touch the real user session (the
+		 * service restarts below would kill the user's terminals) */
+		return;
+	}
+	/* main.c setenv()s these right before calling us; children we
+	 * spawn inherit the same values, so import exactly those */
+	const char *wl_socket = getenv("WAYLAND_DISPLAY");
+	const char *display = getenv("DISPLAY");
+	const char *desktop = getenv("XDG_CURRENT_DESKTOP");
+	char cmd[1024];
+	if (display != NULL) {
+		snprintf(cmd, sizeof(cmd),
+			"busctl --user call org.freedesktop.systemd1 "
+			"/org/freedesktop/systemd1 "
+			"org.freedesktop.systemd1.Manager SetEnvironment as 5 "
+			"DISPLAY='%s' WAYLAND_DISPLAY='%s' "
+			"XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP='%s' "
+			"XDG_SESSION_DESKTOP='%s' 2>/dev/null && "
+			"systemctl --user restart 'xdg-desktop-portal*' "
+			"2>/dev/null; systemctl --user try-restart "
+			"gnome-terminal-server 2>/dev/null",
+			display, wl_socket, desktop, desktop);
+	} else {
+		snprintf(cmd, sizeof(cmd),
+			"busctl --user call org.freedesktop.systemd1 "
+			"/org/freedesktop/systemd1 "
+			"org.freedesktop.systemd1.Manager SetEnvironment as 4 "
+			"WAYLAND_DISPLAY='%s' XDG_SESSION_TYPE=wayland "
+			"XDG_CURRENT_DESKTOP='%s' XDG_SESSION_DESKTOP='%s' "
+			"2>/dev/null && "
+			"systemctl --user restart 'xdg-desktop-portal*' "
+			"2>/dev/null; systemctl --user try-restart "
+			"gnome-terminal-server 2>/dev/null",
+			wl_socket, desktop, desktop);
+	}
+	spawn_cmd(cmd);
+	wlr_log(WLR_INFO, "session env: set DISPLAY/WAYLAND_DISPLAY on "
+		"systemd --user, restarting portal + terminal services");
+}
+
+/*
+ * Adjust the default sink (or source, mic) volume by delta_pct
+ * (positive = up, negative = down) via pactl, then refresh the
+ * topbar so the indicator updates immediately.
+ */
+/*
+ * Concurrent relative pactl volume changes are not safe: PulseAudio
+ * can drop one of two simultaneous relative sets (e.g. a scroll step
+ * racing the next one). So at most one volume child runs at a time;
+ * changes requested while it runs accumulate in the pending counters
+ * and are applied when it exits. volume_flush() must be called from
+ * the main loop (topbar_tick does this every 500ms).
+ */
+static int vol_pending_sink = 0;
+static int vol_pending_mic = 0;
+static pid_t vol_child_pid = -1;
+
+static void volume_spawn(struct guibux_server *server, bool mic,
+		int delta_pct) {
+	char cmd[128];
+	/* pactl >= 17 wants the sign prefixed ("+5%"); the old trailing
+	 * form ("5%+") is rejected with "Invalid volume specification" */
+	if (mic) {
+		snprintf(cmd, sizeof(cmd),
+			"pactl set-source-volume @DEFAULT_SOURCE@ %c%d%% 2>/dev/null",
+			delta_pct > 0 ? '+' : '-', abs(delta_pct));
+	} else {
+		snprintf(cmd, sizeof(cmd),
+			"pactl set-sink-volume @DEFAULT_SINK@ %c%d%% 2>/dev/null",
+			delta_pct > 0 ? '+' : '-', abs(delta_pct));
+	}
+	pid_t pid = fork();
+	if (pid < 0) {
+		wlr_log(WLR_ERROR, "fork failed: %m");
+		vol_child_pid = -1;
+		return;
+	}
+	if (pid == 0) {
+		execl("/bin/sh", "/bin/sh", "-c", cmd, (void *)NULL);
+		_exit(127);
+	}
+	vol_child_pid = pid;
+	/* deliberately not spawn_track()'d: volume_flush() owns this
+	 * child's reap so the SIGCHLD handler never steals it */
+}
+
+void volume_flush(struct guibux_server *server) {
+	if (vol_child_pid != -1) {
+		int st;
+		pid_t r = waitpid(vol_child_pid, &st, WNOHANG);
+		if (r == vol_child_pid || (r == -1 && errno != EINTR)) {
+			vol_child_pid = -1;
+		} else {
+			return; /* child still running: keep the pending deltas */
+		}
+	}
+	if (vol_pending_sink != 0) {
+		int d = vol_pending_sink;
+		vol_pending_sink = 0;
+		volume_spawn(server, false, d);
+	}
+	if (vol_child_pid == -1 && vol_pending_mic != 0) {
+		int d = vol_pending_mic;
+		vol_pending_mic = 0;
+		volume_spawn(server, true, d);
+	}
+}
+
+void volume_change(struct guibux_server *server, bool mic, int delta_pct) {
+	/* apply the change to the published snapshot and re-render the
+	 * topbar now: the worker poll would only show the new value up to
+	 * 5s later */
+	sysinfo_audio_adjust(&server->sysinfo, mic, delta_pct);
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		topbar_mark_dirty(o);
+		topbar_render(o);
+	}
+	if (mic) {
+		vol_pending_mic += delta_pct;
+	} else {
+		vol_pending_sink += delta_pct;
+	}
+	volume_flush(server);
+}
+
+void volume_toggle_mute(struct guibux_server *server, bool mic) {
+	char cmd[128];
+	snprintf(cmd, sizeof(cmd), mic ?
+		"pactl set-source-mute @DEFAULT_SOURCE@ toggle 2>/dev/null" :
+		"pactl set-sink-mute @DEFAULT_SINK@ toggle 2>/dev/null");
+	spawn_cmd(cmd);
+	sysinfo_audio_toggle_mute(&server->sysinfo, mic);
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		topbar_mark_dirty(o);
+		topbar_render(o);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +411,24 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 	case GUIBUX_ACT_SHOW_HELP:
 		help_show(server);
 		break;
+	case GUIBUX_ACT_VOLUME_UP:
+		volume_change(server, false, 5);
+		break;
+	case GUIBUX_ACT_VOLUME_DOWN:
+		volume_change(server, false, -5);
+		break;
+	case GUIBUX_ACT_MUTE:
+		volume_toggle_mute(server, false);
+		break;
+	case GUIBUX_ACT_MIC_UP:
+		volume_change(server, true, 5);
+		break;
+	case GUIBUX_ACT_MIC_DOWN:
+		volume_change(server, true, -5);
+		break;
+	case GUIBUX_ACT_MIC_MUTE:
+		volume_toggle_mute(server, true);
+		break;
 	}
 }
 
@@ -339,7 +548,10 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 
 	/* keybinds are defined with the unshifted (base) keysym; with Shift
 	 * held the syms above are the shifted ones ('!'/'Q'/...), so match on
-	 * level 0 to keep Shift+letter/number binds working on any layout */
+	 * level 0 to keep Shift+letter/number binds working on any layout.
+	 * The actual (shifted) sym is tried too: on layouts like AZERTY the
+	 * "normal" symbol is the shifted one ('1' needs Shift, base is '&'),
+	 * so base-only matching would never fire Shift+number binds there */
 	xkb_keysym_t base_sym = XKB_KEY_NoSymbol;
 	if (keyboard->wlr_keyboard->keymap != NULL) {
 		const xkb_keysym_t *base_syms;
@@ -376,6 +588,8 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 				handled = switcher_handle_key(server, syms[i]);
 			} else if (server->help.active) {
 				handled = help_handle_key(server, syms[i]);
+			} else if (server->notify_panel.active) {
+				handled = notify_panel_handle_key(server, syms[i]);
 			} else if (repeat) {
 				break;
 			} else if (syms[i] == XKB_KEY_F12) {
@@ -385,10 +599,23 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 					overview_show(server);
 				}
 				handled = true;
+			} else if (syms[i] == XKB_KEY_XF86AudioRaiseVolume) {
+				volume_change(server, false, 5);
+				handled = true;
+			} else if (syms[i] == XKB_KEY_XF86AudioLowerVolume) {
+				volume_change(server, false, -5);
+				handled = true;
+			} else if (syms[i] == XKB_KEY_XF86AudioMute) {
+				volume_toggle_mute(server, false);
+				handled = true;
+			} else if (syms[i] == XKB_KEY_XF86AudioMicMute) {
+				volume_toggle_mute(server, true);
+				handled = true;
 			} else if (server->overview.active) {
 				handled = overview_handle_key(server, syms[i]);
 			} else {
-				handled = handle_keybinding(server, base_sym, modifiers);
+				handled = handle_keybinding(server, base_sym, modifiers) ||
+					handle_keybinding(server, syms[i], modifiers);
 			}
 			if (handled) {
 				break;

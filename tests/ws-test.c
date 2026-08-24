@@ -95,9 +95,12 @@ static void xdg_configure(void *data, struct xdg_surface *s, uint32_t serial) {
 	// a protocol error (UNCONFIGURED_BUFFER)
 	for (int i = 0; i < NWINS; i++) {
 		if (wins[i].xdg_surface == s) {
-			commit_size(&wins[i],
-				wins[i].last_w > 0 ? wins[i].last_w : 640,
-				wins[i].last_h > 0 ? wins[i].last_h : 400);
+			int w = wins[i].last_w > 0 ? wins[i].last_w : 640;
+			int h = wins[i].last_h > 0 ? wins[i].last_h : 400;
+			/* like a real client (GTK): keep the window geometry in sync
+			 * with the logical size, or the WM resizes against a stale box */
+			xdg_surface_set_window_geometry(s, 0, 0, w, h);
+			commit_size(&wins[i], w, h);
 			break;
 		}
 	}

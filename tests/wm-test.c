@@ -382,3 +382,305 @@ int psel_test_run(void *data) {
 	wlr_log(WLR_INFO, "psel-test: enter sent");
 	return 0;
 }
+
+/* scroll over the topbar VOL indicator: the published volume must move
+ * by one step (scroll up = up) and the system volume is restored after */
+int scroll_test_run(void *data) {
+	struct guibux_server *server = data;
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->topbar_buffer == NULL || o->topbar_vol_w <= 0) {
+			continue;
+		}
+		struct wlr_box box;
+		wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+
+		struct guibux_sysinfo_snapshot before, after;
+		sysinfo_get(&server->sysinfo, &before);
+		int step = 1;
+		double delta = -1;
+		if (before.volume >= 150) {
+			step = -1;
+			delta = 1;
+		}
+
+		server->cursor->x = box.x + o->topbar_vol_x + o->topbar_vol_w / 2.0;
+		server->cursor->y = box.y + server->topbar_height / 2.0;
+		server->cursor_topbar_output = o;
+		struct wlr_pointer_axis_event event = {
+			.orientation = WL_POINTER_AXIS_VERTICAL_SCROLL,
+			.delta = delta,
+			.delta_discrete = (int32_t)delta,
+		};
+		server_cursor_axis(&server->cursor_axis, &event);
+
+		sysinfo_get(&server->sysinfo, &after);
+		/* restore the system volume before reporting: relative, so it
+		 * nets to zero even if the two pactl children run in either
+		 * order */
+		volume_change(server, false, -step);
+		if (after.volume != before.volume + step) {
+			wlr_log(WLR_ERROR, "scroll-test: FAIL volume (got %d, want %d)",
+				after.volume, before.volume + step);
+			return 0;
+		}
+		wlr_log(WLR_INFO, "scroll-test: OK (scroll %s = volume %s, %d -> %d)",
+			delta < 0 ? "up" : "down", step > 0 ? "up" : "down",
+			before.volume, after.volume);
+		return 0;
+	}
+	wlr_log(WLR_INFO, "scroll-test: SKIP no audio indicator rendered");
+	return 0;
+}
+
+/* alt+left-drag must start a move, follow the cursor, and leave the
+ * window at the drop position (GNOME-style) */
+int alt_drag_test_run(void *data) {
+	struct guibux_server *server = data;
+	struct guibux_toplevel *t = NULL;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->managed) {
+			break;
+		}
+	}
+	if (t == NULL) {
+		wlr_log(WLR_ERROR, "altdrag-test: FAIL no managed toplevel");
+		return 0;
+	}
+	struct wlr_keyboard *kb = wlr_seat_get_keyboard(server->seat);
+	if (kb == NULL) {
+		wlr_log(WLR_ERROR, "altdrag-test: FAIL no keyboard");
+		return 0;
+	}
+
+	struct wlr_box geo;
+	toplevel_get_geometry(t, &geo);
+	double ox = t->scene_tree->node.x;
+	double oy = t->scene_tree->node.y;
+	double cx = ox + geo.width / 2.0;
+	double cy = oy + geo.height / 2.0;
+
+	server->cursor->x = cx;
+	server->cursor->y = cy;
+	process_cursor_motion(server, 1);
+	kb->modifiers.depressed |= WLR_MODIFIER_ALT;
+
+	struct wlr_pointer_button_event press = {
+		.time_msec = 1,
+		.button = 272, /* BTN_LEFT */
+		.state = WL_POINTER_BUTTON_STATE_PRESSED,
+	};
+	server_cursor_button(&server->cursor_button, &press);
+	if (server->cursor_mode != GUIBUX_CURSOR_MOVE ||
+			server->grabbed_toplevel != t) {
+		wlr_log(WLR_ERROR, "altdrag-test: FAIL drag not started (mode %d, grab %s)",
+			server->cursor_mode,
+			server->grabbed_toplevel == t ? "yes" : "no");
+		return 0;
+	}
+
+	server->cursor->x = cx + 100;
+	server->cursor->y = cy + 50;
+	process_cursor_motion(server, 2);
+	if (t->scene_tree->node.x != ox + 100 ||
+			t->scene_tree->node.y != oy + 50) {
+		wlr_log(WLR_ERROR, "altdrag-test: FAIL window not moved (got %d,%d, want %d,%d)",
+			t->scene_tree->node.x, t->scene_tree->node.y,
+			(int)(ox + 100), (int)(oy + 50));
+		return 0;
+	}
+
+	kb->modifiers.depressed &= ~WLR_MODIFIER_ALT;
+	struct wlr_pointer_button_event release = {
+		.time_msec = 3,
+		.button = 272,
+		.state = WL_POINTER_BUTTON_STATE_RELEASED,
+	};
+	server_cursor_button(&server->cursor_button, &release);
+	if (server->cursor_mode != GUIBUX_CURSOR_PASSTHROUGH ||
+			server->grabbed_toplevel != NULL) {
+		wlr_log(WLR_ERROR, "altdrag-test: FAIL drag not ended (mode %d)",
+			server->cursor_mode);
+		return 0;
+	}
+	if (t->scene_tree->node.x != ox + 100 ||
+			t->scene_tree->node.y != oy + 50) {
+		wlr_log(WLR_ERROR, "altdrag-test: FAIL window not kept at drop position (got %d,%d)",
+			t->scene_tree->node.x, t->scene_tree->node.y);
+		return 0;
+	}
+	wlr_log(WLR_INFO, "altdrag-test: OK (moved %d,%d -> %d,%d, stayed)",
+		(int)ox, (int)oy, t->scene_tree->node.x, t->scene_tree->node.y);
+	return 0;
+}
+
+/* Interactive resize of a window that is NOT at the layout origin must
+ * resize in place: right/bottom drags keep the node position, left/top
+ * drags move the node with the dragged edge. The regression this guards
+ * mixed client-relative geometry with absolute cursor coordinates and
+ * teleported the window to (0,0) (top-left of the first monitor).
+ * One drag per phase (400ms apart) so the client can process the
+ * configure and update its window geometry in between, like a real
+ * client (GTK) does. */
+static struct {
+	double ox, oy;
+	int w, h;
+	int phase;
+} resize_test_state;
+
+static bool near_d(double a, double b) {
+	return a >= b - 1.0 && a <= b + 1.0;
+}
+
+static bool check_committed_size(struct wlr_surface *s, int w, int h,
+		const char *what) {
+	if (s->current.width != w || s->current.height != h) {
+		wlr_log(WLR_ERROR, "resize-test: FAIL size %s (got %dx%d, want %dx%d)",
+			what, s->current.width, s->current.height, w, h);
+		return false;
+	}
+	return true;
+}
+
+/* grab the given edge, drag it by (move_dx, move_dy), check the node
+ * lands at (want_x, want_y), release */
+static bool resize_drag(struct guibux_server *server,
+		struct guibux_toplevel *t, uint32_t edges,
+		double move_dx, double move_dy,
+		double want_x, double want_y, const char *what) {
+	struct wlr_box geo;
+	toplevel_get_geometry(t, &geo);
+	double gx, gy;
+	if (edges & WLR_EDGE_LEFT) {
+		gx = 0;
+	} else if (edges & WLR_EDGE_RIGHT) {
+		gx = geo.width;
+	} else {
+		gx = geo.width / 2.0;
+	}
+	if (edges & WLR_EDGE_TOP) {
+		gy = 0;
+	} else if (edges & WLR_EDGE_BOTTOM) {
+		gy = geo.height;
+	} else {
+		gy = geo.height / 2.0;
+	}
+	server->cursor->x = t->scene_tree->node.x + geo.x + gx;
+	server->cursor->y = t->scene_tree->node.y + geo.y + gy;
+	begin_interactive(t, GUIBUX_CURSOR_RESIZE, edges);
+	server->cursor->x += move_dx;
+	server->cursor->y += move_dy;
+	process_cursor_motion(server, 1);
+	if (!near_d(t->scene_tree->node.x, want_x) ||
+			!near_d(t->scene_tree->node.y, want_y)) {
+		wlr_log(WLR_ERROR, "resize-test: FAIL %s (got %.0f,%.0f, want %.0f,%.0f)",
+			what, (double)t->scene_tree->node.x, (double)t->scene_tree->node.y,
+			want_x, want_y);
+		return false;
+	}
+	reset_cursor_mode(server);
+	return true;
+}
+
+static void resize_test_next(struct guibux_server *server) {
+	wl_event_source_timer_update(server->resize_test_timer, 400);
+}
+
+int resize_test_run(void *data) {
+	struct guibux_server *server = data;
+	struct guibux_toplevel *t = NULL;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->managed && t->xdg_toplevel != NULL) {
+			break;
+		}
+	}
+	if (t == NULL) {
+		wlr_log(WLR_ERROR, "resize-test: FAIL no managed xdg toplevel");
+		return 0;
+	}
+	struct wlr_surface *s = t->xdg_toplevel->base->surface;
+	int w = resize_test_state.w, h = resize_test_state.h;
+	double ox = resize_test_state.ox, oy = resize_test_state.oy;
+
+	switch (resize_test_state.phase) {
+	case 0: {
+		struct guibux_output *cur = guibux_output_for(server,
+			toplevel_output_for(t));
+		struct guibux_output *o2 = other_output(server, cur);
+		if (o2 == NULL) {
+			wlr_log(WLR_ERROR, "resize-test: FAIL need two outputs (GUIBUX_TEST_EXTRA_OUTPUTS=1)");
+			return 0;
+		}
+		move_toplevel_to_output(t, o2->wlr_output);
+		struct wlr_box geo;
+		toplevel_get_geometry(t, &geo);
+		ox = t->scene_tree->node.x;
+		oy = t->scene_tree->node.y;
+		if (ox <= 1.0 || oy <= 1.0) {
+			wlr_log(WLR_ERROR, "resize-test: FAIL window at layout origin (%.0f,%.0f)",
+				ox, oy);
+			return 0;
+		}
+		resize_test_state.ox = ox;
+		resize_test_state.oy = oy;
+		resize_test_state.w = geo.width;
+		resize_test_state.h = geo.height;
+		if (!resize_drag(server, t, WLR_EDGE_RIGHT, 200, 0, ox, oy,
+				"right edge")) {
+			return 0;
+		}
+		resize_test_state.phase = 1;
+		resize_test_next(server);
+		return 0;
+	}
+	case 1:
+		if (!check_committed_size(s, w + 200, h, "after right edge")) {
+			return 0;
+		}
+		if (!resize_drag(server, t, WLR_EDGE_LEFT, 100, 0,
+				ox + 100, oy, "left edge")) {
+			return 0;
+		}
+		resize_test_state.phase = 2;
+		resize_test_next(server);
+		return 0;
+	case 2:
+		if (!check_committed_size(s, w + 100, h, "after left edge")) {
+			return 0;
+		}
+		if (!resize_drag(server, t, WLR_EDGE_TOP, 0, 80,
+				ox + 100, oy + 80, "top edge")) {
+			return 0;
+		}
+		resize_test_state.phase = 3;
+		resize_test_next(server);
+		return 0;
+	case 3:
+		if (!check_committed_size(s, w + 100, h - 80, "after top edge")) {
+			return 0;
+		}
+		if (!resize_drag(server, t, WLR_EDGE_BOTTOM, 0, 60,
+				ox + 100, oy + 80, "bottom edge")) {
+			return 0;
+		}
+		resize_test_state.phase = 4;
+		resize_test_next(server);
+		return 0;
+	case 4:
+		if (!check_committed_size(s, w + 100, h - 20, "final")) {
+			return 0;
+		}
+		if (!near_d(t->scene_tree->node.x, ox + 100) ||
+				!near_d(t->scene_tree->node.y, oy + 80)) {
+			wlr_log(WLR_ERROR, "resize-test: FAIL final position (got %.0f,%.0f, want %.0f,%.0f)",
+				(double)t->scene_tree->node.x, (double)t->scene_tree->node.y,
+				ox + 100, oy + 80);
+			return 0;
+		}
+		wlr_log(WLR_INFO, "resize-test: OK (4 edges on second output, final %dx%d at %.0f,%.0f)",
+			s->current.width, s->current.height,
+			(double)t->scene_tree->node.x, (double)t->scene_tree->node.y);
+		return 0;
+	}
+	return 0;
+}

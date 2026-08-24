@@ -44,6 +44,40 @@ At least one modifier is required:
 | `switch-ws-left` | Switch to the previous workspace |
 | `switch-ws-right` | Switch to the next workspace |
 | `show-help` | Show the keybinding help overlay |
+| `volume-up` | Raise default sink volume by 5% |
+| `volume-down` | Lower default sink volume by 5% |
+| `mute` | Toggle default sink mute |
+| `mic-up` | Raise default source (mic) volume by 5% |
+| `mic-down` | Lower default source (mic) volume by 5% |
+| `mic-mute` | Toggle default source (mic) mute |
+
+## Audio
+
+The topbar shows `VOL <pct>%` and `MIC <pct>%` indicators (right side,
+next to the network indicator) when an audio system is available
+(PulseAudio or PipeWire, via `pactl`). `<pct>%` is replaced by `MUTE`
+while muted.
+
+- scroll up/down over an indicator: adjust that volume by 1% per step
+- left click: toggle mute
+- right click: open the mixer (`pavucontrol`)
+
+Hardware media keys work without any keybind:
+
+| Key | Action |
+|---|---|
+| `XF86AudioRaiseVolume` | volume-up |
+| `XF86AudioLowerVolume` | volume-down |
+| `XF86AudioMute` | mute |
+| `XF86AudioMicMute` | mic-mute |
+
+## Mouse
+
+- `Alt` + left drag on a window: move the window (GNOME-style); the
+  window stays where it is dropped. Works on Wayland and X11 windows.
+  `Ctrl` held means AltGr, not a plain Alt.
+- `Mod` + drag on an X11 window: move the window (X11 windows have no
+  titlebar to grab).
 
 ## Examples
 

@@ -19,6 +19,7 @@ tests/run-all.sh
 tests/run-ws-test.sh [ws]        # workspace state machine (default ws 2)
 tests/run-tile-test.sh <mode>    # tiling: 0=free, 1=split, 2=main+stack
 tests/run-topbar-test.sh         # per-output topbar (number + time)
+tests/run-audio-test.sh          # audio sysinfo poll + VOL/MIC indicators
 tests/run-launcher-test.sh       # command box (show/type/enter/escape, preferred apps)
 tests/run-config-test.sh         # config file (term, keybind, colors)
 ```
@@ -81,6 +82,19 @@ GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_TOPBAR=1 GUIBUX_TERM=true \
   WLR_RENDERER=gles2 ./build/guibuxwm
 ```
 
+## GUIBUX_TEST_AUDIO
+
+`GUIBUX_TEST_AUDIO=1` verifies the audio sysinfo poll (~6.5s after start,
+after the first `pactl` poll at ~5s): when an audio system is available the
+volumes must be in 0..100 and the topbar VOL/MIC indicators must be
+rendered; without audio the indicators must be absent. Logs
+`audio-test: OK (N outputs, audio on|off)` on success:
+
+```sh
+GUIBUX_OUTPUTS= GUIBUX_TEST_AUDIO=1 GUIBUX_TERM=true \
+  WLR_RENDERER=gles2 ./build/guibuxwm
+```
+
 ## GUIBUX_TEST_WORKSPACES
 
 `GUIBUX_TEST_WORKSPACES=N` (default 2) exercises the workspace state machine
@@ -125,6 +139,7 @@ Test clients are built by the main build and live in `tests/`:
 | `GUIBUX_TEST_LAUNCHER_CMD="cmd"` | Type `cmd` in the launcher headlessly |
 | `GUIBUX_TEST_TILE_MODE=N` | Set tile mode (0=free, 1=split, 2=main+stack) |
 | `GUIBUX_TEST_TOPBAR=1` | Verify topbars after start |
+| `GUIBUX_TEST_AUDIO=1` | Verify audio poll + VOL/MIC indicators |
 | `GUIBUX_TEST_WORKSPACES=N` | Exercise workspace state machine (default 2) |
 | `GUIBUX_TEST_KEYBIND="key"` | Verify a custom keybind opens the launcher |
 | `GUIBUX_TERM=true` | Spawn a terminal client for tests |

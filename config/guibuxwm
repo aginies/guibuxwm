@@ -25,7 +25,8 @@ xkb_layout = fr
 #          quit, workspace:N, move-workspace:N,
 #          move-monitor-left, move-monitor-right,
 #          snap-left, snap-right, snap-top, snap-bottom,
-#          switch-ws-left, switch-ws-right
+#          switch-ws-left, switch-ws-right,
+#          volume-up, volume-down, mute, mic-up, mic-down, mic-mute
 keybind = Mod+Return: terminal
 keybind = Mod+q: close
 keybind = Mod+f: fullscreen
@@ -53,6 +54,12 @@ keybind = Mod+Alt+Escape: quit
 keybind = Ctrl+Alt+Left: switch-ws-left
 keybind = Ctrl+Alt+Right: switch-ws-right
 keybind = Mod+h: show-help
+
+# audio (media keys XF86AudioRaiseVolume/LowerVolume/Mute/MicMute also
+# work without any binding; topbar: scroll adjusts, left click mutes,
+# right click opens pavucontrol)
+#keybind = Mod+m: mute
+#keybind = Mod+Shift+m: mic-mute
 
 # colors (#rrggbb)
 color_bg = #1e1e2e

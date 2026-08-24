@@ -16,7 +16,7 @@ src/keyboard.c   key handling, keybinds
 src/config.c     config file parsing
 src/cursor.c     cursor motion, button, seat
 src/popup.c      xdg-popup handling
-src/sysinfo.c    network + battery sysinfo via D-Bus
+src/sysinfo.c    network + battery sysinfo via D-Bus, audio via pactl
 src/wm-test.c    headless test helpers
 tests/           headless test clients (ws-test, tile-test) + runner scripts (run-all.sh)
 ```
@@ -44,8 +44,8 @@ virtual layout management (for `GUIBUX_OUTPUTS`), and output enumeration.
 ## src/topbar.c
 
 Per-monitor topbar rendering: monitor letter (A, B, C...), workspace pills,
-window pills for tiled windows, date/time, and configurable styling
-(height, font size, colors, padding).
+window pills for tiled windows, network/audio indicators, date/time, and
+configurable styling (height, font size, colors, padding).
 
 ## src/toplevel.c
 
@@ -88,8 +88,9 @@ event routing.
 
 ## src/sysinfo.c
 
-System information via D-Bus: network status, battery state, and
-dynamic topbar updates.
+System information: network status and battery state via D-Bus
+(NetworkManager, UPower), audio volume/mute via `pactl` (PulseAudio /
+PipeWire), and dynamic topbar updates.
 
 ## src/wm-test.c
 
@@ -106,5 +107,6 @@ event injection, and assertion macros used by the test clients.
 - `run-ws-test.sh` — workspace state machine test
 - `run-tile-test.sh` — tiling test
 - `run-topbar-test.sh` — topbar test
+- `run-audio-test.sh` — audio sysinfo poll + VOL/MIC indicators test
 - `run-launcher-test.sh` — launcher test
 - `run-config-test.sh` — config file test

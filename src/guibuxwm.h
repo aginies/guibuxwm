@@ -26,6 +26,8 @@
 #ifdef WLR_USE_UNSTABLE
 #include <wlr/types/wlr_idle_inhibit_v1.h>
 #include <wlr/types/wlr_idle_notify_v1.h>
+#include <wlr/types/wlr_screencopy_v1.h>
+#include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/xwayland.h>
 #endif
 
@@ -101,6 +103,12 @@ enum guibux_action {
 	GUIBUX_ACT_SWITCH_WS_LEFT,
 	GUIBUX_ACT_SWITCH_WS_RIGHT,
 	GUIBUX_ACT_SHOW_HELP,
+	GUIBUX_ACT_VOLUME_UP,
+	GUIBUX_ACT_VOLUME_DOWN,
+	GUIBUX_ACT_MUTE,
+	GUIBUX_ACT_MIC_UP,
+	GUIBUX_ACT_MIC_DOWN,
+	GUIBUX_ACT_MIC_MUTE,
 };
 
 struct guibux_keybind {
@@ -118,16 +126,75 @@ struct guibux_sysinfo {
     bool nm_available;
     char network[64];
     char battery[32];
+    /* audio (pactl poll): -1 volume = unknown */
+    bool audio_available;
+    int volume;
+    bool muted;
+    int mic_volume;
+    bool mic_muted;
     pthread_t worker;
     pthread_mutex_t lock;
     pthread_cond_t wake;
     bool worker_running;
 };
 
+struct guibux_sysinfo_snapshot {
+    char net[64];
+    char bat[32];
+    bool audio_available;
+    int volume;
+    bool muted;
+    int mic_volume;
+    bool mic_muted;
+};
+
 void sysinfo_init(struct guibux_server *server);
 void sysinfo_destroy(struct guibux_server *server);
-void sysinfo_get(struct guibux_sysinfo *si, char *net, size_t net_size,
-                 char *bat, size_t bat_size);
+void sysinfo_get(struct guibux_sysinfo *si, struct guibux_sysinfo_snapshot *snap);
+void sysinfo_audio_adjust(struct guibux_sysinfo *si, bool mic, int delta);
+void sysinfo_audio_toggle_mute(struct guibux_sysinfo *si, bool mic);
+
+/* notify.c - desktop notifications (org.freedesktop.Notifications) */
+#define NOTIF_MAX 32
+#define NOTIF_PANEL_MAX 10
+
+struct guibux_notification {
+    uint32_t id;
+    char app_name[64];
+    char summary[128];
+    char body[256];
+    int32_t expire;
+    time_t created;
+};
+
+struct guibux_notify {
+    DBusConnection *session_bus;
+    bool daemon;
+    uint32_t next_id;
+    struct guibux_notification items[NOTIF_MAX];
+    int count;
+    bool dirty;
+    pthread_t worker;
+    pthread_mutex_t lock;
+    pthread_cond_t wake;
+    bool worker_running;
+};
+
+struct guibux_notif_panel {
+    bool active;
+    struct wlr_output *output;
+    struct wlr_scene_buffer *scene_node;
+    struct wlr_buffer *buffer;
+    /* panel is right-aligned: box_x is its left edge, logical px
+     * relative to the output origin (hit tests must use it) */
+    int box_x, box_w, box_h, box_scale;
+    int box_rows;
+    uint32_t row_ids[NOTIF_PANEL_MAX];
+    int row_y[NOTIF_PANEL_MAX];
+    int num_rows;
+    int clear_x, clear_y, clear_w, clear_h;
+};
+
 struct guibux_toplevel;
 
 // declared in wlr/render/allocator/shm.h (not installed with our wlroots build)
@@ -148,8 +215,21 @@ struct guibux_output {
     char topbar_right[64];
     char topbar_network[64];
     char topbar_battery[32];
-   int topbar_net_x;
+    /* last rendered sysinfo values: the tick marks the bar dirty when
+     * the worker thread publishes a change */
+    bool topbar_audio_avail;
+    int topbar_vol_pct;
+    bool topbar_vol_muted;
+    int topbar_mic_pct;
+    bool topbar_mic_muted;
+    int topbar_net_x;
     int topbar_net_w;
+    int topbar_vol_x;
+    int topbar_vol_w;
+    int topbar_mic_x;
+    int topbar_mic_w;
+    int topbar_notif_x;
+    int topbar_notif_w;
     int topbar_ws_x[NUM_WORKSPACES + 1];
     int topbar_ws_cell_w;
     struct wlr_scene_buffer *bg_node;
@@ -307,6 +387,8 @@ struct guibux_server {
 	struct wlr_xdg_shell *xdg_shell;
 	struct wl_listener new_xdg_toplevel;
 	struct wl_listener new_xdg_popup;
+	struct wlr_screencopy_manager_v1 *screencopy;
+	struct wlr_xdg_output_manager_v1 *xdg_output_manager;
 	struct wlr_xwayland *xwayland;
 	struct wl_listener new_xwayland_surface;
 	struct wl_list toplevels;
@@ -359,16 +441,23 @@ struct guibux_server {
 	struct wl_event_source *tile_test_timer;
 	struct wl_event_source *topbar_timer;
 	struct wl_event_source *topbar_test_timer;
+	struct wl_event_source *audio_test_timer;
+	struct wl_event_source *scroll_test_timer;
+	struct wl_event_source *altdrag_test_timer;
 	struct wl_event_source *workspace_test_timer;
 	struct wl_event_source *keybind_test_timer;
 	struct wl_event_source *overview_test_timer;
 	struct wl_event_source *psel_test_timer;
+	struct wl_event_source *resize_test_timer;
+	struct wl_event_source *notify_test_timer;
 	bool psel_test_enter_sent;
 struct guibux_launcher launcher;
     struct guibux_sysinfo sysinfo;
 	struct guibux_switcher switcher;
 	struct guibux_overview overview;
 	struct guibux_help help;
+	struct guibux_notify notify;
+	struct guibux_notif_panel notify_panel;
 	struct guibux_screensaver {
 		struct guibux_server *server;
 		int timeout;
@@ -403,9 +492,11 @@ int outputs_sorted_by_x(struct guibux_server *server, struct wlr_output **sorted
 
 struct guibux_toplevel *topbar_win_at(struct guibux_output *o, double lx, double ly);
 bool topbar_network_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
+/* 0 = none, 1 = volume, 2 = mic */
+int topbar_audio_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
 
 /* toplevel.c */
-void focus_toplevel(struct guibux_toplevel *toplevel);
+void focus_toplevel(struct guibux_toplevel *toplevel, bool raise);
 void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen, struct wlr_output *output);
 void begin_interactive(struct guibux_toplevel *toplevel, enum guibux_cursor_mode mode, uint32_t edges);
 void server_new_xdg_toplevel(struct wl_listener *listener, void *data);
@@ -420,6 +511,9 @@ void xdg_toplevel_request_fullscreen(struct wl_listener *listener, void *data);
 void server_new_xwayland_surface(struct wl_listener *listener, void *data);
 struct wlr_surface *toplevel_get_surface(struct guibux_toplevel *toplevel);
 const char *toplevel_get_title(struct guibux_toplevel *toplevel);
+/* best-effort match of a D-Bus notification app_name to a window
+ * (xdg app_id / xwayland WM_CLASS); NULL when nothing matches */
+struct guibux_toplevel *toplevel_for_app(struct guibux_server *server, const char *app_name);
 bool toplevel_is_xwayland(struct guibux_toplevel *toplevel);
 void toplevel_set_size(struct guibux_toplevel *toplevel, int width, int height);
 void toplevel_get_geometry(struct guibux_toplevel *toplevel, struct wlr_box *box);
@@ -447,12 +541,45 @@ void topbar_win_remove(struct guibux_output *o, struct guibux_toplevel *toplevel
 bool topbar_workspace_at(struct guibux_server *server, double lx, double ly, struct guibux_output **output, int *ws);
 int topbar_tick(void *data);
 int topbar_test_run(void *data);
+int audio_test_run(void *data);
+int scroll_test_run(void *data);
+int alt_drag_test_run(void *data);
+int resize_test_run(void *data);
 int guibux_text_width(FT_Face face, const char *text);
 uint32_t utf8_next(const char **p);
 void utf8_truncate(const char *src, char *dst, size_t dst_size, int max_cp);
 int launcher_draw_text_on_surface(cairo_surface_t *cs, FT_Face face,
 	const char *text, int x, int baseline, uint32_t color);
 void set_color(cairo_t *cr, uint32_t c);
+void topbar_rounded_rect(cairo_t *cr, double x, double y,
+	double w, double h, double r);
+bool topbar_notif_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
+
+/* notify.c */
+void notify_init(struct guibux_server *server);
+void notify_destroy(struct guibux_server *server);
+uint32_t notify_add(struct guibux_notify *n, const char *app_name,
+	const char *summary, const char *body, int32_t expire);
+void notify_close(struct guibux_notify *n, uint32_t id);
+void notify_clear(struct guibux_notify *n);
+bool notify_replace(struct guibux_notify *n, uint32_t id,
+	const char *app_name, const char *summary, const char *body,
+	int32_t expire);
+int notify_count(struct guibux_notify *n);
+int notify_snapshot(struct guibux_notify *n, struct guibux_notification *out, int max);
+bool notify_get_by_id(struct guibux_notify *n, uint32_t id, struct guibux_notification *out);
+bool notify_consume_dirty(struct guibux_notify *n);
+int notify_indicator_width(FT_Face face, int scale, int count);
+void notify_draw_indicator(cairo_surface_t *cs, cairo_t *cr, FT_Face face,
+	int x, int baseline, int scale, int count, uint32_t color);
+void notify_panel_show(struct guibux_server *server, struct wlr_output *output);
+void notify_panel_hide(struct guibux_server *server);
+void notify_panel_render(struct guibux_server *server);
+bool notify_panel_handle_key(struct guibux_server *server, xkb_keysym_t sym);
+uint32_t notify_panel_row_at(struct guibux_server *server, double lx, double ly);
+bool notify_panel_clear_at(struct guibux_server *server, double lx, double ly);
+bool notify_panel_contains(struct guibux_server *server, double lx, double ly);
+int notify_test_run(void *data);
 
 /* background.c */
 void background_load_images(struct guibux_server *server);
@@ -503,6 +630,11 @@ void keybinds_defaults(struct guibux_server *server);
 void keybind_add(struct guibux_server *server, uint32_t modifiers, xkb_keysym_t keysym, enum guibux_action action, int arg);
 void spawn_terminal(struct guibux_server *server);
 void spawn_network_info(struct guibux_server *server);
+void spawn_mixer(struct guibux_server *server);
+void setup_session_environment(struct guibux_server *server);
+void volume_change(struct guibux_server *server, bool mic, int delta_pct);
+void volume_flush(struct guibux_server *server);
+void volume_toggle_mute(struct guibux_server *server, bool mic);
 void spawn_sigchld_handler(int sig);
 void spawn_track(pid_t pid);
 

@@ -29,15 +29,15 @@ static void process_cursor_move(struct guibux_server *server) {
 
 static void process_cursor_resize(struct guibux_server *server) {
 	struct guibux_toplevel *toplevel = server->grabbed_toplevel;
-	struct wlr_box geo_box;
-	toplevel_get_geometry(toplevel, &geo_box);
-
+	/* grab_geobox is the window box in absolute layout coordinates
+	 * (captured in begin_interactive); border_x/border_y below are
+	 * absolute too, so all math stays in one coordinate space */
 	double border_x = server->cursor->x - server->grab_x;
 	double border_y = server->cursor->y - server->grab_y;
-	int new_left = geo_box.x;
-	int new_right = geo_box.x + geo_box.width;
-	int new_top = geo_box.y;
-	int new_bottom = geo_box.y + geo_box.height;
+	int new_left = server->grab_geobox.x;
+	int new_right = server->grab_geobox.x + server->grab_geobox.width;
+	int new_top = server->grab_geobox.y;
+	int new_bottom = server->grab_geobox.y + server->grab_geobox.height;
 
 	if (server->resize_edges & WLR_EDGE_TOP) {
 		new_top = border_y;
@@ -62,6 +62,7 @@ static void process_cursor_resize(struct guibux_server *server) {
 		}
 	}
 
+	struct wlr_box geo_box;
 	toplevel_get_geometry(toplevel, &geo_box);
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
 		new_left - geo_box.x, new_top - geo_box.y);
@@ -113,8 +114,20 @@ void process_cursor_motion(struct guibux_server *server, uint32_t time) {
 		&o, &ws);
 	if (in_topbar && ws != 0) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
+	} else if (in_topbar && topbar_audio_at(server, o, server->cursor->x,
+			server->cursor->y) != 0) {
+		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
 	} else if (in_topbar && topbar_network_at(server, o, server->cursor->x,
 			server->cursor->y)) {
+		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
+	} else if (in_topbar && topbar_notif_at(server, o, server->cursor->x,
+			server->cursor->y)) {
+		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
+	} else if (server->notify_panel.active &&
+			(notify_panel_row_at(server, server->cursor->x,
+				server->cursor->y) != 0 ||
+			 notify_panel_clear_at(server, server->cursor->x,
+				server->cursor->y))) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
 	} else if (!toplevel) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "default");
@@ -128,8 +141,9 @@ void process_cursor_motion(struct guibux_server *server, uint32_t time) {
 		    !server->launcher.active &&
 		    !server->switcher.active &&
 		    !server->overview.active &&
-		    !server->help.active) {
-			focus_toplevel(toplevel);
+		    !server->help.active &&
+		    !server->notify_panel.active) {
+			focus_toplevel(toplevel, false);
 			server->last_ffm_toplevel = toplevel;
 		}
 	} else {
@@ -189,15 +203,76 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 		}
 		return;
 	}
+	if (server->notify_panel.active) {
+		if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
+			if (notify_panel_clear_at(server, server->cursor->x,
+					server->cursor->y)) {
+				notify_clear(&server->notify);
+				if (notify_count(&server->notify) == 0) {
+					notify_panel_hide(server);
+				} else {
+					notify_panel_render(server);
+				}
+			} else {
+				uint32_t id = notify_panel_row_at(server,
+					server->cursor->x, server->cursor->y);
+				if (id != 0) {
+					/* click a row: focus the window that sent the
+					 * notification (best-effort app match), dismiss
+					 * the notification and close the panel */
+					struct guibux_notification item;
+					struct guibux_toplevel *win = NULL;
+					if (notify_get_by_id(&server->notify, id, &item)) {
+						win = toplevel_for_app(server, item.app_name);
+					}
+					if (win != NULL) {
+						struct guibux_output *wo = guibux_output_for(
+							server, toplevel_output_for(win));
+						if (wo != NULL &&
+								win->workspace != wo->current_workspace) {
+							switch_workspace(wo, win->workspace);
+						}
+						focus_toplevel(win, true);
+					}
+					notify_close(&server->notify, id);
+					notify_panel_hide(server);
+				} else {
+					notify_panel_hide(server);
+				}
+			}
+		}
+		server->button_consumed = event->button;
+		return;
+	}
 	if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
 		struct guibux_output *o = server->cursor_topbar_output;
 		int ws = 0;
 		if (o && topbar_workspace_at(server, server->cursor->x,
 				server->cursor->y, NULL, &ws)) {
-			/* check network indicator first */
+			/* check audio indicators first: left click toggles the
+			 * mute, right click opens the mixer (pavucontrol) */
+			int audio = topbar_audio_at(server, o, server->cursor->x,
+					server->cursor->y);
+			if (audio != 0) {
+				/* Wayland button codes are Linux input codes:
+				 * BTN_LEFT = 272, BTN_RIGHT = 273 */
+				if (event->button == 272) {
+					volume_toggle_mute(server, audio == 2);
+				} else if (event->button == 273) {
+					spawn_mixer(server);
+				}
+				return;
+			}
+			/* check network indicator */
 			if (topbar_network_at(server, o, server->cursor->x,
 					server->cursor->y)) {
 				spawn_network_info(server);
+				return;
+			}
+			/* check notification indicator */
+			if (topbar_notif_at(server, o, server->cursor->x,
+					server->cursor->y)) {
+				notify_panel_show(server, o->wlr_output);
 				return;
 			}
 			/* check window labels */
@@ -213,7 +288,7 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 				if (dt < 300 && server->last_topbar_click_win == win) {
 					set_fullscreen(win, !win->is_fullscreen, NULL);
 				} else {
-					focus_toplevel(win);
+					focus_toplevel(win, true);
 				}
 				server->last_topbar_click_time = event->time_msec;
 				server->last_topbar_click_win = win;
@@ -225,17 +300,28 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 			return;
 		}
 	}
-	/* X11 windows have no titlebar: Mod+drag moves them */
+	/* X11 windows have no titlebar: Mod+drag moves them.
+	 * Alt+left-drag moves any managed window (GNOME-style); Ctrl held
+	 * means AltGr on many layouts, not a plain Alt. The switcher
+	 * (Alt+Tab) is still up while Alt is held: dismiss it first */
 	if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
 		double sx, sy;
 		struct wlr_surface *surface = NULL;
 		struct guibux_toplevel *toplevel = desktop_toplevel_at(server,
 			server->cursor->x, server->cursor->y, &surface, &sx, &sy);
 		struct wlr_keyboard *kb = wlr_seat_get_keyboard(server->seat);
-		if (toplevel != NULL && toplevel->managed &&
-				toplevel_is_xwayland(toplevel) && kb != NULL &&
-				(kb->modifiers.depressed & WLR_MODIFIER_LOGO)) {
-			focus_toplevel(toplevel);
+		bool alt_drag = toplevel != NULL && toplevel->managed &&
+			kb != NULL && event->button == 272 && /* BTN_LEFT */
+			(kb->modifiers.depressed & WLR_MODIFIER_ALT) &&
+			!(kb->modifiers.depressed & WLR_MODIFIER_CTRL);
+		bool mod_drag = toplevel != NULL && toplevel->managed &&
+			toplevel_is_xwayland(toplevel) && kb != NULL &&
+			(kb->modifiers.depressed & WLR_MODIFIER_LOGO);
+		if (alt_drag || mod_drag) {
+			if (server->switcher.active) {
+				switcher_hide(server);
+			}
+			focus_toplevel(toplevel, true);
 			if (toplevel->is_fullscreen) {
 				set_fullscreen(toplevel, false, NULL);
 			}
@@ -260,7 +346,7 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 		struct wlr_surface *surface = NULL;
 		struct guibux_toplevel *toplevel = desktop_toplevel_at(server,
 			server->cursor->x, server->cursor->y, &surface, &sx, &sy);
-		focus_toplevel(toplevel);
+		focus_toplevel(toplevel, true);
 		server->last_ffm_toplevel = NULL;
 	}
 }
@@ -269,6 +355,18 @@ void server_cursor_axis(struct wl_listener *listener, void *data) {
 		wl_container_of(listener, server, cursor_axis);
 	struct wlr_pointer_axis_event *event = data;
 	screensaver_notify_activity(server);
+	/* scroll over a topbar audio indicator adjusts that volume
+	 * instead of forwarding the event to a client */
+	struct guibux_output *o = server->cursor_topbar_output;
+	int audio = o ? topbar_audio_at(server, o, server->cursor->x,
+		server->cursor->y) : 0;
+	if (audio != 0) {
+		int step = event->delta_discrete != 0 ? event->delta_discrete :
+			(event->delta > 0 ? 1 : -1);
+		/* positive delta = scroll down; negative = scroll up = volume up */
+		volume_change(server, audio == 2, step > 0 ? -1 : 1);
+		return;
+	}
 	wlr_seat_pointer_notify_axis(server->seat,
 		event->time_msec, event->orientation, event->delta,
 		event->delta_discrete, event->source, event->relative_direction);

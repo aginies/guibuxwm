@@ -26,6 +26,11 @@ run "overview" ./run-overview-test.sh
 run "tile mode 1 (split)" ./run-tile-test.sh 1
 run "tile mode 2 (main+stack)" ./run-tile-test.sh 2
 run "topbar" ./run-topbar-test.sh
+run "notify" ./run-notify-test.sh
+run "audio" ./run-audio-test.sh
+run "topbar scroll" ./run-scroll-test.sh
+run "alt+drag move" ./run-altdrag-test.sh
+run "resize edges" ./run-resize-test.sh
 run "launcher" ./run-launcher-test.sh
 run "config" ./run-config-test.sh
 run "primary selection" ./run-psel-test.sh

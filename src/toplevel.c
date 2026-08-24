@@ -1,11 +1,13 @@
 #include "guibuxwm.h"
 #include <wlr/types/wlr_scene.h>
+#include <string.h>
+#include <strings.h>
 
 // ---------------------------------------------------------------------------
 // Focus
 // ---------------------------------------------------------------------------
 
-void focus_toplevel(struct guibux_toplevel *toplevel) {
+void focus_toplevel(struct guibux_toplevel *toplevel, bool raise) {
 	if (toplevel == NULL || toplevel->scene_tree == NULL) {
 		return;
 	}
@@ -30,8 +32,10 @@ void focus_toplevel(struct guibux_toplevel *toplevel) {
 		}
 	}
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
-	wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
-	topbar_raise_all(server);
+	if (raise) {
+		wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
+		topbar_raise_all(server);
+	}
 	if (toplevel->managed) {
 		wl_list_remove(&toplevel->link);
 		wl_list_insert(&server->toplevels, &toplevel->link);
@@ -201,7 +205,7 @@ void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	} else {
 		place_toplevel(toplevel);
 	}
-	focus_toplevel(toplevel);
+	focus_toplevel(toplevel, true);
 	struct guibux_output *o2 = guibux_output_for(toplevel->server,
 		toplevel_output_for(toplevel));
 	if (o2)
@@ -220,7 +224,7 @@ static void focus_after_unmap(struct guibux_server *server) {
 		}
 	}
 	if (next != NULL) {
-		focus_toplevel(next);
+		focus_toplevel(next, true);
 	} else {
 		clear_keyboard_focus(server);
 	}
@@ -343,6 +347,57 @@ const char *toplevel_get_title(struct guibux_toplevel *toplevel) {
 		return toplevel->xdg_toplevel->title;
 	}
 	return toplevel->xsurface->title;
+}
+
+static const char *toplevel_app_id(struct guibux_toplevel *toplevel) {
+	if (toplevel->xdg_toplevel != NULL) {
+		return toplevel->xdg_toplevel->app_id;
+	}
+	return toplevel->xsurface->instance;
+}
+
+struct guibux_toplevel *toplevel_for_app(struct guibux_server *server,
+		const char *app_name) {
+	if (app_name == NULL || app_name[0] == '\0') {
+		return NULL;
+	}
+	struct guibux_toplevel *t, *fallback = NULL;
+	/* pass 1: exact case-insensitive match (xdg app_id / WM_CLASS
+	 * instance); a window on the current workspace wins */
+	wl_list_for_each(t, &server->toplevels, link) {
+		const char *id = toplevel_app_id(t);
+		if (id != NULL && strcasecmp(id, app_name) == 0) {
+			if (toplevel_visible(t)) {
+				return t;
+			}
+			if (fallback == NULL) {
+				fallback = t;
+			}
+		}
+	}
+	if (fallback != NULL) {
+		return fallback;
+	}
+	/* pass 2: xwayland WM_CLASS class */
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->xsurface != NULL && t->xsurface->class != NULL &&
+				strcasecmp(t->xsurface->class, app_name) == 0) {
+			return t;
+		}
+	}
+	/* pass 3: prefix match (e.g. app "gnome-terminal" vs app_id
+	 * "gnome-terminal-server") */
+	wl_list_for_each(t, &server->toplevels, link) {
+		const char *id = toplevel_app_id(t);
+		if (id == NULL || id[0] == '\0') {
+			continue;
+		}
+		if (strncasecmp(id, app_name, strlen(app_name)) == 0 ||
+				strncasecmp(app_name, id, strlen(id)) == 0) {
+			return t;
+		}
+	}
+	return NULL;
 }
 
 bool toplevel_is_xwayland(struct guibux_toplevel *toplevel) {
@@ -516,7 +571,7 @@ static void xsurface_map(struct wl_listener *listener, void *data) {
 		wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
 		topbar_raise_all(toplevel->server);
 		if (wlr_xwayland_surface_override_redirect_wants_focus(xsurface)) {
-			focus_toplevel(toplevel);
+			focus_toplevel(toplevel, true);
 		}
 		return;
 	}
@@ -537,7 +592,7 @@ static void xsurface_map(struct wl_listener *listener, void *data) {
 	} else {
 		place_toplevel(toplevel);
 	}
-	focus_toplevel(toplevel);
+	focus_toplevel(toplevel, true);
 	if (xsurface->fullscreen) {
 		set_fullscreen(toplevel, true, NULL);
 	}
@@ -669,7 +724,7 @@ static void xsurface_request_activate(struct wl_listener *listener, void *data) 
 	if (toplevel->scene_tree == NULL) {
 		return;
 	}
-	focus_toplevel(toplevel);
+	focus_toplevel(toplevel, true);
 }
 
 static void xsurface_request_close(struct wl_listener *listener, void *data) {

@@ -126,6 +126,18 @@ bool parse_keybind(struct guibux_server *server, const char *value) {
 		action = GUIBUX_ACT_SNAP_BOTTOM;
 	} else if (!strcmp(action_str, "show-help")) {
 		action = GUIBUX_ACT_SHOW_HELP;
+	} else if (!strcmp(action_str, "volume-up")) {
+		action = GUIBUX_ACT_VOLUME_UP;
+	} else if (!strcmp(action_str, "volume-down")) {
+		action = GUIBUX_ACT_VOLUME_DOWN;
+	} else if (!strcmp(action_str, "mute")) {
+		action = GUIBUX_ACT_MUTE;
+	} else if (!strcmp(action_str, "mic-up")) {
+		action = GUIBUX_ACT_MIC_UP;
+	} else if (!strcmp(action_str, "mic-down")) {
+		action = GUIBUX_ACT_MIC_DOWN;
+	} else if (!strcmp(action_str, "mic-mute")) {
+		action = GUIBUX_ACT_MIC_MUTE;
 	} else {
 		wlr_log(WLR_ERROR, "config: bad keybind '%s' (unknown action '%s')",
 			value, action_str);

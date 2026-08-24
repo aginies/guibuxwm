@@ -137,7 +137,7 @@ void switch_workspace(struct guibux_output *output, int ws) {
 			}
 		}
 		if (next != NULL) {
-			focus_toplevel(next);
+			focus_toplevel(next, true);
 		} else {
 			clear_keyboard_focus(server);
 		}
@@ -174,7 +174,7 @@ void move_toplevel_to_workspace(struct guibux_toplevel *toplevel, int ws) {
 			}
 		}
 		if (next != NULL) {
-			focus_toplevel(next);
+			focus_toplevel(next, true);
 		} else {
 			clear_keyboard_focus(server);
 		}

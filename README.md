@@ -36,6 +36,10 @@ Derived from [tinywl](https://github.com/swaywm/wlroots/tree/master/tinywl).
   - move windows between monitors with a keybind
   - optional manual monitor arrangement
 - Cascading window placement
+- Session environment: sets `XDG_SESSION_TYPE`/`XDG_CURRENT_DESKTOP` for
+  spawned apps and imports `DISPLAY`/`WAYLAND_DISPLAY` into the systemd
+  user manager (restarting xdg-desktop-portal), so clicking a URL in an
+  app opens the default browser
 
 ## Requirements
 

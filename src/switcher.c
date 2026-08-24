@@ -132,7 +132,7 @@ void switcher_show(struct guibux_server *server) {
 
 	s->selection = 0;
 	int lines = s->num_wins < SWITCHER_MAX_LINES ? s->num_wins : SWITCHER_MAX_LINES;
-	int bw = 520;
+	int bw = 720;
 	if (bw > ew - 20) bw = ew - 20;
 	s->box_w = bw;
 	s->box_h = lines * SWITCHER_LINE_H;
@@ -215,7 +215,7 @@ static void switcher_select(struct guibux_server *server) {
 	if (o && t->workspace != o->current_workspace) {
 		switch_workspace(o, t->workspace);
 	}
-	focus_toplevel(t);
+	focus_toplevel(t, true);
 	switcher_hide(server);
 }
 

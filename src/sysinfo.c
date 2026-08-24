@@ -6,6 +6,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <unistd.h>
+#include <sys/wait.h>
 
 /*
  * sysinfo - system information via D-Bus
@@ -14,6 +16,8 @@
  *   NetworkManager (org.freedesktop.NetworkManager)
  *     - Devices for interface name, SSID, signal
  *   UPower (org.freedesktop.UPower) - extensible for battery
+ *   pactl (subprocess)
+ *     - default sink/source volume + mute (PulseAudio / PipeWire)
  *
  * A worker thread owns a dedicated system-bus connection and polls
  * NetworkManager every few seconds; the main loop never blocks on
@@ -35,6 +39,79 @@ static const char *NM_WIFI_IFACE = "org.freedesktop.NetworkManager.Device.Wirele
 /* D-Bus timeout in milliseconds */
 #define DBUS_TIMEOUT_MS 3000
 #define SYSINFO_INTERVAL_SEC 5
+
+/*
+ * Run a command through /bin/sh and capture its stdout.
+ * Returns a newly allocated NUL-terminated string (possibly empty),
+ * or NULL on spawn failure. Caller must free.
+ * Runs in the worker thread only: blocking read is fine here.
+ */
+static char *
+run_capture(const char *cmd)
+{
+    int fds[2];
+    if (pipe(fds) != 0) {
+        return NULL;
+    }
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(fds[0]);
+        close(fds[1]);
+        return NULL;
+    }
+    if (pid == 0) {
+        close(fds[0]);
+        dup2(fds[1], STDOUT_FILENO);
+        close(fds[1]);
+        execl("/bin/sh", "/bin/sh", "-c", cmd, (void *)NULL);
+        _exit(127);
+    }
+    close(fds[1]);
+    char *buf = malloc(4096);
+    if (!buf) {
+        close(fds[0]);
+        waitpid(pid, NULL, 0);
+        return NULL;
+    }
+    size_t total = 0;
+    while (total < 4095) {
+        ssize_t n = read(fds[0], buf + total, 4095 - total);
+        if (n <= 0) {
+            break;
+        }
+        total += (size_t)n;
+    }
+    close(fds[0]);
+    waitpid(pid, NULL, 0);
+    buf[total] = '\0';
+    return buf;
+}
+
+/*
+ * Parse the first "NN%" in s (pactl volume output), -1 on failure.
+ * Example: "Volume: front-left: 65536 / 100% / 0,00 dB" -> 100
+ */
+static int
+parse_percent(const char *s)
+{
+    const char *p = strchr(s, '%');
+    if (!p) {
+        return -1;
+    }
+    /* start of the digit run immediately before '%' */
+    const char *e = p;
+    while (e > s && e[-1] >= '0' && e[-1] <= '9') {
+        e--;
+    }
+    if (e == p) {
+        return -1;
+    }
+    int v = 0;
+    for (const char *q = e; q < p; q++) {
+        v = v * 10 + (*q - '0');
+    }
+    return v;
+}
 
 /*
  * Send a Properties.Get call and return the reply, or NULL on error.
@@ -402,11 +479,56 @@ sysinfo_update_battery(struct guibux_sysinfo *si)
     pthread_mutex_unlock(&si->lock);
 }
 
+/*
+ * Update sink/source (mic) volume + mute via pactl. Works with
+ * PulseAudio and PipeWire (pulse compat). A failed read leaves the
+ * previous values untouched; audio_available stays false until the
+ * first successful read (no audio on the system -> indicator hidden).
+ */
 static void
-sysinfo_update(struct guibux_sysinfo *si)
+sysinfo_update_audio(struct guibux_sysinfo *si)
 {
-    sysinfo_update_network(si);
-    sysinfo_update_battery(si);
+    int volume = -1, mic_volume = -1;
+    bool muted = false, mic_muted = false;
+
+    char *out = run_capture("pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null");
+    if (out) {
+        volume = parse_percent(out);
+        free(out);
+    }
+    if (volume >= 0) {
+        out = run_capture("pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null");
+        if (out) {
+            muted = (strstr(out, "Mute: yes") != NULL);
+            free(out);
+        }
+    }
+
+    out = run_capture("pactl get-source-volume @DEFAULT_SOURCE@ 2>/dev/null");
+    if (out) {
+        mic_volume = parse_percent(out);
+        free(out);
+    }
+    if (mic_volume >= 0) {
+        out = run_capture("pactl get-source-mute @DEFAULT_SOURCE@ 2>/dev/null");
+        if (out) {
+            mic_muted = (strstr(out, "Mute: yes") != NULL);
+            free(out);
+        }
+    }
+
+    pthread_mutex_lock(&si->lock);
+    if (volume >= 0) {
+        si->volume = volume;
+        si->muted = muted;
+        si->audio_available = true;
+    }
+    if (mic_volume >= 0) {
+        si->mic_volume = mic_volume;
+        si->mic_muted = mic_muted;
+        si->audio_available = true;
+    }
+    pthread_mutex_unlock(&si->lock);
 }
 
 static void *
@@ -434,6 +556,16 @@ sysinfo_worker(void *data)
         }
     }
 
+    /* test hook: seed a fake network name so tests can exercise the
+     * topbar net indicator without NetworkManager (the first real poll
+     * only happens 5s in) */
+    const char *test_net = getenv("GUIBUX_TEST_NET");
+    if (test_net != NULL) {
+        pthread_mutex_lock(&si->lock);
+        snprintf(si->network, sizeof(si->network), "%s", test_net);
+        pthread_mutex_unlock(&si->lock);
+    }
+
     while (true) {
         bool running = false;
         bool nm = false;
@@ -449,8 +581,11 @@ sysinfo_worker(void *data)
             break;
         }
         if (nm && si->system_bus) {
-            sysinfo_update(si);
+            sysinfo_update_network(si);
+            sysinfo_update_battery(si);
         }
+        /* audio works without NetworkManager (pactl poll) */
+        sysinfo_update_audio(si);
     }
 
     if (si->system_bus) {
@@ -470,6 +605,11 @@ sysinfo_init(struct guibux_server *server)
     si->nm_available = false;
     si->network[0] = '\0';
     si->battery[0] = '\0';
+    si->audio_available = false;
+    si->volume = -1;
+    si->muted = false;
+    si->mic_volume = -1;
+    si->mic_muted = false;
     si->worker = 0;
 
     pthread_mutex_init(&si->lock, NULL);
@@ -489,12 +629,63 @@ sysinfo_init(struct guibux_server *server)
 }
 
 void
-sysinfo_get(struct guibux_sysinfo *si, char *net, size_t net_size,
-            char *bat, size_t bat_size)
+sysinfo_get(struct guibux_sysinfo *si, struct guibux_sysinfo_snapshot *snap)
 {
     pthread_mutex_lock(&si->lock);
-    snprintf(net, net_size, "%s", si->network);
-    snprintf(bat, bat_size, "%s", si->battery);
+    snprintf(snap->net, sizeof(snap->net), "%s", si->network);
+    snprintf(snap->bat, sizeof(snap->bat), "%s", si->battery);
+    snap->audio_available = si->audio_available;
+    snap->volume = si->volume;
+    snap->muted = si->muted;
+    snap->mic_volume = si->mic_volume;
+    snap->mic_muted = si->mic_muted;
+    pthread_mutex_unlock(&si->lock);
+}
+
+/*
+ * Optimistic local update: the WM itself just changed the volume via
+ * pactl, so apply the change to the published snapshot immediately
+ * instead of waiting for the next poll. A no-op until the first
+ * successful audio read; the periodic poll self-corrects any drift
+ * (e.g. another app changed the volume in between).
+ */
+void
+sysinfo_audio_adjust(struct guibux_sysinfo *si, bool mic, int delta)
+{
+    pthread_mutex_lock(&si->lock);
+    if (si->audio_available) {
+        if (mic) {
+            si->mic_volume += delta;
+            if (si->mic_volume < 0) {
+                si->mic_volume = 0;
+            }
+            if (si->mic_volume > 150) {
+                si->mic_volume = 150;
+            }
+        } else {
+            si->volume += delta;
+            if (si->volume < 0) {
+                si->volume = 0;
+            }
+            if (si->volume > 150) {
+                si->volume = 150;
+            }
+        }
+    }
+    pthread_mutex_unlock(&si->lock);
+}
+
+void
+sysinfo_audio_toggle_mute(struct guibux_sysinfo *si, bool mic)
+{
+    pthread_mutex_lock(&si->lock);
+    if (si->audio_available) {
+        if (mic) {
+            si->mic_muted = !si->mic_muted;
+        } else {
+            si->muted = !si->muted;
+        }
+    }
     pthread_mutex_unlock(&si->lock);
 }
 

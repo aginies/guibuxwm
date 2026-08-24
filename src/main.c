@@ -167,11 +167,14 @@ int main(int argc, char *argv[]) {
 	}
 
 	server.compositor = wlr_compositor_create(server.wl_display, 5, server.renderer);
+	server.screencopy = wlr_screencopy_manager_v1_create(server.wl_display);
 	wlr_subcompositor_create(server.wl_display);
 	wlr_data_device_manager_create(server.wl_display);
 	wlr_primary_selection_v1_device_manager_create(server.wl_display);
 
 	server.output_layout = wlr_output_layout_create(server.wl_display);
+	server.xdg_output_manager = wlr_xdg_output_manager_v1_create(
+		server.wl_display, server.output_layout);
 
 	wl_list_init(&server.outputs);
 	server.new_output.notify = server_new_output;
@@ -247,6 +250,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	sysinfo_init(&server);
+	notify_init(&server);
 
 	if (!wlr_backend_start(server.backend)) {
 		wlr_backend_destroy(server.backend);
@@ -260,6 +264,10 @@ int main(int argc, char *argv[]) {
 	if (server.xwayland != NULL) {
 		setenv("DISPLAY", server.xwayland->display_name, true);
 	}
+	/* complete the session env (XDG_SESSION_TYPE, XDG_CURRENT_DESKTOP)
+	 * and import DISPLAY/WAYLAND_DISPLAY into the systemd user manager
+	 * so xdg-desktop-portal can open URLs in the default browser */
+	setup_session_environment(&server);
 
 	if (extra_outputs != NULL) {
 		int n = atoi(extra_outputs) + 1;
@@ -306,6 +314,43 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.topbar_test_timer, 500);
 	}
 
+	const char *audio_test = getenv("GUIBUX_TEST_AUDIO");
+	if (audio_test != NULL) {
+		/* fire after the first sysinfo audio poll (~5s) so the
+		 * indicators have been rendered */
+		server.audio_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			audio_test_run, &server);
+		wl_event_source_timer_update(server.audio_test_timer, 6500);
+	}
+
+	const char *notify_test = getenv("GUIBUX_TEST_NOTIFY");
+	if (notify_test != NULL) {
+		server.notify_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			notify_test_run, &server);
+		wl_event_source_timer_update(server.notify_test_timer, 500);
+	}
+
+	const char *scroll_test = getenv("GUIBUX_TEST_SCROLL");
+	if (scroll_test != NULL) {
+		/* after the first audio poll: the VOL indicator must be
+		 * rendered for the scroll hit area to exist */
+		server.scroll_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			scroll_test_run, &server);
+		wl_event_source_timer_update(server.scroll_test_timer, 6500);
+	}
+
+	const char *altdrag_test = getenv("GUIBUX_TEST_ALTDRAG");
+	if (altdrag_test != NULL) {
+		test_seat_add_keyboard(&server);
+		server.altdrag_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			alt_drag_test_run, &server);
+		wl_event_source_timer_update(server.altdrag_test_timer, 2000);
+	}
+
 	const char *psel_test = getenv("GUIBUX_TEST_PRIMARY_SELECTION");
 	if (psel_test != NULL) {
 		server.psel_test_timer = wl_event_loop_add_timer(
@@ -331,10 +376,19 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.keybind_test_timer, 500);
 	}
 
+	const char *resize_test = getenv("GUIBUX_TEST_RESIZE");
+	if (resize_test != NULL) {
+		server.resize_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			resize_test_run, &server);
+		wl_event_source_timer_update(server.resize_test_timer, 3000);
+	}
+
 	wlr_log(WLR_INFO, "guibuxwm running on WAYLAND_DISPLAY=%s", socket);
 	wl_display_run(server.wl_display);
 
 	sysinfo_destroy(&server);
+	notify_destroy(&server);
 
 	wl_display_destroy_clients(server.wl_display);
 
@@ -364,6 +418,15 @@ int main(int argc, char *argv[]) {
 	if (server.topbar_test_timer != NULL) {
 		wl_event_source_remove(server.topbar_test_timer);
 	}
+	if (server.audio_test_timer != NULL) {
+		wl_event_source_remove(server.audio_test_timer);
+	}
+	if (server.scroll_test_timer != NULL) {
+		wl_event_source_remove(server.scroll_test_timer);
+	}
+	if (server.altdrag_test_timer != NULL) {
+		wl_event_source_remove(server.altdrag_test_timer);
+	}
 	if (server.workspace_test_timer != NULL) {
 		wl_event_source_remove(server.workspace_test_timer);
 	}
@@ -375,6 +438,12 @@ int main(int argc, char *argv[]) {
 	}
 	if (server.psel_test_timer != NULL) {
 		wl_event_source_remove(server.psel_test_timer);
+	}
+	if (server.resize_test_timer != NULL) {
+		wl_event_source_remove(server.resize_test_timer);
+	}
+	if (server.notify_test_timer != NULL) {
+		wl_event_source_remove(server.notify_test_timer);
 	}
 
 	launcher_hide(&server);

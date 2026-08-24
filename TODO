@@ -1,0 +1,2 @@
+- effect: Window open/close animations, Sliding or fading workspace transitions, special effects for notifications. All can be disabled at build or config if needed (enable by default)
+- 

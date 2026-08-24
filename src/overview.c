@@ -761,7 +761,7 @@ void overview_button_release(struct guibux_server *server) {
 		if (o != NULL && t->workspace != o->current_workspace) {
 			switch_workspace(o, t->workspace);
 		}
-		focus_toplevel(t);
+		focus_toplevel(t, true);
 	}
 	reset_cursor_mode(server);
 }

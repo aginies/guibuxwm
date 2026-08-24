@@ -31,6 +31,12 @@ static const char *action_name(enum guibux_action action, int arg) {
 	case GUIBUX_ACT_SWITCH_WS_LEFT: return "switch-ws-left";
 	case GUIBUX_ACT_SWITCH_WS_RIGHT: return "switch-ws-right";
 	case GUIBUX_ACT_SHOW_HELP:     return "show-help";
+	case GUIBUX_ACT_VOLUME_UP:     return "volume-up";
+	case GUIBUX_ACT_VOLUME_DOWN:   return "volume-down";
+	case GUIBUX_ACT_MUTE:          return "mute";
+	case GUIBUX_ACT_MIC_UP:        return "mic-up";
+	case GUIBUX_ACT_MIC_DOWN:      return "mic-down";
+	case GUIBUX_ACT_MIC_MUTE:      return "mic-mute";
 	default:                       return "unknown";
 	}
 }
