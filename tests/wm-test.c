@@ -527,6 +527,181 @@ int alt_drag_test_run(void *data) {
 	return 0;
 }
 
+/* Dragging a window onto another monitor must reassign its stored
+ * output: the original bar must drop it, the new bar must list it.
+ * Regression: the release handler asked toplevel_output_for(), which
+ * prefers the stored output, so the "new" output was always the old
+ * one and the window never left the original monitor. Phase 2 covers
+ * a resize that drags the window center back across the boundary. */
+static struct {
+	int phase;
+	int w0;
+	struct guibux_output *src, *dst;
+} xmondrag_test_state;
+
+static bool topbar_lists(struct guibux_output *o, struct guibux_toplevel *t) {
+	for (int i = 0; i < o->topbar_win_count; i++) {
+		if (o->topbar_wins[i] == t) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void xmondrag_test_next(struct guibux_server *server) {
+	wl_event_source_timer_update(server->xmondrag_test_timer, 400);
+}
+
+int xmondrag_test_run(void *data) {
+	struct guibux_server *server = data;
+	struct guibux_output *o;
+	int n_outputs = 0;
+	wl_list_for_each(o, &server->outputs, link) {
+		n_outputs++;
+	}
+	if (n_outputs < 2) {
+		wlr_log(WLR_ERROR, "xmondrag-test: FAIL need two outputs (GUIBUX_TEST_EXTRA_OUTPUTS=1)");
+		return 0;
+	}
+	struct guibux_toplevel *t = NULL;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->managed) {
+			break;
+		}
+	}
+	if (t == NULL) {
+		wlr_log(WLR_ERROR, "xmondrag-test: FAIL no managed toplevel");
+		return 0;
+	}
+
+	switch (xmondrag_test_state.phase) {
+	case 0: {
+		struct wlr_keyboard *kb = wlr_seat_get_keyboard(server->seat);
+		if (kb == NULL) {
+			wlr_log(WLR_ERROR, "xmondrag-test: FAIL no keyboard");
+			return 0;
+		}
+		xmondrag_test_state.src = guibux_output_for(server,
+			toplevel_output_for(t));
+		xmondrag_test_state.dst = other_output(server,
+			xmondrag_test_state.src);
+		if (xmondrag_test_state.src == NULL ||
+				xmondrag_test_state.dst == NULL) {
+			wlr_log(WLR_ERROR, "xmondrag-test: FAIL no src/dst output");
+			return 0;
+		}
+		struct guibux_output *src = xmondrag_test_state.src;
+		struct guibux_output *dst = xmondrag_test_state.dst;
+
+		/* alt+drag the window center onto the other monitor */
+		struct wlr_box geo;
+		toplevel_get_geometry(t, &geo);
+		xmondrag_test_state.w0 = geo.width;
+		double cx = t->scene_tree->node.x + geo.width / 2.0;
+		double cy = t->scene_tree->node.y + geo.height / 2.0;
+		server->cursor->x = cx;
+		server->cursor->y = cy;
+		process_cursor_motion(server, 1);
+		kb->modifiers.depressed |= WLR_MODIFIER_ALT;
+		struct wlr_pointer_button_event press = {
+			.time_msec = 1,
+			.button = 272, /* BTN_LEFT */
+			.state = WL_POINTER_BUTTON_STATE_PRESSED,
+		};
+		server_cursor_button(&server->cursor_button, &press);
+		if (server->cursor_mode != GUIBUX_CURSOR_MOVE ||
+				server->grabbed_toplevel != t) {
+			wlr_log(WLR_ERROR, "xmondrag-test: FAIL drag not started (mode %d, grab %s)",
+				server->cursor_mode,
+				server->grabbed_toplevel == t ? "yes" : "no");
+			return 0;
+		}
+		struct wlr_box dbox;
+		wlr_output_layout_get_box(server->output_layout, dst->wlr_output, &dbox);
+		server->cursor->x = dbox.x + dbox.width / 2.0;
+		server->cursor->y = dbox.y + dbox.height / 2.0;
+		process_cursor_motion(server, 2);
+		kb->modifiers.depressed &= ~WLR_MODIFIER_ALT;
+		struct wlr_pointer_button_event release = {
+			.time_msec = 3,
+			.button = 272,
+			.state = WL_POINTER_BUTTON_STATE_RELEASED,
+		};
+		server_cursor_button(&server->cursor_button, &release);
+		if (t->output != dst) {
+			wlr_log(WLR_ERROR, "xmondrag-test: FAIL output not updated after drag");
+			return 0;
+		}
+		src->topbar_dirty = true;
+		dst->topbar_dirty = true;
+		topbar_render(src);
+		topbar_render(dst);
+		if (!topbar_lists(dst, t) || topbar_lists(src, t)) {
+			wlr_log(WLR_ERROR, "xmondrag-test: FAIL topbar lists after drag (dst %s, src %s)",
+				topbar_lists(dst, t) ? "yes" : "no",
+				topbar_lists(src, t) ? "yes" : "no");
+			return 0;
+		}
+
+		/* start the cross-boundary resize: drag the left edge until the
+		 * center lands on the src monitor; the release comes in phase 1,
+		 * once the client has committed the new geometry */
+		struct wlr_box sbox;
+		wlr_output_layout_get_box(server->output_layout, src->wlr_output, &sbox);
+		double left = t->scene_tree->node.x + geo.x;
+		double right = left + geo.width;
+		double want_left = 2.0 * (sbox.x + sbox.width / 2.0) - right;
+		server->cursor->x = left;
+		server->cursor->y = cy;
+		begin_interactive(t, GUIBUX_CURSOR_RESIZE, WLR_EDGE_LEFT);
+		server->cursor->x = want_left;
+		process_cursor_motion(server, 4);
+		xmondrag_test_state.phase = 1;
+		xmondrag_test_next(server);
+		return 0;
+	}
+	case 1: {
+		struct guibux_output *src = xmondrag_test_state.src;
+		struct guibux_output *dst = xmondrag_test_state.dst;
+		struct wlr_box geo;
+		toplevel_get_geometry(t, &geo);
+		double center = t->scene_tree->node.x + geo.width / 2.0;
+		struct wlr_box sbox;
+		wlr_output_layout_get_box(server->output_layout, src->wlr_output, &sbox);
+		/* the client must have committed the resized geometry before the
+		 * release, or the position lookup sees a stale box */
+		if (geo.width < 2.0 * xmondrag_test_state.w0 ||
+				center < sbox.x || center >= sbox.x + sbox.width) {
+			xmondrag_test_next(server);
+			return 0;
+		}
+		struct wlr_pointer_button_event release = {
+			.time_msec = 5,
+			.button = 272,
+			.state = WL_POINTER_BUTTON_STATE_RELEASED,
+		};
+		server_cursor_button(&server->cursor_button, &release);
+		if (t->output != src) {
+			wlr_log(WLR_ERROR, "xmondrag-test: FAIL output not updated after resize");
+			return 0;
+		}
+		src->topbar_dirty = true;
+		dst->topbar_dirty = true;
+		topbar_render(src);
+		topbar_render(dst);
+		if (!topbar_lists(src, t) || topbar_lists(dst, t)) {
+			wlr_log(WLR_ERROR, "xmondrag-test: FAIL topbar lists after resize (src %s, dst %s)",
+				topbar_lists(src, t) ? "yes" : "no",
+				topbar_lists(dst, t) ? "yes" : "no");
+			return 0;
+		}
+		wlr_log(WLR_INFO, "xmondrag-test: OK (drag + resize across outputs)");
+		return 0;
+	}
+	}
+	return 0;
+}
+
 /* Interactive resize of a window that is NOT at the layout origin must
  * resize in place: right/bottom drags keep the node position, left/top
  * drags move the node with the dragged edge. The regression this guards

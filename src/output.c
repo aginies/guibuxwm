@@ -21,6 +21,21 @@ struct wlr_output *output_at_cursor(struct guibux_server *server) {
 	return NULL;
 }
 
+/* output under the window's center, or NULL when the center is not over
+ * any output (e.g. a gap between monitors); ignores the stored output
+ * pointer, which is stale while the window is being dragged or resized */
+struct wlr_output *toplevel_output_at_position(struct guibux_toplevel *toplevel) {
+	if (toplevel->scene_tree == NULL) {
+		return NULL;
+	}
+	struct wlr_box geo;
+	toplevel_get_geometry(toplevel, &geo);
+	int cx = toplevel->scene_tree->node.x + geo.width / 2;
+	int cy = toplevel->scene_tree->node.y + geo.height / 2;
+	return wlr_output_layout_output_at(toplevel->server->output_layout,
+		cx, cy);
+}
+
 struct wlr_output *toplevel_output_for(struct guibux_toplevel *toplevel) {
 	struct guibux_server *server = toplevel->server;
 	if (toplevel->scene_tree == NULL) {
@@ -39,17 +54,11 @@ struct wlr_output *toplevel_output_for(struct guibux_toplevel *toplevel) {
 	if (toplevel->output != NULL) {
 		return toplevel->output->wlr_output;
 	}
-	struct wlr_box geo;
-	toplevel_get_geometry(toplevel, &geo);
-	int cx = toplevel->scene_tree->node.x + geo.width / 2;
-	int cy = toplevel->scene_tree->node.y + geo.height / 2;
-	struct guibux_output *o;
-	wl_list_for_each(o, &server->outputs, link) {
-		if (wlr_output_layout_contains_point(server->output_layout,
-				o->wlr_output, cx, cy)) {
-			return o->wlr_output;
-		}
+	struct wlr_output *out = toplevel_output_at_position(toplevel);
+	if (out != NULL) {
+		return out;
 	}
+	struct guibux_output *o;
 	wl_list_for_each(o, &server->outputs, link) {
 		return o->wlr_output;
 	}

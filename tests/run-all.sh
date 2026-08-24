@@ -31,6 +31,7 @@ run "notify" ./run-notify-test.sh
 run "audio" ./run-audio-test.sh
 run "topbar scroll" ./run-scroll-test.sh
 run "alt+drag move" ./run-altdrag-test.sh
+run "cross-monitor drag" ./run-xmondrag-test.sh
 run "resize edges" ./run-resize-test.sh
 run "launcher" ./run-launcher-test.sh
 run "config" ./run-config-test.sh

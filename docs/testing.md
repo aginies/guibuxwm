@@ -26,6 +26,7 @@ tests/run-notify-test.sh         # notifications (D-Bus round-trip, auto-show, a
 tests/run-effects-test.sh        # window close retile + open scale-in animations
 tests/run-scroll-test.sh         # scroll over VOL/MIC indicators
 tests/run-altdrag-test.sh        # Alt+drag window move
+tests/run-xmondrag-test.sh       # drag/resize a window across monitors (output + topbar lists)
 tests/run-psel-test.sh           # primary selection
 tests/run-resize-test.sh         # window resize
 tests/run-overview-test.sh       # F12 overview
@@ -193,6 +194,7 @@ Test clients are built by the main build and live in `tests/`:
 | `GUIBUX_TEST_QUIT=<ms>` | Terminate the compositor after `<ms>` (clean exit, same as the quit keybind) |
 | `GUIBUX_TEST_SCROLL=1` | Scroll over VOL/MIC indicators in the topbar |
 | `GUIBUX_TEST_ALTDRAG=1` | Alt+drag window move |
+| `GUIBUX_TEST_XMONDRAG=1` | Drag/resize a window across monitors: stored output + topbar lists must follow |
 | `GUIBUX_TEST_PRIMARY_SELECTION=1` | Primary selection (middle-click paste) |
 | `GUIBUX_TEST_RESIZE=1` | Window resize |
 | `GUIBUX_TEST_OVERVIEW=1` | F12 overview |

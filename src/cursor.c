@@ -341,15 +341,23 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 		}
 	}
 	if (event->state == WL_POINTER_BUTTON_STATE_RELEASED) {
-		if (server->cursor_mode == GUIBUX_CURSOR_MOVE &&
+		if ((server->cursor_mode == GUIBUX_CURSOR_MOVE ||
+				server->cursor_mode == GUIBUX_CURSOR_RESIZE) &&
 				server->grabbed_toplevel != NULL) {
 			struct guibux_toplevel *t = server->grabbed_toplevel;
-			struct wlr_output *new_wlr = toplevel_output_for(t);
+			/* toplevel_output_for() would return the stored output,
+			 * which is exactly what may have just changed: ask for
+			 * the position instead; NULL (center over no output)
+			 * keeps the window on its current output */
+			struct wlr_output *new_wlr = toplevel_output_at_position(t);
 			struct guibux_output *new_o = guibux_output_for(server, new_wlr);
 			if (new_o != NULL && t->output != new_o) {
 				struct guibux_output *old_o = t->output;
 				t->output = new_o;
 				t->workspace = new_o->current_workspace;
+				/* the window list changed on both bars */
+				topbar_mark_dirty(old_o);
+				topbar_mark_dirty(new_o);
 				if (new_o->tile_modes[new_o->current_workspace] != GUIBUX_TILE_FREE) {
 					retile_output(new_o);
 				}

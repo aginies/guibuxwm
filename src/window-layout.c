@@ -257,12 +257,14 @@ void move_toplevel_to_output(struct guibux_toplevel *toplevel, struct wlr_output
 	if (o != NULL) {
 		toplevel->output = o;
 		toplevel->workspace = o->current_workspace;
+		topbar_mark_dirty(o);
 		if (o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
 			retile_output(o);
 		}
 	}
 	if (src != output) {
 		struct guibux_output *so = guibux_output_for(server, src);
+		topbar_mark_dirty(so);
 		if (so != NULL && so->tile_modes[so->current_workspace] != GUIBUX_TILE_FREE) {
 			retile_output(so);
 		}

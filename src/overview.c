@@ -730,6 +730,9 @@ static void overview_drop(struct guibux_server *server,
 		ov->saved_y[idx] = ny;
 		ov->win_output[idx] = target;
 		t->output = guibux_output_for(server, target);
+		/* the window list changed on both bars */
+		topbar_mark_dirty(guibux_output_for(server, src));
+		topbar_mark_dirty(guibux_output_for(server, target));
 	}
 	t->workspace = ws;
 

@@ -378,6 +378,15 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.altdrag_test_timer, 2000);
 	}
 
+	const char *xmondrag_test = getenv("GUIBUX_TEST_XMONDRAG");
+	if (xmondrag_test != NULL) {
+		test_seat_add_keyboard(&server);
+		server.xmondrag_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			xmondrag_test_run, &server);
+		wl_event_source_timer_update(server.xmondrag_test_timer, 2000);
+	}
+
 	const char *psel_test = getenv("GUIBUX_TEST_PRIMARY_SELECTION");
 	if (psel_test != NULL) {
 		server.psel_test_timer = wl_event_loop_add_timer(
@@ -486,6 +495,9 @@ int main(int argc, char *argv[]) {
 	}
 	if (server.altdrag_test_timer != NULL) {
 		wl_event_source_remove(server.altdrag_test_timer);
+	}
+	if (server.xmondrag_test_timer != NULL) {
+		wl_event_source_remove(server.xmondrag_test_timer);
 	}
 	if (server.workspace_test_timer != NULL) {
 		wl_event_source_remove(server.workspace_test_timer);
