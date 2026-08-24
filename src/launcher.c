@@ -10,6 +10,218 @@
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/render/allocator.h>
 #include <drm_fourcc.h>
+#include "stb_image.h"
+
+#define LAUNCHER_ICON_SIZE 24
+#define LAUNCHER_ICON_PAD 8
+#define ICON_ARRAY_LEN(arr) (sizeof(arr) / sizeof((arr)[0]))
+#define ICON_MAX_DIRS 8
+
+static char icon_dirs[ICON_MAX_DIRS][PATH_MAX];
+static int num_icon_dirs;
+
+static const char *icon_sizes[] = {
+	"24x24",
+	"16x16",
+	"scalable",
+};
+
+static const char *icon_contexts[] = {
+	"apps",
+	"mimetypes",
+};
+
+static void icon_add_dir(const char *dir) {
+	for (int i = 0; i < num_icon_dirs; i++) {
+		if (strcmp(icon_dirs[i], dir) == 0)
+			return;
+	}
+	if (num_icon_dirs >= ICON_MAX_DIRS)
+		return;
+	snprintf(icon_dirs[num_icon_dirs], PATH_MAX, "%s", dir);
+	num_icon_dirs++;
+}
+
+/* read gtk-icon-theme-name from the user's gtk settings.ini */
+static void icon_detect_gtk_theme(char *out, size_t n) {
+	const char *home = getenv("HOME");
+	if (!home)
+		return;
+	const char *rel[2] = {
+		".config/gtk-3.0/settings.ini",
+		".config/gtk-4.0/settings.ini",
+	};
+	for (size_t i = 0; i < 2; i++) {
+		char path[PATH_MAX];
+		snprintf(path, sizeof(path), "%s/%s", home, rel[i]);
+		FILE *f = fopen(path, "r");
+		if (!f)
+			continue;
+		char line[256];
+		while (fgets(line, sizeof(line), f)) {
+			char *eq = strchr(line, '=');
+			if (!eq)
+				continue;
+			*eq = '\0';
+			char *key = line;
+			while (*key == ' ' || *key == '\t')
+				key++;
+			char *kend = eq - 1;
+			while (kend > key && (kend[-1] == ' ' || kend[-1] == '\t'))
+				kend--;
+			*(kend + 1) = '\0';
+			if (strcmp(key, "gtk-icon-theme-name") != 0)
+				continue;
+			char *val = eq + 1;
+			while (*val == ' ' || *val == '\t')
+				val++;
+			size_t len = strlen(val);
+			while (len > 0 && (val[len-1] == '\n' || val[len-1] == '\r' ||
+					val[len-1] == ' ' || val[len-1] == '\t'))
+				val[--len] = '\0';
+			if (val[0]) {
+				snprintf(out, n, "%s", val);
+				fclose(f);
+				return;
+			}
+		}
+		fclose(f);
+	}
+}
+
+/* build the icon theme search path: user theme dir, XDG_DATA_DIRS
+ * theme dirs, then Adwaita and hicolor as fallbacks */
+static void icon_build_dirs(struct guibux_launcher *l) {
+	char theme[64] = "Adwaita";
+	if (l->icon_theme[0] != '\0') {
+		snprintf(theme, sizeof(theme), "%s", l->icon_theme);
+	} else {
+		icon_detect_gtk_theme(theme, sizeof(theme));
+	}
+	char dir[PATH_MAX];
+	const char *home = getenv("HOME");
+	if (home) {
+		snprintf(dir, sizeof(dir), "%s/.local/share/icons/%s", home, theme);
+		icon_add_dir(dir);
+	}
+	const char *xdg = getenv("XDG_DATA_DIRS");
+	if (xdg == NULL || xdg[0] == '\0')
+		xdg = "/usr/local/share:/usr/share";
+	char *xdg_copy = strdup(xdg);
+	char *save = NULL;
+	for (char *p = strtok_r(xdg_copy, ":", &save); p != NULL;
+			p = strtok_r(NULL, ":", &save)) {
+		if (*p == '\0')
+			continue;
+		snprintf(dir, sizeof(dir), "%s/share/icons/%s", p, theme);
+		icon_add_dir(dir);
+	}
+	free(xdg_copy);
+	icon_add_dir("/usr/share/icons/Adwaita");
+	icon_add_dir("/usr/share/icons/hicolor");
+	wlr_log(WLR_INFO, "launcher: icon theme '%s' (%d dirs)",
+		theme, num_icon_dirs);
+}
+
+char *resolve_icon(const char *icon_name) {
+	if (!icon_name || icon_name[0] == '\0')
+		return NULL;
+
+	char path[PATH_MAX + 64];
+	for (int t = 0; t < num_icon_dirs; t++) {
+		for (size_t s = 0; s < ICON_ARRAY_LEN(icon_sizes); s++) {
+			for (size_t c = 0; c < ICON_ARRAY_LEN(icon_contexts); c++) {
+				snprintf(path, sizeof(path), "%s/%s/%s/%s.png",
+					icon_dirs[t], icon_sizes[s],
+					icon_contexts[c], icon_name);
+				if (access(path, F_OK) == 0) {
+					wlr_log(WLR_INFO, "launcher: icon '%s' -> %s",
+						icon_name, path);
+					return strdup(path);
+				}
+			}
+		}
+	}
+	wlr_log(WLR_DEBUG, "launcher: icon '%s' not found", icon_name);
+	return NULL;
+}
+
+static uint8_t *load_icon(const char *path, int *out_w, int *out_h) {
+	if (!path || access(path, F_OK) != 0)
+		return NULL;
+	uint8_t *data = stbi_load(path, out_w, out_h, NULL, 4);
+	if (!data)
+		return NULL;
+	/* cairo ARGB32 expects premultiplied alpha; stb returns straight */
+	int n = *out_w * *out_h;
+	for (int i = 0; i < n; i++) {
+		uint8_t a = data[i * 4 + 3];
+		data[i * 4 + 0] = (uint8_t)((data[i * 4 + 0] * a + 127) / 255);
+		data[i * 4 + 1] = (uint8_t)((data[i * 4 + 1] * a + 127) / 255);
+		data[i * 4 + 2] = (uint8_t)((data[i * 4 + 2] * a + 127) / 255);
+	}
+	return data;
+}
+
+static uint8_t *get_cached_icon(struct guibux_launcher *l,
+		const char *path, int *out_w, int *out_h) {
+	for (int i = 0; i < l->num_icons; i++) {
+		if (strcmp(l->icon_cache[i].path, path) == 0) {
+			*out_w = l->icon_cache[i].w;
+			*out_h = l->icon_cache[i].h;
+			return l->icon_cache[i].data;
+		}
+	}
+	if (l->num_icons >= (int)ICON_ARRAY_LEN(l->icon_cache)) {
+		/* cache full: evict the oldest entry */
+		stbi_image_free(l->icon_cache[0].data);
+		memmove(&l->icon_cache[0], &l->icon_cache[1],
+			(size_t)(l->num_icons - 1) * sizeof(l->icon_cache[0]));
+		l->num_icons--;
+	}
+
+	uint8_t *data = load_icon(path, out_w, out_h);
+	if (!data)
+		return NULL;
+
+	snprintf(l->icon_cache[l->num_icons].path,
+		sizeof(l->icon_cache[l->num_icons].path), "%s", path);
+	l->icon_cache[l->num_icons].data = data;
+	l->icon_cache[l->num_icons].w = *out_w;
+	l->icon_cache[l->num_icons].h = *out_h;
+	l->num_icons++;
+	return data;
+}
+
+/* draw a cached icon at (pad, vertically centered in the line),
+ * scaled to LAUNCHER_ICON_SIZE * box_scale; advance *tx past the
+ * icon plus padding when drawn */
+static void launcher_draw_icon(cairo_t *cr, struct guibux_launcher *l,
+		const char *path, int ly, int lh, int pad, int *tx) {
+	if (path[0] == '\0')
+		return;
+	int iw, ih;
+	uint8_t *img = get_cached_icon(l, path, &iw, &ih);
+	if (!img || iw <= 0 || ih <= 0)
+		return;
+	int target = LAUNCHER_ICON_SIZE * l->box_scale;
+	double s = (double)target / iw;
+	int th = (int)(ih * s + 0.5);
+	int iy = ly + (lh - th) / 2;
+	cairo_surface_t *surf = cairo_image_surface_create_for_data(
+		img, CAIRO_FORMAT_ARGB32, iw, ih, iw * 4);
+	cairo_pattern_t *pat = cairo_pattern_create_for_surface(surf);
+	cairo_pattern_set_filter(pat, CAIRO_FILTER_BILINEAR);
+	cairo_save(cr);
+	cairo_translate(cr, pad, iy);
+	cairo_scale(cr, s, s);
+	cairo_set_source(cr, pat);
+	cairo_paint(cr);
+	cairo_restore(cr);
+	cairo_pattern_destroy(pat);
+	cairo_surface_destroy(surf);
+	*tx += target + LAUNCHER_ICON_PAD * l->box_scale;
+}
 
 static const char *launcher_font_candidates[] = {
 	"/usr/share/fonts/truetype/LiberationMono-Regular.ttf",
@@ -36,7 +248,8 @@ static bool launcher_init_font(struct guibux_server *server) {
 	return false;
 }
 
-static void launcher_add_entry(struct guibux_launcher *l, const char *name, const char *exec) {
+static void launcher_add_entry(struct guibux_launcher *l, const char *name,
+		const char *exec, const char *icon_path) {
 	bool dup = false;
 	for (int i = 0; i < l->num_entries; i++) {
 		if (strcasecmp(l->entries[i].name, name) == 0) {
@@ -56,6 +269,10 @@ static void launcher_add_entry(struct guibux_launcher *l, const char *name, cons
 	}
 	l->entries[l->num_entries].name = strdup(name);
 	l->entries[l->num_entries].exec = strdup(exec);
+	strncpy(l->entries[l->num_entries].icon_path,
+		icon_path ? icon_path : "",
+		sizeof(l->entries[l->num_entries].icon_path) - 1);
+	l->entries[l->num_entries].icon_path[sizeof(l->entries[l->num_entries].icon_path) - 1] = '\0';
 	l->num_entries++;
 }
 
@@ -79,7 +296,7 @@ static void launcher_load_commands(struct guibux_launcher *l) {
 			struct stat st;
 			if (stat(full, &st) != 0 || !S_ISREG(st.st_mode)) continue;
 			if (access(full, X_OK) != 0) continue;
-			launcher_add_entry(l, e->d_name, e->d_name);
+			launcher_add_entry(l, e->d_name, e->d_name, NULL);
 			if (l->num_entries >= LAUNCHER_MAX_COMMANDS) break;
 		}
 		closedir(d);
@@ -173,7 +390,7 @@ static void launcher_parse_desktop(const char *filepath, struct guibux_launcher 
 	FILE *f = fopen(filepath, "r");
 	if (!f) return;
 	char line[512];
-	char *name = NULL, *exec = NULL, *flatpak_id = NULL;
+	char *name = NULL, *exec = NULL, *flatpak_id = NULL, *icon = NULL;
 	bool in_main = false;
 	while (fgets(line, sizeof(line), f)) {
 		if (strcmp(line, "[Desktop Entry]\n") == 0 ||
@@ -191,6 +408,8 @@ static void launcher_parse_desktop(const char *filepath, struct guibux_launcher 
 			val = line + 5;
 		} else if (strncmp(line, "X-Flatpak=", 10) == 0) {
 			val = line + 10;
+		} else if (strncmp(line, "Icon=", 5) == 0) {
+			val = line + 5;
 		} else continue;
 
 		int len = strlen(val);
@@ -202,6 +421,8 @@ static void launcher_parse_desktop(const char *filepath, struct guibux_launcher 
 			if (!name) name = strdup(val);
 		} else if (strncmp(line, "Exec=", 5) == 0) {
 			if (!exec) exec = strdup(val);
+		} else if (strncmp(line, "Icon=", 5) == 0) {
+			if (!icon) icon = strdup(val);
 		} else {
 			if (!flatpak_id) flatpak_id = strdup(val);
 		}
@@ -216,16 +437,21 @@ static void launcher_parse_desktop(const char *filepath, struct guibux_launcher 
 		size_t n = strlen(flatpak_id);
 		char *cmd = malloc(n + 16);
 		snprintf(cmd, n + 16, "flatpak run %s", flatpak_id);
-		launcher_add_entry(l, name, cmd);
+		char *ic = icon ? resolve_icon(icon) : NULL;
+		launcher_add_entry(l, name, cmd, ic);
+		free(ic);
 		free(cmd);
 	} else if (name && exec) {
 		char *cmd = desktop_exec_to_cmd(exec);
-		launcher_add_entry(l, name, cmd);
+		char *ic = icon ? resolve_icon(icon) : NULL;
+		launcher_add_entry(l, name, cmd, ic);
+		free(ic);
 		free(cmd);
 	}
 	free(name);
 	free(exec);
 	free(flatpak_id);
+	free(icon);
 }
 
 static void launcher_load_desktop_files(struct guibux_launcher *l) {
@@ -286,6 +512,13 @@ void launcher_free_commands(struct guibux_launcher *l) {
 		free(l->preferred[i].exec);
 	}
 	l->num_preferred = 0;
+}
+
+void launcher_free_icons(struct guibux_launcher *l) {
+	for (int i = 0; i < l->num_icons; i++) {
+		stbi_image_free(l->icon_cache[i].data);
+	}
+	l->num_icons = 0;
 }
 
 void launcher_filter(struct guibux_launcher *l) {
@@ -366,10 +599,12 @@ static void launcher_render(struct guibux_server *server) {
 			cairo_rectangle(cr, l->box_scale, ly, w - 2 * l->box_scale, lh);
 			cairo_fill(cr);
 		}
+		int tx = pad;
+		launcher_draw_icon(cr, l, l->preferred[i].icon_path, ly, lh, pad, &tx);
 		int mb = ly + lh / 2 + font_px * 35 / 100;
 		uint32_t mc = (i == l->selection) ? server->color_text :
 			server->color_dim;
-		launcher_draw_text_on_surface(cs, l->face, l->preferred[i].name, pad, mb, mc);
+		launcher_draw_text_on_surface(cs, l->face, l->preferred[i].name, tx, mb, mc);
 	}
 
 	if (np > 0) {
@@ -400,10 +635,12 @@ static void launcher_render(struct guibux_server *server) {
 			cairo_rectangle(cr, l->box_scale, ly, w - 2 * l->box_scale, lh);
 			cairo_fill(cr);
 		}
+		int tx = pad;
+		launcher_draw_icon(cr, l, l->entries[l->matches[i]].icon_path, ly, lh, pad, &tx);
 		int mb = ly + lh / 2 + font_px * 35 / 100;
 		uint32_t mc = (np + i == l->selection) ? server->color_text :
 			server->color_dim;
-		launcher_draw_text_on_surface(cs, l->face, l->entries[l->matches[i]].name, pad, mb, mc);
+		launcher_draw_text_on_surface(cs, l->face, l->entries[l->matches[i]].name, tx, mb, mc);
 	}
 
 	cairo_destroy(cr);
@@ -497,6 +734,7 @@ void launcher_hide(struct guibux_server *server) {
 		wlr_buffer_drop(l->buffer);
 		l->buffer = NULL;
 	}
+	launcher_free_icons(l);
 }
 
 bool launcher_handle_key(struct guibux_server *server, xkb_keysym_t sym) {
@@ -582,6 +820,23 @@ void launcher_init(struct guibux_server *server) {
 	struct guibux_launcher *l = &server->launcher;
 	l->active = false;
 	l->text[0] = '\0';
+	icon_build_dirs(l);
+	for (int i = 0; i < l->num_preferred; i++) {
+		/* config stores the raw icon (theme name or absolute path);
+		 * resolve the name to a path now that the theme dirs exist */
+		if (l->preferred[i].icon_path[0] == '\0' ||
+				l->preferred[i].icon_path[0] == '/')
+			continue;
+		char *resolved = resolve_icon(l->preferred[i].icon_path);
+		if (resolved) {
+			snprintf(l->preferred[i].icon_path,
+				sizeof(l->preferred[i].icon_path), "%s", resolved);
+			free(resolved);
+		} else {
+			wlr_log(WLR_INFO, "launcher: preferred app '%s': icon '%s' not found",
+				l->preferred[i].name, l->preferred[i].icon_path);
+		}
+	}
 	l->shm_alloc = wlr_shm_allocator_create();
 	if (l->shm_alloc == NULL) {
 		wlr_log(WLR_ERROR, "launcher: disabled (no shm allocator)");
@@ -643,6 +898,30 @@ int launcher_test_run(void *data) {
 		return 0;
 	}
 	wlr_log(WLR_INFO, "launcher-test: ESCAPE OK");
+
+	/* icon probe: type an app name and log the resolved icon of the
+	 * selected match (informational; headless envs may lack themes) */
+	launcher_show(server);
+	for (const char *p = "firefox"; *p; p++) {
+		launcher_handle_key(server, (xkb_keysym_t)(uint8_t)*p);
+	}
+	if (l->num_matches > 0) {
+		int si = l->selection - l->num_preferred;
+		if (si >= 0 && si < l->num_matches) {
+			const char *ip = l->entries[l->matches[si]].icon_path;
+			wlr_log(WLR_INFO, "launcher-test: ICON '%s' (selected '%s', exec '%s')",
+				ip[0] ? ip : "(none)",
+				l->entries[l->matches[si]].name,
+				l->entries[l->matches[si]].exec);
+		}
+	} else {
+		wlr_log(WLR_INFO, "launcher-test: ICON (no matches for 'firefox')");
+	}
+	launcher_handle_key(server, XKB_KEY_Escape);
+	if (l->active) {
+		wlr_log(WLR_ERROR, "launcher-test: FAIL icon probe escape (still active)");
+		return 0;
+	}
 
 	if (l->num_preferred > 0) {
 		/* no Enter here: the configured command is a real app,

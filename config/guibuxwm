@@ -8,12 +8,19 @@
 term = gnome-terminal
 
 # preferred apps shown above the command box (Mod+e) prompt, up to 5.
-# Format: Name;command — Up/Down selects, Enter launches.
-preferred_app1 = Firefox;firefox
+# Format: Name;command[;icon] — icon is a theme icon name or an
+# absolute path; without it the command name is used. A missing
+# theme or icon is skipped silently (no icon, no error). Up/Down
+# selects, Enter launches.
+preferred_app1 = Firefox;firefox;firefox
 preferred_app2 = Slack;slack
 preferred_app3 = Nautilus;nautilus
 preferred_app4 = VirtUI-GUI;virtui-gui
 preferred_app5 = Chrome;flatpak run com.google.Chrome
+
+# icon theme for launcher icons (leave unset to use the gtk
+# gtk-icon-theme-name, then Adwaita)
+#icon_theme = Adwaita
 
 # keyboard (xkb names; leave unset for the system default)
 xkb_layout = fr

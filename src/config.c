@@ -165,7 +165,7 @@ static char *trim(char *s) {
 // preferred_appN = Name;command : split at the first ';', both
 // parts must be non-empty after trimming
 static void parse_preferred_app(struct guibux_server *server, int idx,
-		const char *val, const char *path, int lineno) {
+		const char *val, const char *icon_val, const char *path, int lineno) {
 	char *copy = strdup(val);
 	if (copy == NULL) {
 		return;
@@ -180,10 +180,19 @@ static void parse_preferred_app(struct guibux_server *server, int idx,
 	*semi = '\0';
 	char *name = trim(copy);
 	char *exec = trim(semi + 1);
+	char *icon_raw = NULL;
+	if (icon_val && icon_val[0] != '\0') {
+		icon_raw = strdup(icon_val);
+	} else if (exec && exec[0] != '\0' && strchr(exec, ' ') == NULL) {
+		/* no explicit icon: use the exec name as icon name;
+		 * resolved to a theme path in launcher_init */
+		icon_raw = strdup(exec);
+	}
 	if (name[0] == '\0' || exec[0] == '\0') {
 		wlr_log(WLR_ERROR, "config: %s:%d: bad preferred_app%d '%s' (empty name or command)",
 			path, lineno, idx + 1, val);
 		free(copy);
+		free(icon_raw);
 		return;
 	}
 	struct guibux_launcher *l = &server->launcher;
@@ -191,11 +200,14 @@ static void parse_preferred_app(struct guibux_server *server, int idx,
 	free(l->preferred[idx].exec);
 	l->preferred[idx].name = strdup(name);
 	l->preferred[idx].exec = strdup(exec);
+	snprintf(l->preferred[idx].icon_path,
+		sizeof(l->preferred[idx].icon_path), "%s", icon_raw ? icon_raw : "");
 	if (idx + 1 > l->num_preferred) {
 		l->num_preferred = idx + 1;
 	}
 	wlr_log(WLR_INFO, "config: preferred_app%d = %s;%s", idx + 1, name, exec);
 	free(copy);
+	free(icon_raw);
 }
 
 void load_config(struct guibux_server *server, const char *path) {
@@ -399,10 +411,26 @@ void load_config(struct guibux_server *server, const char *path) {
 			} else {
 				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
 			}
+		} else if (!strcmp(key, "icon_theme")) {
+			snprintf(server->launcher.icon_theme,
+				sizeof(server->launcher.icon_theme), "%s", val);
+			wlr_log(WLR_INFO, "config: icon_theme = %s", val);
 		} else if (!strncmp(key, "preferred_app", 13) &&
 				key[13] >= '1' && key[13] <= '0' + LAUNCHER_MAX_PREFERRED &&
 				key[14] == '\0') {
-			parse_preferred_app(server, key[13] - '1', val, path, lineno);
+			char *copy = strdup(val);
+			char *icon_val = NULL;
+			if (copy) {
+				char *last_semi = strrchr(copy, ';');
+				if (last_semi) {
+					*last_semi = '\0';
+					icon_val = trim(last_semi + 1);
+					if (icon_val[0] == '\0') icon_val = NULL;
+				}
+			}
+			parse_preferred_app(server, key[13] - '1', copy ? copy : val,
+				icon_val, path, lineno);
+			free(copy);
 		} else {
 			wlr_log(WLR_ERROR, "config: %s:%d: unknown key '%s'", path, lineno, key);
 		}

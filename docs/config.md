@@ -32,7 +32,12 @@ term = foot
 ### `preferred_app1..5`
 
 Preferred apps shown above the command box (`Mod+e`) prompt, up to 5.
-Format: `Name;command`.
+Format: `Name;command[;icon]`.
+
+The optional third field is an icon: a theme icon name (e.g. `firefox`)
+or an absolute image path. Without it, the command name is used as the
+icon name. Icons are shown to the left of the name. A missing theme or
+icon is skipped silently (no icon, no error).
 
 Up/Down selects among preferred apps first, then `$PATH` matches.
 Enter on a selected preferred app runs its command (typed arguments after
@@ -42,9 +47,32 @@ the first word are appended, same as for `$PATH` matches).
 
 ```
 preferred_app1 = Firefox;firefox
-preferred_app2 = Slack;slack
+preferred_app2 = Slack;slack;slack-new
 preferred_app3 = Nautilus;nautilus
 preferred_app4 = VirtUI-GUI;virtui-gui
+```
+
+---
+
+### `icon_theme`
+
+Icon theme used to resolve launcher icons (preferred apps and
+`.desktop` `Icon=` entries). Leave unset to use the gtk
+`gtk-icon-theme-name` from `~/.config/gtk-3.0/settings.ini` (then
+gtk-4.0), falling back to `Adwaita`.
+
+Search order: `~/.local/share/icons/<theme>`, each `XDG_DATA_DIRS`
+entry + `/share/icons/<theme>`, then `/usr/share/icons/Adwaita` and
+`/usr/share/icons/hicolor`. PNG icons only (24x24, 16x16, scalable;
+apps and mimetypes contexts). A theme or icon that does not exist is
+skipped silently (no icon, no error).
+
+**Default:** gtk `gtk-icon-theme-name`, else `Adwaita`
+
+**Example:**
+
+```
+icon_theme = Yaru
 ```
 
 ---

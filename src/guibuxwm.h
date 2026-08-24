@@ -361,6 +361,7 @@ struct guibux_keyboard {
 struct launcher_entry {
 	char *name;
 	char *exec;
+	char icon_path[256];
 };
 
 struct guibux_switcher {
@@ -421,6 +422,16 @@ struct guibux_launcher {
 	FT_Library ft;
 	FT_Face face;
 	struct wl_event_source *test_timer;
+	char icon_theme[64];
+
+	/* icon cache: loaded PNG pixel data */
+	struct {
+		char path[256];
+		uint8_t *data;
+		int w, h;
+	} icon_cache[LAUNCHER_MAX_MATCHES + LAUNCHER_MAX_PREFERRED];
+	int num_icons;
+
 	struct launcher_entry *entries;
 	int num_entries;
 	struct launcher_entry preferred[LAUNCHER_MAX_PREFERRED];
@@ -700,6 +711,8 @@ bool launcher_handle_key(struct guibux_server *server, xkb_keysym_t sym);
 int launcher_test_run(void *data);
 void launcher_free_commands(struct guibux_launcher *l);
 void launcher_filter(struct guibux_launcher *l);
+char *resolve_icon(const char *icon_name);
+void launcher_free_icons(struct guibux_launcher *l);
 
 /* switcher.c */
 void switcher_show(struct guibux_server *server);
