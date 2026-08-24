@@ -15,7 +15,7 @@ int retile_compute(struct guibux_output *output, struct guibux_tile_target *out,
 	if (server->overview.active) {
 		return 0;
 	}
-	if (output->tile_mode == GUIBUX_TILE_FREE) {
+	if (output->tile_modes[output->current_workspace] == GUIBUX_TILE_FREE) {
 		return 0;
 	}
 	struct wlr_box box;
@@ -49,7 +49,7 @@ int retile_compute(struct guibux_output *output, struct guibux_tile_target *out,
 
 	for (int i = 0; i < n; i++) {
 		int rx, ry, rw, rh;
-		if (output->tile_mode == GUIBUX_TILE_SPLIT) {
+		if (output->tile_modes[output->current_workspace] == GUIBUX_TILE_SPLIT) {
 			int col = i % 2;
 			int row = i / 2;
 			int per_col = (col == 0) ? (n + 1) / 2 : n / 2;
@@ -117,6 +117,8 @@ void end_seat_grabs(struct guibux_server *server) {
  * topbar. Scene node visibility is applied by the caller (immediately,
  * or by the transition animation) */
 void ws_switch_state(struct guibux_output *output, int ws) {
+	output->tile_modes[output->current_workspace] = output->tile_mode;
+	output->tile_mode = output->tile_modes[ws];
 	struct guibux_server *server = output->server;
 	output->current_workspace = ws;
 	background_render(output);
@@ -255,13 +257,13 @@ void move_toplevel_to_output(struct guibux_toplevel *toplevel, struct wlr_output
 	if (o != NULL) {
 		toplevel->output = o;
 		toplevel->workspace = o->current_workspace;
-		if (o->tile_mode != GUIBUX_TILE_FREE) {
+		if (o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
 			retile_output(o);
 		}
 	}
 	if (src != output) {
 		struct guibux_output *so = guibux_output_for(server, src);
-		if (so != NULL && so->tile_mode != GUIBUX_TILE_FREE) {
+		if (so != NULL && so->tile_modes[so->current_workspace] != GUIBUX_TILE_FREE) {
 			retile_output(so);
 		}
 	}

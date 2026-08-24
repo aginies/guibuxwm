@@ -293,12 +293,13 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 			struct guibux_output *o = guibux_output_for(server,
 				toplevel_output_for(toplevel));
 			if (o != NULL) {
-				o->tile_mode = (o->tile_mode + 1) % 3;
+				o->tile_modes[o->current_workspace] = (o->tile_modes[o->current_workspace] + 1) % 3;
+				o->tile_mode = o->tile_modes[o->current_workspace];  // sync active
 				retile_output(o);
 				wlr_log(WLR_INFO, "tile mode on %s: %s",
 					o->wlr_output->name ? o->wlr_output->name : "(unknown)",
-					o->tile_mode == GUIBUX_TILE_FREE ? "free"
-					: o->tile_mode == GUIBUX_TILE_SPLIT ? "split"
+					o->tile_modes[o->current_workspace] == GUIBUX_TILE_FREE ? "free"
+					: o->tile_modes[o->current_workspace] == GUIBUX_TILE_SPLIT ? "split"
 					: "main+stack");
 			}
 		}

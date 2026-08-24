@@ -433,7 +433,7 @@ void effects_retile(struct guibux_output *o) {
 		retile_output(o);
 		return;
 	}
-	if (o->tile_mode == GUIBUX_TILE_FREE || server->overview.active) {
+	if (o->tile_modes[o->current_workspace] == GUIBUX_TILE_FREE || server->overview.active) {
 		return;
 	}
 	struct guibux_tile_target targets[MAX_WINDOWS];

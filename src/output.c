@@ -166,6 +166,9 @@ void server_new_output(struct wl_listener *listener, void *data) {
 	output->wlr_output = wlr_output;
 	output->server = server;
 	output->current_workspace = 1;
+	for (int i = 1; i <= NUM_WORKSPACES; i++)
+		output->tile_modes[i] = GUIBUX_TILE_FREE;
+	output->tile_mode = GUIBUX_TILE_FREE;
 
 	output->frame.notify = output_frame;
 	wl_signal_add(&wlr_output->events.frame, &output->frame);

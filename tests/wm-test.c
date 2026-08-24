@@ -759,7 +759,7 @@ int effects_test_run(void *data) {
 		/* slow the animations down so the in-flight states are reliably
 		 * observable by the polling checks that follow */
 		server->effects_duration_ms = 500;
-		o->tile_mode = GUIBUX_TILE_SPLIT;
+		for (int i = 1; i <= NUM_WORKSPACES; i++) o->tile_modes[i] = GUIBUX_TILE_SPLIT;
 		retile_output(o);
 		effects_test_state.o = o;
 		struct guibux_toplevel *a = NULL;

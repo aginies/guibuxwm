@@ -104,7 +104,7 @@ void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen,
 	if (!fullscreen) {
 		struct guibux_output *o = guibux_output_for(server,
 			toplevel_output_for(toplevel));
-		if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+		if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
 			retile_output(o);
 		}
 	}
@@ -210,7 +210,7 @@ void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 		? guibux_output_for(toplevel->server, output) : NULL;
 	toplevel->output = o;
 	toplevel->workspace = o != NULL ? o->current_workspace : 1;
-	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+	if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
 		struct wlr_box box;
 		wlr_output_layout_get_box(toplevel->server->output_layout,
 			output, &box);
@@ -281,7 +281,7 @@ void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 	if (toplevel->xdg_toplevel->base->initial_commit) {
 		struct guibux_output *o = guibux_output_for(toplevel->server,
 			toplevel_output_for(toplevel));
-		if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+		if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
 			wlr_xdg_surface_schedule_configure(toplevel->xdg_toplevel->base);
 		} else {
 			wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, 0, 0);
@@ -617,7 +617,7 @@ static void xsurface_map(struct wl_listener *listener, void *data) {
 		? guibux_output_for(toplevel->server, output) : NULL;
 	toplevel->output = o;
 	toplevel->workspace = o != NULL ? o->current_workspace : 1;
-	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+	if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
 		struct wlr_box box;
 		wlr_output_layout_get_box(toplevel->server->output_layout,
 			output, &box);
@@ -688,7 +688,7 @@ static void xsurface_commit(struct wl_listener *listener, void *data) {
 	toplevel->initial_commit = false;
 	struct guibux_output *o = guibux_output_for(toplevel->server,
 		toplevel_output_for(toplevel));
-	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+	if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
 		retile_output(o);
 	}
 }
@@ -791,7 +791,7 @@ static void xsurface_request_configure(struct wl_listener *listener, void *data)
 	}
 	struct guibux_output *o = guibux_output_for(toplevel->server,
 		toplevel_output_for(toplevel));
-	if (o != NULL && o->tile_mode != GUIBUX_TILE_FREE) {
+	if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
 		/* tile mode: the layout is authoritative. Accepting the app's
 		 * geometry would break the tiling, and re-asserting the tile
 		 * size would loop with apps that re-assert their minimum size

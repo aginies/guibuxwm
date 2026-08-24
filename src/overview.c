@@ -559,7 +559,7 @@ void overview_hide(struct guibux_server *server) {
 					t->workspace == o->current_workspace);
 			}
 		}
-		if (o->tile_mode != GUIBUX_TILE_FREE) {
+		if (o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
 			retile_output(o);
 		}
 	}

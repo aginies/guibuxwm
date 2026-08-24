@@ -254,7 +254,8 @@ struct guibux_output {
 	struct wl_list link;
 	struct guibux_server *server;
 	struct wlr_output *wlr_output;
-	int tile_mode;
+	int tile_modes[NUM_WORKSPACES + 1];  // 1-indexed, per-workspace persistence
+	int tile_mode;                       // active (tile_modes[current_workspace])
 	int current_workspace;
 	struct wlr_scene_buffer *topbar_node;
 	struct wlr_buffer *topbar_buffer;
