@@ -208,16 +208,23 @@ void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	struct wlr_output *output = output_at_cursor(toplevel->server);
 	struct guibux_output *o = output != NULL
 		? guibux_output_for(toplevel->server, output) : NULL;
-	toplevel->output = o;
-	toplevel->workspace = o != NULL ? o->current_workspace : 1;
-	if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
-		struct wlr_box box;
-		wlr_output_layout_get_box(toplevel->server->output_layout,
-			output, &box);
-		wlr_scene_node_set_position(&toplevel->scene_tree->node, box.x, box.y);
-		retile_output(o);
-	} else {
-		place_toplevel(toplevel);
+	enum restore_result rr = restore_apply(toplevel->server, toplevel);
+	if (rr != RESTORE_FREE) {
+		if (rr == RESTORE_TILE) {
+			/* saved output+workspace resolved: tile it there */
+			o = toplevel->output;
+		}
+		toplevel->output = o;
+		toplevel->workspace = o != NULL ? o->current_workspace : 1;
+		if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
+			struct wlr_box box;
+			wlr_output_layout_get_box(toplevel->server->output_layout,
+				o->wlr_output, &box);
+			wlr_scene_node_set_position(&toplevel->scene_tree->node, box.x, box.y);
+			retile_output(o);
+		} else {
+			place_toplevel(toplevel);
+		}
 	}
 	focus_toplevel(toplevel, true);
 	struct guibux_output *o2 = guibux_output_for(toplevel->server,
@@ -253,6 +260,9 @@ void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 		overview_hide(server);
 	}
 
+	/* remember the final position for the next launch */
+	restore_save(server, toplevel);
+
 	if (toplevel == server->grabbed_toplevel) {
 		reset_cursor_mode(server);
 	}
@@ -283,6 +293,9 @@ void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 			toplevel_output_for(toplevel));
 		if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
 			wlr_xdg_surface_schedule_configure(toplevel->xdg_toplevel->base);
+		} else if (toplevel->restore_w > 0 && toplevel->restore_h > 0) {
+			wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel,
+				toplevel->restore_w, toplevel->restore_h);
 		} else {
 			wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, 0, 0);
 		}
@@ -378,7 +391,7 @@ const char *toplevel_get_title(struct guibux_toplevel *toplevel) {
 	return toplevel->xsurface->title;
 }
 
-static const char *toplevel_app_id(struct guibux_toplevel *toplevel) {
+const char *toplevel_app_id(struct guibux_toplevel *toplevel) {
 	if (toplevel->xdg_toplevel != NULL) {
 		return toplevel->xdg_toplevel->app_id;
 	}
@@ -615,16 +628,23 @@ static void xsurface_map(struct wl_listener *listener, void *data) {
 	struct wlr_output *output = output_at_cursor(toplevel->server);
 	struct guibux_output *o = output != NULL
 		? guibux_output_for(toplevel->server, output) : NULL;
-	toplevel->output = o;
-	toplevel->workspace = o != NULL ? o->current_workspace : 1;
-	if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
-		struct wlr_box box;
-		wlr_output_layout_get_box(toplevel->server->output_layout,
-			output, &box);
-		wlr_scene_node_set_position(&toplevel->scene_tree->node, box.x, box.y);
-		retile_output(o);
-	} else {
-		place_toplevel(toplevel);
+	enum restore_result rr = restore_apply(toplevel->server, toplevel);
+	if (rr != RESTORE_FREE) {
+		if (rr == RESTORE_TILE) {
+			/* saved output+workspace resolved: tile it there */
+			o = toplevel->output;
+		}
+		toplevel->output = o;
+		toplevel->workspace = o != NULL ? o->current_workspace : 1;
+		if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
+			struct wlr_box box;
+			wlr_output_layout_get_box(toplevel->server->output_layout,
+				o->wlr_output, &box);
+			wlr_scene_node_set_position(&toplevel->scene_tree->node, box.x, box.y);
+			retile_output(o);
+		} else {
+			place_toplevel(toplevel);
+		}
 	}
 	focus_toplevel(toplevel, true);
 	if (xsurface->fullscreen) {
@@ -648,6 +668,9 @@ static void xsurface_unmap(struct wl_listener *listener, void *data) {
 	if (server->overview.active) {
 		overview_hide(server);
 	}
+
+	/* remember the final position for the next launch */
+	restore_save(server, toplevel);
 
 	if (toplevel == server->grabbed_toplevel) {
 		reset_cursor_mode(server);

@@ -36,3 +36,10 @@ executable('psel-test',
   c_args: test_c_args,
   dependencies: test_deps,
 )
+
+executable('restore-test',
+  'restore-test.c',
+  'xdg-shell-protocol.c',
+  c_args: test_c_args,
+  dependencies: test_deps,
+)

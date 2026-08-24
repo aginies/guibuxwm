@@ -370,6 +370,9 @@ void load_config(struct guibux_server *server, const char *path) {
 		} else if (!strcmp(key, "effects")) {
 			server->effects_enabled = !strcmp(val, "true");
 			wlr_log(WLR_INFO, "config: effects = %s", val);
+		} else if (!strcmp(key, "restore_positions")) {
+			server->restore_positions = !strcmp(val, "true");
+			wlr_log(WLR_INFO, "config: restore_positions = %s", val);
 		} else if (!strcmp(key, "effects_duration_ms")) {
 			server->effects_duration_ms = atoi(val);
 			if (server->effects_duration_ms < 0 ||

@@ -243,6 +243,32 @@ struct guibux_notif_panel {
     int clear_x, clear_y, clear_w, clear_h;
 };
 
+/* window-restore.c: last known position per app, persisted across
+ * WM restarts (state file under XDG_STATE_HOME) */
+#define RESTORE_MAX_ENTRIES 128
+
+struct guibux_window_pos {
+	char output_name[64];
+	int workspace;
+	int x, y, w, h;
+};
+
+struct guibux_window_restore_entry {
+	char app_id[256];
+	struct guibux_window_pos pos;
+};
+
+struct guibux_window_restore {
+	struct guibux_window_restore_entry entries[RESTORE_MAX_ENTRIES];
+	int count;
+};
+
+enum restore_result {
+	RESTORE_NONE,  /* no usable saved position: normal placement */
+	RESTORE_TILE,  /* output+workspace resolved, tile layout places it */
+	RESTORE_FREE,  /* position+size fully applied */
+};
+
 struct guibux_toplevel;
 
 // declared in wlr/render/allocator/shm.h (not installed with our wlroots build)
@@ -323,6 +349,8 @@ struct guibux_toplevel {
 	struct guibux_output *output;
 	double saved_x, saved_y;
 	int saved_w, saved_h;
+	/* restored size to re-assert on the first xdg commit (0 = none) */
+	int restore_w, restore_h;
 	struct wl_listener map;
 	struct wl_listener unmap;
 	struct wl_listener commit;
@@ -555,6 +583,12 @@ struct guibux_launcher launcher;
     bool notify_effect_slide;
     struct guibux_effects effects;
     struct wl_event_source *effects_test_timer;
+
+    /* window position persistence: last position per app, saved on
+     * unmap, restored on map; terminal windows are excluded */
+    struct guibux_window_restore window_restore;
+    char *terminal_app_id;
+    bool restore_positions;
 };
 
 /* output.c */
@@ -596,6 +630,9 @@ const char *toplevel_get_title(struct guibux_toplevel *toplevel);
 /* best-effort match of a D-Bus notification app_name to a window
  * (xdg app_id / xwayland WM_CLASS); NULL when nothing matches */
 struct guibux_toplevel *toplevel_for_app(struct guibux_server *server, const char *app_name);
+/* stable identity of a window (xdg app_id / xwayland WM_CLASS instance);
+ * used to key persisted positions; may be NULL or empty */
+const char *toplevel_app_id(struct guibux_toplevel *toplevel);
 bool toplevel_is_xwayland(struct guibux_toplevel *toplevel);
 void toplevel_set_size(struct guibux_toplevel *toplevel, int width, int height);
 void toplevel_get_geometry(struct guibux_toplevel *toplevel, struct wlr_box *box);
@@ -761,6 +798,13 @@ void load_config(struct guibux_server *server, const char *path);
 bool parse_keybind(struct guibux_server *server, const char *value);
 bool parse_color(const char *value, uint32_t *out);
 void parse_output_placements(struct guibux_server *server);
+
+/* window-restore.c */
+void restore_derive_terminal_id(struct guibux_server *server);
+void restore_load(struct guibux_server *server);
+void restore_save(struct guibux_server *server, struct guibux_toplevel *toplevel);
+enum restore_result restore_apply(struct guibux_server *server, struct guibux_toplevel *toplevel);
+void restore_free(struct guibux_server *server);
 
 /* cursor.c */
 void reset_cursor_mode(struct guibux_server *server);

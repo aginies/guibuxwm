@@ -126,5 +126,9 @@ effects_duration_ms = 300
 # window open animation: scale, slide, none (default: scale)
 window_open_effect = scale
 
+# remember each app's last monitor/workspace/position/size and restore
+# it on the next launch (default: true); the terminal is excluded
+restore_positions = true
+
 # notification panel animation: slide, none (default: slide)
 notify_effect = slide

@@ -103,6 +103,7 @@ int main(int argc, char *argv[]) {
 	server.effects_duration_ms = 200;
 	server.window_open_effect = OPEN_EFFECT_SCALE;
 	server.notify_effect_slide = true;
+	server.restore_positions = true;
 	keybinds_defaults(&server);
 
 	if (config_path == NULL) {
@@ -144,6 +145,10 @@ int main(int argc, char *argv[]) {
 		server.xkb_layout = strdup(xkb_layout);
 	}
 	parse_output_placements(&server);
+	/* term_cmd is final here (config + env + -t flag): derive the
+	 * terminal app_id and load saved window positions */
+	restore_derive_terminal_id(&server);
+	restore_load(&server);
 
 	server.wl_display = wl_display_create();
 	const char *extra_outputs = getenv("GUIBUX_TEST_EXTRA_OUTPUTS");
@@ -508,6 +513,8 @@ int main(int argc, char *argv[]) {
 	}
 	wlr_renderer_destroy(server.renderer);
 	wl_display_destroy(server.wl_display);
+	restore_free(&server);
+	free(server.terminal_app_id);
 	free(server.term_cmd);
 	free(server.xkb_layout);
 	free(server.xkb_variant);

@@ -36,6 +36,7 @@ run "launcher" ./run-launcher-test.sh
 run "config" ./run-config-test.sh
 run "primary selection" ./run-psel-test.sh
 run "xwayland" ./run-xwayland-test.sh
+run "restore positions" ./run-restore-test.sh
 
 echo "=================================="
 echo "passed: $pass   failed: $fail"
