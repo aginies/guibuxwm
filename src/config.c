@@ -343,6 +343,18 @@ void load_config(struct guibux_server *server, const char *path) {
 		} else if (!strcmp(key, "focus_follow_mouse")) {
 			server->focus_follow_mouse = !strcmp(val, "true");
 			wlr_log(WLR_INFO, "config: focus_follow_mouse = %s", val);
+		} else if (!strcmp(key, "overview_workspace_colors")) {
+			server->overview.ws_colors_enabled = !strcmp(val, "true");
+			wlr_log(WLR_INFO, "config: overview_workspace_colors = %s", val);
+		} else if (!strncmp(key, "overview_ws_color", 17) &&
+				key[17] >= '1' && key[17] <= '0' + NUM_WORKSPACES &&
+				key[18] == '\0') {
+			int ws = key[17] - '0';
+			if (parse_color(val, &server->overview.ws_colors[ws - 1])) {
+				wlr_log(WLR_INFO, "config: overview_ws_color%d = %s", ws, val);
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
+			}
 		} else if (!strncmp(key, "preferred_app", 13) &&
 				key[13] >= '1' && key[13] <= '0' + LAUNCHER_MAX_PREFERRED &&
 				key[14] == '\0') {

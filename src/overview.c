@@ -39,7 +39,16 @@ static void overview_render_label(struct guibux_server *server, int idx) {
 		data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
 	cairo_t *cr = cairo_create(cs);
 
-	set_color(cr, 0x1e1e2e);
+	/* label background: workspace color pill if enabled, else dark */
+	uint32_t bg = 0x1e1e2e;
+	if (ov->ws_colors_enabled) {
+		struct guibux_toplevel *t = ov->wins[idx];
+		if (t && t->workspace >= 1 && t->workspace <= NUM_WORKSPACES &&
+				ov->ws_colors[t->workspace - 1] != 0) {
+			bg = ov->ws_colors[t->workspace - 1];
+		}
+	}
+	set_color(cr, bg);
 	cairo_paint(cr);
 
 	FT_Face face = server->launcher.face;
@@ -419,6 +428,7 @@ void overview_click(struct guibux_server *server, double lx, double ly) {
 		return;
 	}
 
+	/* first, try to hit a window cell */
 	double sx, sy;
 	struct wlr_surface *surface = NULL;
 	struct guibux_toplevel *t = desktop_toplevel_at(server, lx, ly,
@@ -461,7 +471,7 @@ void overview_click(struct guibux_server *server, double lx, double ly) {
 		wlr_output_layout_get_box(server->output_layout,
 			o->wlr_output, &box);
 		if (lx < box.x || lx >= box.x + box.width ||
-				ly < box.y || ly >= box.y + box.height) {
+		    ly < box.y || ly >= box.y + box.height) {
 			continue;
 		}
 		int area_y = box.y + server->topbar_height;

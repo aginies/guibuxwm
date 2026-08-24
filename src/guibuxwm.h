@@ -246,6 +246,8 @@ struct guibux_overview {
 	struct wlr_buffer *label_buf[MAX_WINDOWS];
 	int label_w[MAX_WINDOWS], label_h[MAX_WINDOWS], label_scale[MAX_WINDOWS];
 	char label_text[MAX_WINDOWS][128];
+	uint32_t ws_colors[NUM_WORKSPACES];
+	bool ws_colors_enabled;
 };
 
 struct guibux_help {

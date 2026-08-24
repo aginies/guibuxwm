@@ -93,3 +93,12 @@ screensaver_timeout = 300
 # focus follows mouse: keyboard focus changes when cursor enters a window
 # (true = enabled, false = click-to-focus only; default: true)
 focus_follow_mouse = true
+
+# overview: show colored pills for workspace numbers (default: true)
+overview_workspace_colors = true
+
+# per-workspace overview colors (#rrggbb)
+overview_ws_color1 = #3a86ff
+overview_ws_color2 = #86efac
+overview_ws_color3 = #ffb703
+overview_ws_color4 = #c084fc
