@@ -130,6 +130,29 @@ int tile_test_run(void *data) {
 	return 0;
 }
 
+/* position the cursor at the center of workspace row `ws` of output `o` */
+static void cursor_over_row(struct guibux_server *server,
+		struct guibux_output *o, int ws) {
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+	int area_y = box.y + server->topbar_height;
+	int area_h = box.height - server->topbar_height;
+	int row_h = area_h / NUM_WORKSPACES;
+	server->cursor->x = box.x + box.width / 2.0;
+	server->cursor->y = area_y + (ws - 1) * row_h + row_h / 2.0;
+}
+
+static struct guibux_output *other_output(struct guibux_server *server,
+		struct guibux_output *skip) {
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o != skip) {
+			return o;
+		}
+	}
+	return NULL;
+}
+
 int overview_test_run(void *data) {
 	struct guibux_server *server = data;
 	struct guibux_toplevel *t;
@@ -189,9 +212,17 @@ int overview_test_run(void *data) {
 				break;
 			}
 		}
-		if (x < box.x || x >= box.x + box.width || !on_row) {
+		if (x < box.x + OVERVIEW_WS_COL_W || x >= box.x + box.width ||
+				!on_row) {
 			wlr_log(WLR_ERROR, "overview-test: FAIL window (%.0f,%.0f) "
 				"not on a workspace row of its output", x, y);
+			return 0;
+		}
+	}
+	wl_list_for_each(o, &server->outputs, link) {
+		if (!o->overview_ws_col_node) {
+			wlr_log(WLR_ERROR, "overview-test: FAIL no workspace column "
+				"on %s", o->wlr_output->name ? o->wlr_output->name : "(unknown)");
 			return 0;
 		}
 	}
@@ -200,6 +231,14 @@ int overview_test_run(void *data) {
 	if (server->overview.active) {
 		wlr_log(WLR_ERROR, "overview-test: FAIL still active after hide");
 		return 0;
+	}
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->overview_ws_col_node || o->overview_ws_col_buf) {
+			wlr_log(WLR_ERROR, "overview-test: FAIL workspace column "
+				"not destroyed on %s",
+				o->wlr_output->name ? o->wlr_output->name : "(unknown)");
+			return 0;
+		}
 	}
 	int i = 0;
 	wl_list_for_each(t, &server->toplevels, link) {
@@ -213,6 +252,84 @@ int overview_test_run(void *data) {
 			return 0;
 		}
 		i++;
+	}
+
+	// --- drag & drop: move a window to another workspace (GNOME-style) ---
+	overview_show(server);
+	if (!server->overview.active) {
+		wlr_log(WLR_ERROR, "overview-test: FAIL not active for drag");
+		return 0;
+	}
+	struct guibux_toplevel *dw = NULL;
+	wl_list_for_each(t, &server->toplevels, link) {
+		dw = t;
+		break;
+	}
+	if (dw == NULL) {
+		wlr_log(WLR_ERROR, "overview-test: FAIL no window to drag");
+		return 0;
+	}
+	struct guibux_output *dwo = guibux_output_for(server,
+		toplevel_output_for(dw));
+	/* drag to workspace 2 on the window's own output */
+	int want_ws = 2;
+	if (dwo != NULL) {
+		cursor_over_row(server, dwo, want_ws);
+	}
+	server->overview.drag_toplevel = dw;
+	server->overview.drag_active = true;
+	overview_update_hover(server);
+	if (server->overview.hover_ws != want_ws ||
+			server->overview.hover_output !=
+				(dwo != NULL ? dwo->wlr_output : NULL)) {
+		wlr_log(WLR_ERROR, "overview-test: FAIL hover ws (got %d, want %d)",
+			server->overview.hover_ws, want_ws);
+		return 0;
+	}
+	overview_button_release(server);
+	if (server->overview.hover_ws != 0) {
+		wlr_log(WLR_ERROR, "overview-test: FAIL hover not cleared after drop");
+		return 0;
+	}
+	if (dw->workspace != want_ws) {
+		wlr_log(WLR_ERROR, "overview-test: FAIL drag ws (got %d, want %d)",
+			dw->workspace, want_ws);
+		return 0;
+	}
+	if (!server->overview.active) {
+		wlr_log(WLR_ERROR, "overview-test: FAIL overview closed after drag");
+		return 0;
+	}
+	/* cross-monitor drag if a second output exists */
+	struct guibux_output *o2 = other_output(server, dwo);
+	if (o2 != NULL) {
+		int want_ws2 = 3;
+		cursor_over_row(server, o2, want_ws2);
+		server->overview.drag_toplevel = dw;
+		server->overview.drag_active = true;
+		overview_button_release(server);
+		if (dw->workspace != want_ws2) {
+			wlr_log(WLR_ERROR, "overview-test: FAIL cross-monitor drag ws "
+				"(got %d, want %d)", dw->workspace, want_ws2);
+			return 0;
+		}
+		if (toplevel_output_for(dw) != o2->wlr_output) {
+			wlr_log(WLR_ERROR, "overview-test: FAIL cross-monitor drag "
+				"output");
+			return 0;
+		}
+	}
+	overview_hide(server);
+	if (server->overview.active) {
+		wlr_log(WLR_ERROR, "overview-test: FAIL still active after drag hide");
+		return 0;
+	}
+	struct wlr_output *final_out = o2 != NULL ? o2->wlr_output
+		: (dwo != NULL ? dwo->wlr_output : NULL);
+	if (final_out != NULL && toplevel_output_for(dw) != final_out) {
+		wlr_log(WLR_ERROR, "overview-test: FAIL window not on final output "
+			"after drag hide");
+		return 0;
 	}
 	wlr_log(WLR_INFO, "overview-test: OK (%d outputs, %d toplevels)",
 		n_outputs, n_toplevels);

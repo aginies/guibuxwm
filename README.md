@@ -14,7 +14,8 @@ Derived from [tinywl](https://github.com/swaywm/wlroots/tree/master/tinywl).
   topbar entries; `DISPLAY` is set automatically for spawned clients, and
   `Mod+drag` moves an X11 window (it has no titlebar)
 - Focus follows mouse (keyboard focus tracks cursor, configurable)
-- GNOME-style overview (`F12`): all workspaces and windows visible, click to select
+- GNOME-style overview (`F12`): all workspaces and windows visible, click to
+  select, drag a window onto another workspace row (or another monitor) to move it
 - Tile modes (`Mod+t`): free / left-right split / main+stack, per monitor
 - Snap to half-screen (`Mod+Left` / `Mod+Right`): left or right 50% of monitor
 - Command box (`Mod+e`) to launch programs by typing a command, with

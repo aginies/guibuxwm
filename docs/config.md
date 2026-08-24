@@ -325,3 +325,54 @@ Focus follows mouse: keyboard focus changes when cursor enters a window.
 ```
 focus_follow_mouse = false
 ```
+
+---
+
+### `overview_workspace_colors`
+
+Overview (F12): show workspace numbers as colored pills on window labels.
+
+**Default:** `false`
+
+**Example:**
+
+```
+overview_workspace_colors = true
+```
+
+---
+
+### `overview_ws_color1..4`
+
+Overview (F12): per-workspace pill colors.
+
+**Default:** unset (dark pill)
+
+**Example:**
+
+```
+overview_ws_color1 = #3a86ff
+overview_ws_color2 = #86efac
+overview_ws_color3 = #ffb703
+overview_ws_color4 = #c084fc
+```
+
+---
+
+## Overview (F12)
+
+`F12` shows a GNOME-style overview: every output displays its 4 workspaces
+as rows (workspace 1 on top) with the windows of each workspace as
+equal-width cells labeled `A1: title` (monitor letter + workspace number).
+A semi-transparent dim covers each output.
+
+A workspace column on the left edge of each output lists all four
+workspaces (`A1`..`A4`), so empty workspaces stay visible. While a window
+is being dragged, the column cell under the cursor is highlighted in the
+workspace color — that is where the window will be dropped.
+
+- drag a window onto a row (or its column cell) to move it to that
+  workspace, including across monitors
+- click an empty area to switch to the workspace of the clicked row
+- click a window to select it (switches to its workspace)
+- `1`..`4` switch to that workspace, `Esc`/`F12` close the overview

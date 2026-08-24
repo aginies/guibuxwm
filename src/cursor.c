@@ -1,5 +1,8 @@
 #include "guibuxwm.h"
 
+/* pointer travel before an overview press becomes a drag */
+#define OVERVIEW_DRAG_THRESHOLD 5
+
 void reset_cursor_mode(struct guibux_server *server) {
 	server->cursor_mode = GUIBUX_CURSOR_PASSTHROUGH;
 	server->grabbed_toplevel = NULL;
@@ -69,6 +72,27 @@ static void process_cursor_resize(struct guibux_server *server) {
 }
 
 void process_cursor_motion(struct guibux_server *server, uint32_t time) {
+	/* an overview press becomes a drag once the pointer moves far
+	 * enough; the window then follows the cursor until release */
+	if (server->overview.active && server->overview.drag_toplevel != NULL &&
+			!server->overview.drag_active) {
+		double dx = server->cursor->x - server->overview.drag_press_x;
+		double dy = server->cursor->y - server->overview.drag_press_y;
+		if (dx * dx + dy * dy >=
+				OVERVIEW_DRAG_THRESHOLD * OVERVIEW_DRAG_THRESHOLD) {
+			struct guibux_toplevel *t = server->overview.drag_toplevel;
+			server->overview.drag_active = true;
+			begin_interactive(t, GUIBUX_CURSOR_MOVE, 0);
+			/* keep the dragged window above the dim rect */
+			wlr_scene_node_raise_to_top(&t->scene_tree->node);
+			topbar_raise_all(server);
+		}
+	}
+	if (server->overview.active) {
+		/* highlight the workspace column cell the dragged window
+		 * would be dropped on (no-op when not dragging) */
+		overview_update_hover(server);
+	}
 	if (server->cursor_mode == GUIBUX_CURSOR_MOVE) {
 		process_cursor_move(server);
 		return;
@@ -147,9 +171,21 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 	}
 	if (server->overview.active) {
 		if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
-			overview_click(server, server->cursor->x, server->cursor->y);
+			struct guibux_toplevel *t = overview_window_at(server,
+				server->cursor->x, server->cursor->y);
+			if (t != NULL) {
+				/* potential drag: the window is only grabbed
+				 * once the pointer moves past a threshold */
+				server->overview.drag_toplevel = t;
+				server->overview.drag_active = false;
+				server->overview.drag_press_x = server->cursor->x;
+				server->overview.drag_press_y = server->cursor->y;
+			} else {
+				overview_click_empty(server, server->cursor->x,
+					server->cursor->y);
+			}
 		} else {
-			reset_cursor_mode(server);
+			overview_button_release(server);
 		}
 		return;
 	}

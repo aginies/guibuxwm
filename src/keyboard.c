@@ -337,6 +337,21 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 	int nsyms = xkb_state_key_get_syms(
 		keyboard->wlr_keyboard->xkb_state, keycode, &syms);
 
+	/* keybinds are defined with the unshifted (base) keysym; with Shift
+	 * held the syms above are the shifted ones ('!'/'Q'/...), so match on
+	 * level 0 to keep Shift+letter/number binds working on any layout */
+	xkb_keysym_t base_sym = XKB_KEY_NoSymbol;
+	if (keyboard->wlr_keyboard->keymap != NULL) {
+		const xkb_keysym_t *base_syms;
+		xkb_layout_index_t layout = xkb_state_key_get_layout(
+			keyboard->wlr_keyboard->xkb_state, keycode);
+		if (xkb_keymap_key_get_syms_by_level(
+				keyboard->wlr_keyboard->keymap, keycode, layout, 0,
+				&base_syms) > 0) {
+			base_sym = base_syms[0];
+		}
+	}
+
 	bool handled = false;
 	uint32_t modifiers = wlr_keyboard_get_modifiers(keyboard->wlr_keyboard);
 	if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
@@ -373,7 +388,7 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 			} else if (server->overview.active) {
 				handled = overview_handle_key(server, syms[i]);
 			} else {
-				handled = handle_keybinding(server, syms[i], modifiers);
+				handled = handle_keybinding(server, base_sym, modifiers);
 			}
 			if (handled) {
 				break;

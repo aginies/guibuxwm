@@ -243,6 +243,14 @@ void output_destroy(struct wl_listener *listener, void *data) {
 		wlr_scene_node_destroy(&output->overview_dim->node);
 		output->overview_dim = NULL;
 	}
+	if (output->overview_ws_col_node) {
+		wlr_scene_node_destroy(&output->overview_ws_col_node->node);
+		output->overview_ws_col_node = NULL;
+	}
+	if (output->overview_ws_col_buf) {
+		wlr_buffer_drop(output->overview_ws_col_buf);
+		output->overview_ws_col_buf = NULL;
+	}
 	topbar_renumber(server);
 
 	wl_list_remove(&output->frame.link);

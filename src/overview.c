@@ -77,6 +77,159 @@ static void overview_position_overlay(struct wlr_scene_node *node,
 	wlr_scene_node_set_position(node, x_off, y_off);
 }
 
+#define OVERVIEW_WS_COL_FONT 24
+
+/*
+ * Workspace column: a vertical strip on the left edge of each output's
+ * overview area, one cell per workspace row (A1..A4). It makes empty
+ * workspaces visible and, while a window is being dragged, highlights
+ * the cell the window will be dropped on.
+ */
+static void overview_render_ws_col(struct guibux_output *o, int hover_ws) {
+	struct guibux_server *server = o->server;
+	if (!o->overview_ws_col_buf || !server->launcher.face) return;
+
+	void *data;
+	uint32_t format;
+	size_t stride;
+	if (!wlr_buffer_begin_data_ptr_access(o->overview_ws_col_buf,
+			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) return;
+	if (format != DRM_FORMAT_XRGB8888) {
+		wlr_buffer_end_data_ptr_access(o->overview_ws_col_buf);
+		return;
+	}
+
+	int sc = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+	/* logical height fixed at creation: the buffer must not be drawn
+	 * beyond its size if the output is resized while the overview is up */
+	int area_h = o->overview_ws_col_h;
+	if (area_h < 0) area_h = 0;
+
+	int w = OVERVIEW_WS_COL_W * sc;
+	int h = area_h * sc;
+	cairo_surface_t *cs = cairo_image_surface_create_for_data(
+		data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
+	cairo_t *cr = cairo_create(cs);
+
+	set_color(cr, 0x1e1e2e);
+	cairo_paint(cr);
+
+	FT_Face face = server->launcher.face;
+	int font_px = OVERVIEW_WS_COL_FONT * sc;
+	FT_Set_Pixel_Sizes(face, 0, font_px);
+
+	int row_h = area_h / NUM_WORKSPACES;
+	for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {
+		int y = (ws - 1) * row_h * sc;
+		int ch = row_h * sc;
+		if (ch <= 0) {
+			continue;
+		}
+		if (ws == hover_ws) {
+			/* drop target while dragging: workspace color */
+			uint32_t bg = server->overview.ws_colors[ws - 1];
+			if (bg == 0) {
+				bg = server->color_highlight;
+			}
+			set_color(cr, bg);
+			cairo_rectangle(cr, 0, y, w, ch);
+			cairo_fill(cr);
+		} else if (ws == o->current_workspace) {
+			set_color(cr, server->color_highlight);
+			cairo_rectangle(cr, 0, y, w, ch);
+			cairo_fill(cr);
+		}
+		char label[8];
+		snprintf(label, sizeof(label), "%c%d",
+			'A' + (o->topbar_number - 1), ws);
+		int tw = guibux_text_width(face, label);
+		int x = (w - tw) / 2;
+		if (x < 0) x = 0;
+		int mb = y + ch / 2 + font_px * 35 / 100;
+		uint32_t tc = (ws == hover_ws) ? 0xffffff : server->color_text;
+		launcher_draw_text_on_surface(cs, face, label, x, mb, tc);
+	}
+
+	cairo_destroy(cr);
+	cairo_surface_destroy(cs);
+	wlr_buffer_end_data_ptr_access(o->overview_ws_col_buf);
+
+	if (o->overview_ws_col_node) {
+		wlr_scene_buffer_set_buffer(o->overview_ws_col_node,
+			o->overview_ws_col_buf);
+	}
+}
+
+static void overview_create_ws_cols(struct guibux_server *server) {
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		struct wlr_box box;
+		wlr_output_layout_get_box(server->output_layout,
+			o->wlr_output, &box);
+		if (box.width <= 0 || box.height <= 0) {
+			continue;
+		}
+		int area_h = box.height - server->topbar_height;
+		if (area_h <= 0) {
+			continue;
+		}
+		int sc = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+
+		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
+		struct wlr_drm_format fmt = {
+			.format = DRM_FORMAT_XRGB8888,
+			.len = 1,
+			.modifiers = mods,
+		};
+		o->overview_ws_col_buf = wlr_allocator_create_buffer(
+			server->launcher.shm_alloc,
+			OVERVIEW_WS_COL_W * sc, area_h * sc, &fmt);
+		if (!o->overview_ws_col_buf) {
+			continue;
+		}
+		o->overview_ws_col_node = wlr_scene_buffer_create(
+			&server->scene->tree, o->overview_ws_col_buf);
+		if (!o->overview_ws_col_node) {
+			wlr_buffer_drop(o->overview_ws_col_buf);
+			o->overview_ws_col_buf = NULL;
+			continue;
+		}
+		wlr_scene_buffer_set_dest_size(o->overview_ws_col_node,
+			OVERVIEW_WS_COL_W, area_h);
+		wlr_scene_node_set_position(&o->overview_ws_col_node->node,
+			box.x, box.y + server->topbar_height);
+		o->overview_ws_col_h = area_h;
+		overview_render_ws_col(o, 0);
+		wlr_scene_node_raise_to_top(&o->overview_ws_col_node->node);
+	}
+}
+
+static void overview_destroy_ws_cols(struct guibux_server *server) {
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->overview_ws_col_node) {
+			wlr_scene_node_destroy(&o->overview_ws_col_node->node);
+			o->overview_ws_col_node = NULL;
+		}
+		if (o->overview_ws_col_buf) {
+			wlr_buffer_drop(o->overview_ws_col_buf);
+			o->overview_ws_col_buf = NULL;
+		}
+	}
+}
+
+/* re-render every column with the current hover state (0 = none) */
+static void overview_refresh_ws_cols(struct guibux_server *server) {
+	struct guibux_overview *ov = &server->overview;
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->overview_ws_col_node) {
+			overview_render_ws_col(o,
+				o->wlr_output == ov->hover_output ? ov->hover_ws : 0);
+		}
+	}
+}
+
 /*
  * Cell size for window i, computed the same way as overview_layout.
  * base->geometry is not usable here: wlr_xdg_toplevel_set_size only
@@ -101,6 +254,10 @@ static void overview_cell_size(struct guibux_server *server, int i,
 	if (area_h <= 0) {
 		return;
 	}
+	int area_w = box.width - OVERVIEW_WS_COL_W;
+	if (area_w <= 0) {
+		return;
+	}
 	*row_h = area_h / NUM_WORKSPACES;
 	if (*row_h <= 0) {
 		return;
@@ -115,7 +272,7 @@ static void overview_cell_size(struct guibux_server *server, int i,
 	if (n <= 0) {
 		n = 1;
 	}
-	*cell_w = box.width / n;
+	*cell_w = area_w / n;
 	if (*cell_w <= 0) {
 		*cell_w = 1;
 	}
@@ -240,7 +397,8 @@ static void overview_layout(struct guibux_server *server) {
 		}
 		int area_y = box.y + server->topbar_height;
 		int area_h = box.height - server->topbar_height;
-		if (area_h <= 0) {
+		int area_w = box.width - OVERVIEW_WS_COL_W;
+		if (area_h <= 0 || area_w <= 0) {
 			continue;
 		}
 		int row_h = area_h / NUM_WORKSPACES;
@@ -258,11 +416,11 @@ static void overview_layout(struct guibux_server *server) {
 			if (n == 0) {
 				continue;
 			}
-			int cell_w = box.width / n;
+			int cell_w = area_w / n;
 			if (cell_w <= 0) {
 				cell_w = 1;
 			}
-			int x = box.x;
+			int x = box.x + OVERVIEW_WS_COL_W;
 			for (int i = 0; i < ov->num_wins; i++) {
 				struct guibux_toplevel *t = ov->wins[i];
 				if (t->workspace == ws &&
@@ -294,6 +452,8 @@ void overview_show(struct guibux_server *server) {
 	}
 
 	ov->num_wins = 0;
+	ov->hover_output = NULL;
+	ov->hover_ws = 0;
 	struct guibux_toplevel *t;
 	wl_list_for_each(t, &server->toplevels, link) {
 		if (ov->num_wins >= MAX_WINDOWS) {
@@ -343,13 +503,15 @@ void overview_show(struct guibux_server *server) {
 			wlr_scene_node_raise_to_top(&o->overview_dim->node);
 		}
 	}
+	/* workspace column above the dim, below the topbar (needs a font:
+	 * the buffer is drawn once, an undrawn buffer would show garbage) */
+	if (server->launcher.face) {
+		overview_create_ws_cols(server);
+		overview_create_overlays(server);
+	}
 	topbar_raise_all(server);
 
 	ov->active = true;
-
-	if (server->launcher.face) {
-		overview_create_overlays(server);
-	}
 }
 
 void overview_hide(struct guibux_server *server) {
@@ -359,7 +521,13 @@ void overview_hide(struct guibux_server *server) {
 	}
 	ov->active = false;
 
+	/* cancel an in-progress drag (Esc/F12, a window mapping/unmapping) */
+	ov->drag_toplevel = NULL;
+	ov->drag_active = false;
+	reset_cursor_mode(server);
+
 	overview_destroy_overlays(server);
+	overview_destroy_ws_cols(server);
 
 	struct guibux_output *o;
 	wl_list_for_each(o, &server->outputs, link) {
@@ -422,10 +590,11 @@ bool overview_handle_key(struct guibux_server *server, xkb_keysym_t sym) {
 	}
 }
 
-void overview_click(struct guibux_server *server, double lx, double ly) {
+struct guibux_toplevel *overview_window_at(struct guibux_server *server,
+		double lx, double ly) {
 	struct guibux_overview *ov = &server->overview;
 	if (!ov->active) {
-		return;
+		return NULL;
 	}
 
 	/* first, try to hit a window cell */
@@ -453,14 +622,12 @@ void overview_click(struct guibux_server *server, double lx, double ly) {
 			}
 		}
 	}
-	if (t != NULL) {
-		overview_hide(server);
-		struct guibux_output *o = guibux_output_for(server,
-			toplevel_output_for(t));
-		if (o != NULL && t->workspace != o->current_workspace) {
-			switch_workspace(o, t->workspace);
-		}
-		focus_toplevel(t);
+	return t;
+}
+
+void overview_click_empty(struct guibux_server *server, double lx, double ly) {
+	struct guibux_overview *ov = &server->overview;
+	if (!ov->active) {
 		return;
 	}
 
@@ -495,4 +662,155 @@ void overview_click(struct guibux_server *server, double lx, double ly) {
 		return;
 	}
 	overview_hide(server);
+}
+
+static int overview_win_index(struct guibux_overview *ov,
+		struct guibux_toplevel *t) {
+	for (int i = 0; i < ov->num_wins; i++) {
+		if (ov->wins[i] == t) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+/*
+ * Drag & drop: the cursor position picks the target. The output under the
+ * cursor selects the monitor, the row under it the workspace. The window
+ * is re-laid out into its new cell; the overview stays open so more
+ * windows can be moved.
+ */
+static void overview_drop(struct guibux_server *server,
+		struct guibux_toplevel *t) {
+	struct guibux_overview *ov = &server->overview;
+	int idx = overview_win_index(ov, t);
+	if (idx < 0) {
+		return;
+	}
+
+	struct wlr_output *target = output_at_cursor(server);
+	int ws = t->workspace;
+	if (target != NULL) {
+		struct wlr_box box;
+		wlr_output_layout_get_box(server->output_layout, target, &box);
+		int area_y = box.y + server->topbar_height;
+		int area_h = box.height - server->topbar_height;
+		int row_h = area_h / NUM_WORKSPACES;
+		if (row_h > 0 && server->cursor->y >= area_y &&
+				server->cursor->y < box.y + box.height) {
+			ws = (int)((server->cursor->y - area_y) / row_h) + 1;
+			if (ws < 1) {
+				ws = 1;
+			}
+			if (ws > NUM_WORKSPACES) {
+				ws = NUM_WORKSPACES;
+			}
+		}
+	}
+
+	struct wlr_output *src = toplevel_output_for(t);
+	if (target != NULL && target != src) {
+		/* cross-monitor drop: center the window on the target
+		 * monitor; remember it so the geometry is restored there
+		 * when the overview is hidden */
+		struct wlr_box box;
+		wlr_output_layout_get_box(server->output_layout, target, &box);
+		struct wlr_box geo;
+		toplevel_get_geometry(t, &geo);
+		int w = geo.width > 0 ? geo.width : 800;
+		int h = geo.height > 0 ? geo.height : 600;
+		double nx = box.x + (box.width - w) / 2;
+		double ny = box.y + (box.height - h) / 2;
+		wlr_scene_node_set_position(&t->scene_tree->node, nx, ny);
+		ov->saved_x[idx] = nx;
+		ov->saved_y[idx] = ny;
+		ov->win_output[idx] = target;
+	}
+	t->workspace = ws;
+
+	/* drag is over: clear the drop-target highlight */
+	ov->hover_output = NULL;
+	ov->hover_ws = 0;
+
+	/* snap the window into its new cell and refresh the labels
+	 * (monitor letter + workspace number) */
+	overview_layout(server);
+	overview_destroy_overlays(server);
+	if (server->launcher.face) {
+		overview_create_overlays(server);
+	}
+	overview_refresh_ws_cols(server);
+}
+
+void overview_button_release(struct guibux_server *server) {
+	struct guibux_overview *ov = &server->overview;
+	struct guibux_toplevel *t = ov->drag_toplevel;
+	ov->drag_toplevel = NULL;
+	if (t == NULL) {
+		reset_cursor_mode(server);
+		return;
+	}
+	if (ov->drag_active) {
+		ov->drag_active = false;
+		overview_drop(server, t);
+	} else {
+		/* no movement: a plain click selects the window */
+		overview_hide(server);
+		struct guibux_output *o = guibux_output_for(server,
+			toplevel_output_for(t));
+		if (o != NULL && t->workspace != o->current_workspace) {
+			switch_workspace(o, t->workspace);
+		}
+		focus_toplevel(t);
+	}
+	reset_cursor_mode(server);
+}
+
+/*
+ * While a window is dragged, the column cell of the (output, workspace)
+ * under the cursor is highlighted: it is where the window will be
+ * dropped. Re-renders only when the target changes.
+ */
+void overview_update_hover(struct guibux_server *server) {
+	struct guibux_overview *ov = &server->overview;
+	if (!ov->active) {
+		return;
+	}
+
+	struct wlr_output *target = NULL;
+	int ws = 0;
+	if (ov->drag_active) {
+		target = output_at_cursor(server);
+		if (target != NULL) {
+			struct wlr_box box;
+			wlr_output_layout_get_box(server->output_layout, target, &box);
+			int area_y = box.y + server->topbar_height;
+			int area_h = box.height - server->topbar_height;
+			int row_h = area_h / NUM_WORKSPACES;
+			if (row_h > 0 && server->cursor->y >= area_y &&
+					server->cursor->y < box.y + box.height) {
+				ws = (int)((server->cursor->y - area_y) / row_h) + 1;
+				if (ws < 1) {
+					ws = 1;
+				}
+				if (ws > NUM_WORKSPACES) {
+					ws = NUM_WORKSPACES;
+				}
+			}
+		}
+	}
+
+	if (target == ov->hover_output && ws == ov->hover_ws) {
+		return;
+	}
+	struct guibux_output *old = guibux_output_for(server, ov->hover_output);
+	if (old && old->overview_ws_col_node) {
+		overview_render_ws_col(old, 0);
+	}
+	ov->hover_output = target;
+	ov->hover_ws = ws;
+	struct guibux_output *o = guibux_output_for(server, target);
+	if (o && o->overview_ws_col_node && ws != 0) {
+		overview_render_ws_col(o, ws);
+	}
 }

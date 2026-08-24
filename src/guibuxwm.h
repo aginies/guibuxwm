@@ -41,6 +41,7 @@
 #define DEFAULT_TOPBAR_WIN_PAD 2
 #define TOPBAR_PAD 8
 #define NUM_WORKSPACES 4
+#define OVERVIEW_WS_COL_W 72
 #define NUM_KEYBINDS 64
 #define MAX_WINDOWS 128
 #define DEFAULT_COLOR_BG 0x1e1e2e
@@ -155,6 +156,9 @@ struct guibux_output {
     struct wlr_buffer *bg_ws_buffers[NUM_WORKSPACES];
     int bg_w, bg_h;
     struct wlr_scene_rect *overview_dim;
+    struct wlr_scene_buffer *overview_ws_col_node;
+    struct wlr_buffer *overview_ws_col_buf;
+    int overview_ws_col_h;
 #define TOPBAR_WIN_W 100
 #define TOPBAR_WIN_GAP 10
 #define TOPBAR_WIN_MAX MAX_WINDOWS
@@ -248,6 +252,16 @@ struct guibux_overview {
 	char label_text[MAX_WINDOWS][128];
 	uint32_t ws_colors[NUM_WORKSPACES];
 	bool ws_colors_enabled;
+	/* drag-to-move (GNOME-style): set on press over a window cell, the
+	 * window is grabbed once the pointer passes a small threshold, and
+	 * dropped on the workspace row under the cursor on release */
+	struct guibux_toplevel *drag_toplevel;
+	bool drag_active;
+	double drag_press_x, drag_press_y;
+	/* workspace column: the (output, ws) cell under the cursor while a
+	 * drag is in progress; its column cell is highlighted */
+	struct wlr_output *hover_output;
+	int hover_ws;
 };
 
 struct guibux_help {
@@ -467,7 +481,10 @@ void switcher_on_unmap(struct guibux_server *server, struct guibux_toplevel *top
 void overview_show(struct guibux_server *server);
 void overview_hide(struct guibux_server *server);
 bool overview_handle_key(struct guibux_server *server, xkb_keysym_t sym);
-void overview_click(struct guibux_server *server, double lx, double ly);
+struct guibux_toplevel *overview_window_at(struct guibux_server *server, double lx, double ly);
+void overview_click_empty(struct guibux_server *server, double lx, double ly);
+void overview_button_release(struct guibux_server *server);
+void overview_update_hover(struct guibux_server *server);
 
 /* help.c */
 void help_show(struct guibux_server *server);
