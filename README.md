@@ -23,7 +23,8 @@ Derived from [tinywl](https://github.com/swaywm/wlroots/tree/master/tinywl).
   preferred apps listed above the input line
 - Topbar on each monitor: monitor letter (A, B, C, ...) on the left, date
   and time on the right (updates every second); tiled windows are laid out
-  below it
+  below it; network status indicator on the right (right-click to launch
+  `nmtui`)
 - Workspaces per monitor (4, numbered 1 2 3 4): `Mod+1..4` switch,
   `Mod+Shift+1..4` move the focused window; workspace numbers shown in the
   topbar with the current one highlighted (clickable to switch)

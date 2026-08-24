@@ -274,7 +274,9 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 			/* check network indicator */
 			if (topbar_network_at(server, o, server->cursor->x,
 					server->cursor->y)) {
-				spawn_network_info(server);
+				if (event->button == 273) {
+					spawn_network_info(server);
+				}
 				return;
 			}
 			/* check notification indicator */

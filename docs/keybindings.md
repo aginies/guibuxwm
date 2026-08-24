@@ -71,6 +71,15 @@ Hardware media keys work without any keybind:
 | `XF86AudioMute` | mute |
 | `XF86AudioMicMute` | mic-mute |
 
+## Network
+
+The topbar shows the network status on the right side (SSID for WiFi, interface
+name for Ethernet, or "No net"/"NM" when unavailable). It is updated via
+NetworkManager D-Bus.
+
+- left click on the indicator: no action
+- right click on the indicator: launch `nmtui` in the configured terminal
+
 ## Mouse
 
 - `Alt` + left drag on a window: move the window (GNOME-style); the

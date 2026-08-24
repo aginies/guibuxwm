@@ -46,24 +46,7 @@ void spawn_sigchld_handler(int sig) {
 }
 
 /* Quote s for embedding in a /bin/sh -c command line */
-static void shell_quote(char *dst, size_t dst_size, const char *s) {
-	size_t di = 0;
-	if (dst_size == 0) {
-		return;
-	}
-	dst[di++] = '\'';
-	for (const char *p = s; *p != '\0' && di < dst_size - 2; p++) {
-		if (*p == '\'') {
-			/* end quote, escaped quote, reopen quote */
-			dst[di++] = '\'';
-			dst[di++] = '\\';
-			dst[di++] = '\'';
-		} else {
-			dst[di++] = *p;
-		}
-	}
-	dst[di] = '\0';
-}
+
 
 void spawn_terminal(struct guibux_server *server) {
 	pid_t pid = fork();
@@ -79,13 +62,9 @@ void spawn_terminal(struct guibux_server *server) {
 	wlr_log(WLR_INFO, "spawned terminal (%s) pid %d", server->term_cmd, pid);
 }
 
-void spawn_network_info(struct guibux_server *server) {
-	char quoted[256];
-	shell_quote(quoted, sizeof(quoted), server->term_cmd);
+	void spawn_network_info(struct guibux_server *server) {
 	char cmd[512];
-	snprintf(cmd, sizeof(cmd),
-		"%s -- bash -c \"nmcli -t -f DEVICE,TYPE,STATE,CONNECTION,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS device show 2>/dev/null || nmcli device show; read -p '\\nPress enter'\"",
-		quoted);
+	snprintf(cmd, sizeof(cmd), "%s -- bash -c \"nmtui\"", server->term_cmd);
 	pid_t pid = fork();
 	if (pid < 0) {
 		wlr_log(WLR_ERROR, "fork failed: %m");
@@ -96,7 +75,7 @@ void spawn_network_info(struct guibux_server *server) {
 		_exit(127);
 	}
 	spawn_track(pid);
-	wlr_log(WLR_INFO, "spawned network info terminal pid %d", pid);
+	wlr_log(WLR_INFO, "spawned nmtui terminal pid %d", pid);
 }
 
 /* fork /bin/sh -c cmd, track the child for reaping */
