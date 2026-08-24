@@ -1,0 +1,327 @@
+# Configuration
+
+Configuration is via a config file, command-line flags and environment
+variables. Priority: command-line flag > config file > `GUIBUX_*` env >
+standard env > default.
+
+## Config file
+
+Location: `~/.config/guibuxwm/config` (override with the `-c` flag or the
+`GUIBUX_CONFIG` env var). A missing file is skipped silently; malformed lines
+are logged and ignored. Format: one `key = value` per line, `#` comments.
+
+A sample with all defaults is in [`config/guibuxwm`](config/guibuxwm) — copy
+it to `~/.config/guibuxwm/config` and edit.
+
+## Keys
+
+### `term`
+
+Terminal command started by `Mod+Return`.
+
+**Default:** `gnome-terminal`
+
+**Example:**
+
+```
+term = foot
+```
+
+---
+
+### `preferred_app1..5`
+
+Preferred apps shown above the command box (`Mod+e`) prompt, up to 5.
+Format: `Name;command`.
+
+Up/Down selects among preferred apps first, then `$PATH` matches.
+Enter on a selected preferred app runs its command (typed arguments after
+the first word are appended, same as for `$PATH` matches).
+
+**Example:**
+
+```
+preferred_app1 = Firefox;firefox
+preferred_app2 = Slack;slack
+preferred_app3 = Nautilus;nautilus
+preferred_app4 = VirtUI-GUI;virtui-gui
+```
+
+---
+
+### `xkb_layout`
+
+Keyboard layout (xkb layout name). Leave unset for the system default.
+
+**Default:** system default
+
+**Example:**
+
+```
+xkb_layout = fr
+```
+
+---
+
+### `xkb_variant`
+
+Keyboard variant. Leave unset for the system default.
+
+**Default:** system default
+
+**Example:**
+
+```
+xkb_variant = osd
+```
+
+---
+
+### `xkb_options`
+
+xkb options (comma-separated). Leave unset for the system default.
+
+**Default:** system default
+
+**Example:**
+
+```
+xkb_options = caps:swapscape
+```
+
+---
+
+### `keybind`
+
+Keybinding, repeatable. Syntax: `MODS+key: action`.
+At least one modifier is required: `Mod` (Super), `Shift`, `Alt`, `Ctrl`.
+`key` is an xkb key name (`q`, `Return`, `Tab`, `F1`, ...).
+
+A config keybind with the same modifiers+key as a default replaces it,
+otherwise it is added.
+
+See [Keybindings](../docs/keybindings.md) for the full list of actions.
+
+**Example:**
+
+```
+keybind = Mod+g: launcher
+keybind = Mod+Shift+q: quit
+```
+
+---
+
+### `color_bg`
+
+Topbar/launcher background color.
+
+**Default:** `#1e1e2e`
+
+**Example:**
+
+```
+color_bg = #1e1e2e
+```
+
+---
+
+### `color_border`
+
+Topbar bottom border / launcher border.
+
+**Default:** `#45475a`
+
+**Example:**
+
+```
+color_border = #45475a
+```
+
+---
+
+### `color_highlight`
+
+Highlight color (launcher selection, current workspace cell).
+
+**Default:** `#3a3c55`
+
+**Example:**
+
+```
+color_highlight = #3a3c55
+```
+
+---
+
+### `color_text`
+
+Text and cursor color.
+
+**Default:** `#ffffff`
+
+**Example:**
+
+```
+color_text = #ffffff
+```
+
+---
+
+### `color_dim`
+
+Dimmed text (launcher non-selected, inactive workspaces).
+
+**Default:** `#8888aa`
+
+**Example:**
+
+```
+color_dim = #8888aa
+```
+
+---
+
+### `topbar_bg`
+
+Topbar background color.
+
+**Default:** `#73ba25` (openSUSE green)
+
+**Example:**
+
+```
+topbar_bg = #73ba25
+```
+
+---
+
+### `topbar_text`
+
+Topbar text color (monitor letter, workspaces, date/time).
+
+**Default:** `#1e1e2e`
+
+**Example:**
+
+```
+topbar_text = #1e1e2e
+```
+
+---
+
+### `topbar_height`
+
+Topbar height in pixels.
+
+**Default:** `24`
+
+**Example:**
+
+```
+topbar_height = 28
+```
+
+---
+
+### `topbar_font_size`
+
+Topbar font size in pixels.
+
+**Default:** `16`
+
+**Example:**
+
+```
+topbar_font_size = 18
+```
+
+---
+
+### `topbar_win_pad`
+
+Vertical padding of window pills inside the topbar, in pixels.
+`0` = pills fill the whole topbar height.
+
+**Default:** `2`
+
+**Example:**
+
+```
+topbar_win_pad = 0
+```
+
+---
+
+### `background`
+
+Desktop background image path (PNG or JPEG), used for workspaces
+without their own image.
+
+**Default:** unset
+
+**Example:**
+
+```
+background = ~/wallpaper.jpg
+```
+
+---
+
+### `background1..4`
+
+Per-workspace background image (optional, falls back to `background`).
+
+**Default:** unset
+
+**Example:**
+
+```
+background1 = ~/ws1.jpg
+background2 = ~/ws2.jpg
+background3 = ~/ws3.jpg
+background4 = ~/ws4.jpg
+```
+
+---
+
+### `background_scale`
+
+Background scale mode: `stretch`, `fit`, `fill`, `tile`.
+
+**Default:** `fill`
+
+**Example:**
+
+```
+background_scale = fit
+```
+
+---
+
+### `screensaver_timeout`
+
+Screensaver timeout in seconds. `0` = disabled.
+
+**Default:** `300`
+
+**Example:**
+
+```
+screensaver_timeout = 600
+```
+
+---
+
+### `focus_follow_mouse`
+
+Focus follows mouse: keyboard focus changes when cursor enters a window.
+
+`true` = enabled, `false` = click-to-focus only.
+
+**Default:** `true`
+
+**Example:**
+
+```
+focus_follow_mouse = false
+```

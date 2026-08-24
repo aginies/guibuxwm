@@ -85,7 +85,7 @@ Run:
 ## Keybindings
 
 `Mod` is the Super key. All bindings can be changed via the config file
-(see [Keybinds](#keybinds)).
+(see [Keybinds](../docs/keybindings.md)).
 
 | Shortcut | Action |
 |---|---|
@@ -125,7 +125,7 @@ selected command, with any arguments you typed after the first word appended
 (e.g. type `alac -w`, select `alacritty`, Enter runs `alacritty -w`). With
 no match, Enter runs exactly what you typed.
 
-Preferred apps configured with `preferred_app1..5` (see [Config file](#config-file))
+Preferred apps configured with `preferred_app1..5` (see [Config](../docs/config.md#preferred-apps))
 are always listed above the input line, up to 5. With nothing selected, the
 first Up selects the preferred app closest to the input line; further Up/Down
 moves through the preferred apps and the matches. Enter on a selected
@@ -164,68 +164,7 @@ are logged and ignored. Format: one `key = value` per line, `#` comments.
 A sample with all defaults is in [`config/guibuxwm`](config/guibuxwm) — copy
 it to `~/.config/guibuxwm/config` and edit.
 
-| Key | Meaning | Example |
-|---|---|---|
-| `term` | Terminal command started by `Mod+Return` | `term = foot` |
-| `xkb_layout` | Keyboard layout (xkb layout name) | `xkb_layout = fr` |
-| `xkb_variant` | Keyboard variant | `xkb_variant = osd` |
-| `xkb_options` | xkb options (comma-separated) | `xkb_options = caps:swapscape` |
-| `keybind` | Keybinding, repeatable, see [Keybinds](#keybinds) | `keybind = Mod+g: launcher` |
-| `preferred_app1..5` | Preferred apps in the command box, `Name;command`, up to 5 | `preferred_app1 = Firefox;firefox` |
-| `color_bg` | Topbar/launcher background, `#rrggbb` | `color_bg = #1e1e2e` |
-| `color_border` | Topbar bottom border / launcher border | `color_border = #45475a` |
-| `color_highlight` | Highlight (launcher selection, current workspace cell) | `color_highlight = #3a3c55` |
-| `color_text` | Text and cursor | `color_text = #ffffff` |
-| `color_dim` | Dimmed text (launcher non-selected, inactive workspaces) | `color_dim = #8888aa` |
-| `topbar_bg` | Topbar background (default: openSUSE green) | `topbar_bg = #73ba25` |
-| `topbar_text` | Topbar text (monitor letter, workspaces, date/time) | `topbar_text = #1e1e2e` |
-| `topbar_height` | Topbar height in pixels (default: 24) | `topbar_height = 28` |
-| `topbar_font_size` | Topbar font size in pixels (default: 16) | `topbar_font_size = 18` |
-| `topbar_win_pad` | Vertical padding of window pills in the topbar, pixels (default: 2, 0 = full height) | `topbar_win_pad = 2` |
-| `background` | Desktop background image path (PNG or JPEG) | `background = ~/wallpaper.jpg` |
-| `background1..4` | Per-workspace background image (falls back to `background`) | `background1 = ~/ws1.jpg` |
-| `background_scale` | Background scale mode: `stretch`, `fit`, `fill`, `tile` (default: `fill`) | `background_scale = fill` |
-| `screensaver_timeout` | Screensaver timeout in seconds (0 = disabled, default: 300) | `screensaver_timeout = 600` |
-| `focus_follow_mouse` | Focus follows mouse: `true` or `false` (default: `true`) | `focus_follow_mouse = true` |
-
-Example:
-
-```
-# ~/.config/guibuxwm/config
-term = foot
-xkb_layout = fr
-keybind = Mod+g: launcher
-keybind = Mod+Shift+q: quit
-color_bg = #1e1e2e
-```
-
-### Keybinds
-
-Syntax: `keybind = MODS+key: action`. At least one modifier is required:
-`Mod` (or `Super`), `Shift`, `Alt`, `Ctrl`. `key` is an xkb key name
-(`q`, `Return`, `Tab`, `F1`, ...). Actions:
-
-| Action | Meaning |
-|---|---|
-| `terminal` | Start a new terminal |
-| `close` | Close the focused window |
-| `fullscreen` | Toggle fullscreen of the focused window |
-| `tile` | Cycle tile mode of the focused window's monitor |
-| `launcher` | Open the command box |
-| `focus-next` | Cycle window focus |
-| `quit` | Quit the compositor |
-| `workspace:N` | Switch to workspace N (1..4) |
-| `move-workspace:N` | Move the focused window to workspace N (1..4) |
-| `move-monitor-left` / `move-monitor-right` | Move the focused window to the previous/next monitor |
-| `snap-left` | Snap the focused window to the left half of its monitor |
-| `snap-right` | Snap the focused window to the right half of its monitor |
-| `snap-top` | Snap the focused window to the top half of its monitor |
-| `snap-bottom` | Snap the focused window to the bottom half of its monitor |
-| `switch-ws-left` / `switch-ws-right` | Switch to the previous/next workspace |
-| `show-help` | Show the keybinding help overlay |
-
-A config keybind with the same modifiers+key as a default replaces it,
-otherwise it is added. Defaults are listed in [Keybindings](#keybindings).
+See [Configuration](../docs/config.md) for the full reference.
 
 ### Command-line flags
 
@@ -248,7 +187,7 @@ guibuxwm [-t terminal command] [-k keyboard layout] [-c config file]
 | `GUIBUX_XKB_LAYOUT` | Keyboard layout (overridden by `-k` and config `xkb_layout`) | `GUIBUX_XKB_LAYOUT="fr"` |
 | `XKB_DEFAULT_LAYOUT` | Keyboard layout, standard xkb env (lowest priority) | `XKB_DEFAULT_LAYOUT="fr,us"` |
 | `GUIBUX_OUTPUTS` | Manual monitor arrangement, see below | see below |
-| `GUIBUX_TEST_EXTRA_OUTPUTS` | Test-only, see [Testing](#testing) | `GUIBUX_TEST_EXTRA_OUTPUTS=1` |
+| `GUIBUX_TEST_EXTRA_OUTPUTS` | Test-only, see [Testing](../docs/testing.md) | `GUIBUX_TEST_EXTRA_OUTPUTS=1` |
 
 Terminal default: `gnome-terminal`. Keyboard layout default: system default
 (usually `us`).
@@ -262,11 +201,11 @@ they appear). To place them manually:
 GUIBUX_OUTPUTS="NAME@XxY,NAME@XxY,..."
 ```
 
- - `NAME` is the output name reported by wlroots (e.g. `DP-1`, `HDMI-A-1`,
-   `eDP-1`). Find yours in the compositor log or with `wlr-randr`/`weston-info`.
- - `XxY` is the top-left position of the monitor in the virtual layout.
- - `:ROT` (optional) sets the rotation: `normal`, `90`, `180` or `270`
-   (degrees clockwise). Example: `HDMI-A-1@0x0:90`.
+- `NAME` is the output name reported by wlroots (e.g. `DP-1`, `HDMI-A-1`,
+  `eDP-1`). Find yours in the compositor log or with `wlr-randr`/`weston-info`.
+- `XxY` is the top-left position of the monitor in the virtual layout.
+- `:ROT` (optional) sets the rotation: `normal`, `90`, `180` or `270`
+  (degrees clockwise). Example: `HDMI-A-1@0x0:90`.
 
 Example — two monitors side by side, `HDMI-A-1` to the right of `DP-1`:
 
@@ -346,94 +285,7 @@ The compositor can also be run headless directly for smoke testing:
 WLR_BACKENDS=headless WLR_RENDERER=gles2 ./build/guibuxwm
 ```
 
-`GUIBUX_TEST_EXTRA_OUTPUTS=N` forces the headless backend and creates
-N+1 virtual 1280x720 monitors (the headless backend has no default output),
-useful to exercise the multi-monitor code paths:
-
-```sh
-GUIBUX_TEST_EXTRA_OUTPUTS=1 WLR_RENDERER=gles2 ./build/guibuxwm
-```
-
-`GUIBUX_TEST_LAUNCHER_CMD="command"` drives the command box headlessly:
-shortly after start it shows the box, types the command, presses Enter
-(then shows and Escapes again), logging `launcher-test: ENTER OK` /
-`ESCAPE OK` on success. If the config defines preferred apps, it also
-verifies that Up selects the one closest to the input line
-(`launcher-test: PREFERRED UP OK`):
-
-```sh
-GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_LAUNCHER_CMD="echo ok > /tmp/x" \
-  WLR_RENDERER=gles2 ./build/guibuxwm
-```
-
-`GUIBUX_TEST_TILE_MODE=N` sets the tile mode of all outputs shortly after
-start (0=free, 1=split, 2=main+stack), to exercise the tiling code paths:
-
-```sh
-GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_TILE_MODE=1 GUIBUX_TERM=true \
-  WLR_RENDERER=gles2 ./build/guibuxwm
-```
-
-The `tile-test` client (in `tests/`, built by the main build) maps 3
-toplevels, verifies the configured sizes for the given mode, closes one
-window and verifies the re-pack, then fullscreens a window and verifies it
-returns to its tile slot.
-
-`GUIBUX_TEST_TOPBAR=1` verifies the topbars shortly after start (one bar per
-output, monitor letter matches the left-to-right layout order (A = leftmost),
-non-empty date/time string), logging `topbar-test: OK (N outputs)` on success:
-
-```sh
-GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_TOPBAR=1 GUIBUX_TERM=true \
-  WLR_RENDERER=gles2 ./build/guibuxwm
-```
-
-`GUIBUX_TEST_WORKSPACES=N` (default 2) exercises the workspace state machine
-~2s after start: all outputs start on workspace 1 with every window visible,
-then every output switches to N (windows hide, keyboard focus clears), a
-window is moved to N and back, and switching back restores visibility. Logs
-`workspace-test: OK (N outputs, ws M, K toplevels)` on
-success. The `ws-test` client (in `tests/`, built by the main build) maps
-2 toplevels and idles, giving the test real windows:
-
-```sh
-GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_WORKSPACES=2 GUIBUX_TERM=true \
-  WLR_RENDERER=gles2 ./build/guibuxwm &
-# in another shell:
-./build/tests/ws-test
-```
-
-`GUIBUX_TEST_KEYBIND="key"` sends `Mod+key` through the keybind table
-shortly after start and expects the launcher to open (used by the config
-test to verify a custom keybind):
-
-```sh
-GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_KEYBIND=g \
-  GUIBUX_CONFIG=/path/to/config WLR_RENDERER=gles2 ./build/guibuxwm
-```
-
-## Project layout
-
-```
-meson.build      build definition (wlroots-0.20, freetype2, cairo deps)
-build.sh         builds wlroots 0.20.2 if needed, then the WM
-config/guibuxwm  sample config file (all defaults, copy to ~/.config/guibuxwm/config)
-src/main.c       entry point, server setup
-src/background.c desktop background (stb_image: PNG + JPEG)
-src/stb_image.h  single-header image loader (stb, public domain)
-src/output.c     output lifecycle, background/topbar creation
-src/topbar.c     per-monitor topbar rendering
-src/toplevel.c   xdg-shell toplevel handling
-src/window-layout.c  tiling, workspaces, snap
-src/launcher.c   command box
-src/keyboard.c   key handling, keybinds
-src/config.c     config file parsing
-src/cursor.c     cursor motion, button, seat
-src/popup.c      xdg-popup handling
-src/sysinfo.c    network + battery sysinfo via D-Bus
-src/wm-test.c    headless test helpers
-tests/           headless test clients (ws-test, tile-test) + runner scripts (run-all.sh)
-```
+See [Testing](../docs/testing.md) for full details.
 
 ## License
 
