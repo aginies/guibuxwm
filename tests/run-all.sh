@@ -30,6 +30,8 @@ run "tile mode 2 (main+stack)" ./run-tile-test.sh 2
 run "topbar" ./run-topbar-test.sh
 run "notify" ./run-notify-test.sh
 run "audio" ./run-audio-test.sh
+run "battery" ./run-battery-test.sh
+run "battery tooltip" ./run-tooltip-test.sh
 run "topbar scroll" ./run-scroll-test.sh
 run "alt+drag move" ./run-altdrag-test.sh
 run "cross-monitor drag" ./run-xmondrag-test.sh

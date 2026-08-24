@@ -123,6 +123,9 @@ void process_cursor_motion(struct guibux_server *server, uint32_t time) {
 	} else if (in_topbar && topbar_audio_at(server, o, server->cursor->x,
 			server->cursor->y) != 0) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
+	} else if (in_topbar && topbar_battery_at(server, o, server->cursor->x,
+			server->cursor->y)) {
+		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
 	} else if (in_topbar && topbar_network_at(server, o, server->cursor->x,
 			server->cursor->y)) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
@@ -139,6 +142,8 @@ void process_cursor_motion(struct guibux_server *server, uint32_t time) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "default");
 	}
 	server->cursor_topbar_output = o;
+	/* battery indicator tooltip: arm/disarm the hover on every move */
+	tooltip_update_hover(server, time);
 	if (surface) {
 		wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
 		wlr_seat_pointer_notify_motion(seat, time, sx, sy);

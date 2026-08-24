@@ -640,6 +640,7 @@ void notify_panel_show(struct guibux_server *server,
 	if (p->active) {
 		return;
 	}
+	tooltip_hide(server);
 	/* a slide-out may still be in flight: cancel it and start fresh */
 	if (p->hiding) {
 		effects_cancel_node(server, &p->scene_node->node);

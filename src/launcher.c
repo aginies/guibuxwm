@@ -673,6 +673,7 @@ void launcher_show(struct guibux_server *server) {
 	if (l->active || l->face == NULL) {
 		return;
 	}
+	tooltip_hide(server);
 
 	struct wlr_output *output = output_at_cursor(server);
 	if (output == NULL) {

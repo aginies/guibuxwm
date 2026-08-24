@@ -390,6 +390,14 @@ void topbar_render(struct guibux_output *o) {
 		mic[0] = '\0';
 	}
 
+	/* battery label: "BAT NN%" */
+	char batbuf[40];
+	if (bat[0] != '\0') {
+		snprintf(batbuf, sizeof(batbuf), "BAT %s", bat);
+	} else {
+		batbuf[0] = '\0';
+	}
+
 	/* remember the rendered sysinfo values: topbar_tick marks the bar
 	 * dirty when the worker thread publishes a change, so external
 	 * updates (network, volume) show up without other activity */
@@ -416,9 +424,11 @@ void topbar_render(struct guibux_output *o) {
 		if (ind_w > 0) ind_w += 8;
 		ind_w += guibux_text_width(server->launcher.face, mic) / scale;
 	}
-	if (bat[0] != '\0') {
-		if (ind_w > 0) ind_w += 8;
-		ind_w += guibux_text_width(server->launcher.face, bat) / scale;
+	if (batbuf[0] != '\0') {
+		/* separator between audio indicators and battery:
+		 * 4px + 2px line + 4px */
+		if (ind_w > 0) ind_w += 10;
+		ind_w += guibux_text_width(server->launcher.face, batbuf) / scale;
 	}
 	int notif_count = notify_count(&server->notify);
 	int notif_w = notify_indicator_width(server->launcher.face, scale,
@@ -589,24 +599,55 @@ void topbar_render(struct guibux_output *o) {
 		launcher_draw_text_on_surface(cs, server->launcher.face,
 			vol,
 			ind_x * scale, baseline, server->color_topbar_text);
-		ind_x += o->topbar_vol_w + 8;
+		ind_x += o->topbar_vol_w;
 	}
 	o->topbar_mic_x = 0;
 	o->topbar_mic_w = 0;
 	if (mic[0] != '\0') {
+		ind_x += 8;
 		o->topbar_mic_x = ind_x;
 		o->topbar_mic_w = guibux_text_width(server->launcher.face,
 			mic) / scale;
 		launcher_draw_text_on_surface(cs, server->launcher.face,
 			mic,
 			ind_x * scale, baseline, server->color_topbar_text);
-		ind_x += o->topbar_mic_w + 8;
+		ind_x += o->topbar_mic_w;
 	}
-	if (bat[0] != '\0') {
+	o->topbar_bat_x = 0;
+	o->topbar_bat_w = 0;
+	if (batbuf[0] != '\0') {
+		bool had_prev = net[0] != '\0' || vol[0] != '\0' ||
+			mic[0] != '\0';
+		if (had_prev) {
+			/* separator between audio indicators and battery */
+			cairo_set_source_rgb(cr,
+				((server->color_border >> 16) & 0xFF) / 255.0,
+				((server->color_border >> 8) & 0xFF) / 255.0,
+				(server->color_border & 0xFF) / 255.0);
+			cairo_rectangle(cr, (int)((ind_x + 5) * scale) - (int)(scale),
+				cell_y * scale, 2 * scale, cell_h * scale);
+			cairo_fill(cr);
+			ind_x += 10;
+		}
+		o->topbar_bat_x = ind_x;
+		o->topbar_bat_w = guibux_text_width(server->launcher.face,
+			batbuf) / scale;
 		launcher_draw_text_on_surface(cs, server->launcher.face,
-			bat,
+			batbuf,
 			ind_x * scale, baseline, server->color_topbar_text);
-		ind_x += guibux_text_width(server->launcher.face, bat) / scale;
+		ind_x += o->topbar_bat_w;
+	}
+
+	/* separator between battery and date */
+	if (bat[0] != '\0') {
+		cairo_set_source_rgb(cr,
+			((server->color_border >> 16) & 0xFF) / 255.0,
+			((server->color_border >> 8) & 0xFF) / 255.0,
+			(server->color_border & 0xFF) / 255.0);
+		cairo_rectangle(cr, (int)((ind_x + 4) * scale) - (int)(scale),
+			cell_y * scale, 2 * scale, cell_h * scale);
+		cairo_fill(cr);
+		ind_x += 8;
 	}
 
 	/* notification indicator: bell + pending count */
@@ -716,6 +757,24 @@ bool topbar_network_at(struct guibux_server *server, struct guibux_output *o, do
 	double rel = lx - box.x;
 	if (rel >= o->topbar_net_x &&
 			rel < o->topbar_net_x + o->topbar_net_w) {
+		return true;
+	}
+	return false;
+}
+
+bool topbar_battery_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly) {
+	if (o == NULL || o->topbar_buffer == NULL || o->topbar_bat_w <= 0) {
+		return false;
+	}
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+	if (lx < box.x || lx >= box.x + box.width ||
+			ly < box.y || ly >= box.y + o->server->topbar_height) {
+		return false;
+	}
+	double rel = lx - box.x;
+	if (rel >= o->topbar_bat_x &&
+			rel < o->topbar_bat_x + o->topbar_bat_w) {
 		return true;
 	}
 	return false;
@@ -866,6 +925,9 @@ int topbar_tick(void *data) {
 			topbar_render(o);
 		}
 	}
+	/* the battery tooltip arms on pointer motion and shows once the
+	 * hover delay has elapsed; this tick is the delay checker */
+	tooltip_tick(server);
 	wl_event_source_timer_update(server->topbar_timer, 500);
 	return 0;
 }
@@ -929,5 +991,54 @@ int audio_test_run(void *data) {
 	}
 	wlr_log(WLR_INFO, "audio-test: OK (%d outputs, audio %s)", n,
 		snap.audio_available ? "on" : "off");
+	return 0;
+}
+
+int battery_test_run(void *data) {
+	struct guibux_server *server = data;
+	/* the runner script probes upower for ground truth and passes it in:
+	 * "yes" = a battery device exists, "" = it must stay hidden */
+	const char *expect = getenv("GUIBUX_TEST_BATTERY_EXPECT");
+	bool want = expect != NULL && strcmp(expect, "yes") == 0;
+	struct guibux_sysinfo_snapshot snap;
+	sysinfo_get(&server->sysinfo, &snap);
+	struct wlr_output *sorted[16];
+	struct wlr_box boxes[16];
+	int n = outputs_sorted_by_x(server, sorted, boxes, 16);
+	for (int i = 0; i < n; i++) {
+		struct guibux_output *o = guibux_output_for(server, sorted[i]);
+		if (o == NULL || o->topbar_buffer == NULL) {
+			wlr_log(WLR_ERROR, "battery-test: FAIL no buffer on output %d", i + 1);
+			return 0;
+		}
+		if (want) {
+			if (snap.bat[0] == '\0') {
+				wlr_log(WLR_ERROR, "battery-test: FAIL battery not polled");
+				return 0;
+			}
+			/* format must be "NN%" */
+			int pct = 0;
+			const char *end = snap.bat;
+			while (*end >= '0' && *end <= '9') {
+				pct = pct * 10 + (*end - '0');
+				end++;
+			}
+			if (*end != '%' || end[1] != '\0' || pct > 100) {
+				wlr_log(WLR_ERROR, "battery-test: FAIL bad format '%s'", snap.bat);
+				return 0;
+			}
+			if (strcmp(o->topbar_battery, snap.bat) != 0) {
+				wlr_log(WLR_ERROR, "battery-test: FAIL indicator not rendered");
+				return 0;
+			}
+		} else {
+			if (snap.bat[0] != '\0') {
+				wlr_log(WLR_ERROR, "battery-test: FAIL battery without upower '%s'", snap.bat);
+				return 0;
+			}
+		}
+	}
+	wlr_log(WLR_INFO, "battery-test: OK (%d outputs, battery %s)", n,
+		snap.bat[0] != '\0' ? snap.bat : "off");
 	return 0;
 }

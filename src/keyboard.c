@@ -62,7 +62,7 @@ void spawn_terminal(struct guibux_server *server) {
 	wlr_log(WLR_INFO, "spawned terminal (%s) pid %d", server->term_cmd, pid);
 }
 
-	void spawn_network_info(struct guibux_server *server) {
+void spawn_network_info(struct guibux_server *server) {
 	char cmd[512];
 	snprintf(cmd, sizeof(cmd), "%s -- bash -c \"nmtui\"", server->term_cmd);
 	pid_t pid = fork();
@@ -270,17 +270,14 @@ void volume_toggle_mute(struct guibux_server *server, bool mic) {
 
 /*
  * Adjust screen brightness by delta_pct via brightnessctl.
- * Uses `brightnessctl set +5%` / `-5%` syntax.
+ * `--` ends option parsing; without it brightnessctl's getopt treats
+ * `-5%` as flags and fails with "invalid option -- '5'".
  */
 static void brightness_change(struct guibux_server *server, int delta_pct) {
 	char cmd[128];
-	if (delta_pct > 0) {
-		snprintf(cmd, sizeof(cmd),
-			"brightnessctl set +%d%% 2>/dev/null", delta_pct);
-	} else {
-		snprintf(cmd, sizeof(cmd),
-			"brightnessctl set %d%%- 2>/dev/null", abs(delta_pct));
-	}
+	snprintf(cmd, sizeof(cmd),
+		"brightnessctl set -- %c%d%% 2>/dev/null",
+		delta_pct > 0 ? '+' : '-', abs(delta_pct));
 	spawn_cmd(cmd);
 }
 

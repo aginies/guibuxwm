@@ -119,6 +119,7 @@ static void help_render(struct guibux_server *server) {
 void help_show(struct guibux_server *server) {
 	struct guibux_help *h = &server->help;
 	if (h->active) return;
+	tooltip_hide(server);
 
 	struct wlr_output *output = output_at_cursor(server);
 	if (output == NULL) return;

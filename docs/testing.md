@@ -20,6 +20,7 @@ tests/run-ws-test.sh [ws]        # workspace state machine (default ws 2)
 tests/run-tile-test.sh <mode>    # tiling: 0=free, 1=split, 2=main+stack
 tests/run-topbar-test.sh         # per-output topbar (number + time)
 tests/run-audio-test.sh          # audio sysinfo poll + VOL/MIC indicators
+tests/run-battery-test.sh        # battery sysinfo poll (UPower) + topbar indicator
 tests/run-launcher-test.sh       # command box (show/type/enter/escape, preferred apps)
 tests/run-config-test.sh         # config file (term, keybind, colors)
 tests/run-notify-test.sh         # notifications (D-Bus round-trip, auto-show, auto-hide, panel)
@@ -107,6 +108,21 @@ GUIBUX_OUTPUTS= GUIBUX_TEST_AUDIO=1 GUIBUX_TERM=true \
   WLR_RENDERER=gles2 ./build/guibuxwm
 ```
 
+## GUIBUX_TEST_BATTERY
+
+`GUIBUX_TEST_BATTERY=1` verifies the battery sysinfo poll (~6.5s after
+start, after the first UPower poll at ~5s). The runner script probes
+`upower -d` for ground truth and passes it via
+`GUIBUX_TEST_BATTERY_EXPECT=yes|""`: with a battery device the polled
+value must be a `NN%` string and the topbar indicator must be rendered;
+without one the value must stay empty. Logs
+`battery-test: OK (N outputs, battery NN%|off)` on success:
+
+```sh
+GUIBUX_OUTPUTS= GUIBUX_TEST_BATTERY=1 GUIBUX_TERM=true \
+  WLR_RENDERER=gles2 ./build/guibuxwm
+```
+
 ## GUIBUX_TEST_WORKSPACES
 
 `GUIBUX_TEST_WORKSPACES=N` (default 2) exercises the workspace state machine
@@ -188,6 +204,7 @@ Test clients are built by the main build and live in `tests/`:
 | `GUIBUX_TEST_TILE_MODE=N` | Set tile mode (0=free, 1=split, 2=main+stack) |
 | `GUIBUX_TEST_TOPBAR=1` | Verify topbars after start |
 | `GUIBUX_TEST_AUDIO=1` | Verify audio poll + VOL/MIC indicators |
+| `GUIBUX_TEST_BATTERY=1` | Verify battery poll (UPower) + topbar indicator |
 | `GUIBUX_TEST_WORKSPACES=N` | Exercise workspace state machine (default 2) |
 | `GUIBUX_TEST_KEYBIND="key"` | Verify a custom keybind opens the launcher |
 | `GUIBUX_TEST_NOTIFY=1` | Verify notifications (D-Bus, auto-show, auto-hide, panel) |

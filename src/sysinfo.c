@@ -118,12 +118,13 @@ parse_percent(const char *s)
  * Caller must unref the reply.
  */
 static DBusMessage *
-dbus_properties_get(DBusConnection *conn, const char *object_path,
+dbus_properties_get(DBusConnection *conn, const char *service,
+                    const char *object_path,
                     const char *interface, const char *property,
                     DBusError *err)
 {
     DBusMessage *msg = dbus_message_new_method_call(
-        NM_SERVICE, object_path,
+        service, object_path,
         "org.freedesktop.DBus.Properties", "Get");
     if (!msg) {
         return NULL;
@@ -144,11 +145,12 @@ dbus_properties_get(DBusConnection *conn, const char *object_path,
  * Get a D-Bus property as uint32.
  */
 static dbus_uint32_t
-dbus_get_property_uint32(DBusConnection *conn, const char *object_path,
+dbus_get_property_uint32(DBusConnection *conn, const char *service,
+                          const char *object_path,
                           const char *interface, const char *property,
                           DBusError *err)
 {
-    DBusMessage *reply = dbus_properties_get(conn, object_path,
+    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
         interface, property, err);
     if (!reply) {
         return 0;
@@ -177,14 +179,44 @@ dbus_get_property_uint32(DBusConnection *conn, const char *object_path,
 }
 
 /*
- * Get a D-Bus property as string.
+ * Get a D-Bus property as double (e.g. UPower Percentage).
+ * Returns -1 on failure or type mismatch.
  */
-static char *
-dbus_get_property_string(DBusConnection *conn, const char *object_path,
+static double
+dbus_get_property_double(DBusConnection *conn, const char *service,
+                          const char *object_path,
                           const char *interface, const char *property,
                           DBusError *err)
 {
-    DBusMessage *reply = dbus_properties_get(conn, object_path,
+    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
+        interface, property, err);
+    if (!reply) {
+        return -1.0;
+    }
+
+    DBusMessageIter iter, variant;
+    dbus_message_iter_init(reply, &iter);
+    dbus_message_iter_recurse(&iter, &variant);
+
+    double val = -1.0;
+    if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_DOUBLE) {
+        dbus_message_iter_get_basic(&variant, &val);
+    }
+
+    dbus_message_unref(reply);
+    return val;
+}
+
+/*
+ * Get a D-Bus property as string.
+ */
+static char *
+dbus_get_property_string(DBusConnection *conn, const char *service,
+                          const char *object_path,
+                          const char *interface, const char *property,
+                          DBusError *err)
+{
+    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
         interface, property, err);
     if (!reply) {
         return NULL;
@@ -210,11 +242,12 @@ dbus_get_property_string(DBusConnection *conn, const char *object_path,
  * Returns newly allocated NUL-terminated string, or NULL.
  */
 static char *
-dbus_get_property_byte_array(DBusConnection *conn, const char *object_path,
-                              const char *interface, const char *property,
-                              DBusError *err)
+dbus_get_property_byte_array(DBusConnection *conn, const char *service,
+                               const char *object_path,
+                               const char *interface, const char *property,
+                               DBusError *err)
 {
-    DBusMessage *reply = dbus_properties_get(conn, object_path,
+    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
         interface, property, err);
     if (!reply) {
         return NULL;
@@ -257,16 +290,52 @@ free_path_array(char **arr)
 }
 
 /*
- * Get an array of object paths property (e.g. Devices, ActiveConnections).
+ * Copy an array of object paths from an iterator positioned at an
+ * array element into a newly allocated NUL-terminated string array.
+ * Returns NULL on allocation failure.
+ */
+static char **
+copy_object_path_array(DBusMessageIter *arr)
+{
+    int count = 0;
+    int cap = 8;
+    char **result = malloc(cap * sizeof(char *));
+    if (!result) {
+        return NULL;
+    }
+    while (dbus_message_iter_get_arg_type(arr) == DBUS_TYPE_OBJECT_PATH) {
+        const char *path = NULL;
+        dbus_message_iter_get_basic(arr, &path);
+        /* keep room for the NUL terminator after every write */
+        if (count + 1 >= cap) {
+            int ncap = cap * 2;
+            char **tmp = realloc(result, ncap * sizeof(char *));
+            if (!tmp) {
+                free_path_array(result);
+                return NULL;
+            }
+            result = tmp;
+            cap = ncap;
+        }
+        result[count++] = strdup(path);
+        dbus_message_iter_next(arr);
+    }
+    result[count] = NULL;
+    return result;
+}
+
+/*
+ * Get an array of object paths property (e.g. NetworkManager Devices).
  * Returns newly allocated array of strings (NULL-terminated), or NULL.
  * Caller must free each string and the array itself.
  */
 static char **
-dbus_get_property_path_array(DBusConnection *conn, const char *object_path,
+dbus_get_property_path_array(DBusConnection *conn, const char *service,
+                              const char *object_path,
                               const char *interface, const char *property,
                               DBusError *err)
 {
-    DBusMessage *reply = dbus_properties_get(conn, object_path,
+    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
         interface, property, err);
     if (!reply) {
         return NULL;
@@ -279,34 +348,45 @@ dbus_get_property_path_array(DBusConnection *conn, const char *object_path,
     char **result = NULL;
     if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_ARRAY) {
         dbus_message_iter_recurse(&variant, &arr);
-        int count = 0;
-        int cap = 8;
-        result = malloc(cap * sizeof(char *));
-        if (!result) {
-            dbus_message_unref(reply);
-            return NULL;
-        }
-        while (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_OBJECT_PATH) {
-            const char *path = NULL;
-            dbus_message_iter_get_basic(&arr, &path);
-            /* keep room for the NUL terminator after every write */
-            if (count + 1 >= cap) {
-                int ncap = cap * 2;
-                char **tmp = realloc(result, ncap * sizeof(char *));
-                if (!tmp) {
-                    free_path_array(result);
-                    result = NULL;
-                    break;
-                }
-                result = tmp;
-                cap = ncap;
-            }
-            result[count++] = strdup(path);
-            dbus_message_iter_next(&arr);
-        }
-        if (result && count > 0) {
-            result[count] = NULL;
-        }
+        result = copy_object_path_array(&arr);
+    }
+
+    dbus_message_unref(reply);
+    return result;
+}
+
+/*
+ * Call a no-argument method that returns an array of object paths
+ * (e.g. UPower EnumerateDevices). Returns newly allocated array of
+ * strings (NULL-terminated), or NULL. Caller must free each string and
+ * the array itself.
+ */
+static char **
+dbus_call_path_array(DBusConnection *conn, const char *service,
+                     const char *object_path,
+                     const char *interface, const char *method,
+                     DBusError *err)
+{
+    DBusMessage *msg = dbus_message_new_method_call(
+        service, object_path, interface, method);
+    if (!msg) {
+        return NULL;
+    }
+
+    DBusMessage *reply = dbus_connection_send_with_reply_and_block(
+        conn, msg, DBUS_TIMEOUT_MS, err);
+    dbus_message_unref(msg);
+    if (!reply) {
+        return NULL;
+    }
+
+    DBusMessageIter iter, arr;
+    dbus_message_iter_init(reply, &iter);
+
+    char **result = NULL;
+    if (dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_ARRAY) {
+        dbus_message_iter_recurse(&iter, &arr);
+        result = copy_object_path_array(&arr);
     }
 
     dbus_message_unref(reply);
@@ -361,7 +441,7 @@ sysinfo_update_network(struct guibux_sysinfo *si)
 
     /* Get all devices directly from NM */
     char **all_devices = dbus_get_property_path_array(
-        si->system_bus, NM_PATH, NM_IFACE, "Devices", &err);
+        si->system_bus, NM_SERVICE, NM_PATH, NM_IFACE, "Devices", &err);
     if (dbus_error_is_set(&err)) {
         wlr_log(WLR_INFO, "sysinfo: Devices failed: %s", err.message);
         dbus_error_free(&err);
@@ -385,7 +465,7 @@ sysinfo_update_network(struct guibux_sysinfo *si)
 
         /* Get device type */
         dbus_uint32_t dev_type = dbus_get_property_uint32(
-            si->system_bus, dev_path,
+            si->system_bus, NM_SERVICE, dev_path,
             NM_DEVICE_IFACE, "DeviceType", &err);
         if (dbus_error_is_set(&err)) {
             dbus_error_free(&err);
@@ -399,7 +479,7 @@ sysinfo_update_network(struct guibux_sysinfo *si)
 
         /* Get device state - 110 = activated */
         dbus_uint32_t dev_state = dbus_get_property_uint32(
-            si->system_bus, dev_path,
+            si->system_bus, NM_SERVICE, dev_path,
             NM_DEVICE_IFACE, "State", &err);
         if (dbus_error_is_set(&err)) {
             dbus_error_free(&err);
@@ -414,7 +494,7 @@ sysinfo_update_network(struct guibux_sysinfo *si)
         any_connected = true;
 
         /* Get interface name */
-        char *iface = dbus_get_property_string(si->system_bus, dev_path,
+        char *iface = dbus_get_property_string(si->system_bus, NM_SERVICE, dev_path,
             NM_DEVICE_IFACE, "Interface", &err);
         if (dbus_error_is_set(&err)) {
             dbus_error_free(&err);
@@ -423,7 +503,7 @@ sysinfo_update_network(struct guibux_sysinfo *si)
 
         if (dev_type == 2) {
             /* WiFi: get SSID and signal */
-            char *ssid = dbus_get_property_byte_array(si->system_bus, dev_path,
+            char *ssid = dbus_get_property_byte_array(si->system_bus, NM_SERVICE, dev_path,
                 NM_WIFI_IFACE, "Ssid", &err);
             if (dbus_error_is_set(&err)) {
                 dbus_error_free(&err);
@@ -431,7 +511,7 @@ sysinfo_update_network(struct guibux_sysinfo *si)
             }
 
             dbus_uint32_t strength = dbus_get_property_uint32(
-                si->system_bus, dev_path,
+                si->system_bus, NM_SERVICE, dev_path,
                 NM_WIFI_IFACE, "Strength", &err);
             if (dbus_error_is_set(&err)) {
                 dbus_error_free(&err);
@@ -468,14 +548,113 @@ sysinfo_update_network(struct guibux_sysinfo *si)
 }
 
 /*
- * Extensible: battery via UPower (future).
+ * UPower battery query
+ */
+static const char *UPower_SERVICE = "org.freedesktop.UPower";
+static const char *UPower_IFACE = "org.freedesktop.UPower";
+static const char *UPower_PATH = "/org/freedesktop/UPower";
+static const char *UPower_DEVICE_IFACE = "org.freedesktop.UPower.Device";
+/* UPower device Type enum: 0=Unknown, 1=LinePower, 2=Battery, ... */
+#define UP_DEVICE_TYPE_BATTERY 2
+
+/*
+ * Get battery percentage from UPower via D-Bus.
+ * EnumerateDevices is a method (the root object has no Devices
+ * property); find the first device whose Type is a battery (uint32
+ * enum) and read its Percentage (double). Also reads State and the
+ * TimeToEmpty / TimeToFull estimates for the topbar tooltip.
+ * Publishes a formatted string like "85%" or empty on failure.
  */
 static void
 sysinfo_update_battery(struct guibux_sysinfo *si)
 {
-    /* TODO: Query UPower for battery percentage */
+    if (!si->system_bus) {
+        pthread_mutex_lock(&si->lock);
+        si->battery[0] = '\0';
+        si->bat_state = 0;
+        si->bat_eta_sec = 0;
+        pthread_mutex_unlock(&si->lock);
+        return;
+    }
+
+    DBusError err = DBUS_ERROR_INIT;
+    char **devices = dbus_call_path_array(
+        si->system_bus, UPower_SERVICE, UPower_PATH,
+        UPower_IFACE, "EnumerateDevices", &err);
+    if (dbus_error_is_set(&err)) {
+        dbus_error_free(&err);
+    }
+
+    int pct = -1;
+    int state = 0;
+    int eta = 0;
+    if (devices) {
+        for (int i = 0; devices[i]; i++) {
+            const char *dev_path = devices[i];
+
+            dbus_uint32_t type = dbus_get_property_uint32(
+                si->system_bus, UPower_SERVICE, dev_path,
+                UPower_DEVICE_IFACE, "Type", &err);
+            if (dbus_error_is_set(&err)) {
+                dbus_error_free(&err);
+                continue;
+            }
+            if (type != UP_DEVICE_TYPE_BATTERY) {
+                continue;
+            }
+
+            double d = dbus_get_property_double(
+                si->system_bus, UPower_SERVICE, dev_path,
+                UPower_DEVICE_IFACE, "Percentage", &err);
+            if (dbus_error_is_set(&err)) {
+                dbus_error_free(&err);
+                continue;
+            }
+            if (d < 0.0 || d > 100.0) {
+                continue;
+            }
+            pct = (int)(d + 0.5);
+
+            state = (int)dbus_get_property_uint32(
+                si->system_bus, UPower_SERVICE, dev_path,
+                UPower_DEVICE_IFACE, "State", &err);
+            if (dbus_error_is_set(&err)) {
+                dbus_error_free(&err);
+            }
+            dbus_uint32_t tte = dbus_get_property_uint32(
+                si->system_bus, UPower_SERVICE, dev_path,
+                UPower_DEVICE_IFACE, "TimeToEmpty", &err);
+            if (dbus_error_is_set(&err)) {
+                dbus_error_free(&err);
+            }
+            dbus_uint32_t ttf = dbus_get_property_uint32(
+                si->system_bus, UPower_SERVICE, dev_path,
+                UPower_DEVICE_IFACE, "TimeToFull", &err);
+            if (dbus_error_is_set(&err)) {
+                dbus_error_free(&err);
+            }
+            /* TimeToEmpty is only meaningful while discharging,
+             * TimeToFull while charging; 0 = no estimate */
+            if (state == 1) {
+                eta = (int)ttf;
+            } else if (state == 2) {
+                eta = (int)tte;
+            }
+            break;
+        }
+    }
+    free_path_array(devices);
+
     pthread_mutex_lock(&si->lock);
-    si->battery[0] = '\0';
+    if (pct >= 0) {
+        snprintf(si->battery, sizeof(si->battery), "%d%%", pct);
+        si->bat_state = state;
+        si->bat_eta_sec = eta;
+    } else {
+        si->battery[0] = '\0';
+        si->bat_state = 0;
+        si->bat_eta_sec = 0;
+    }
     pthread_mutex_unlock(&si->lock);
 }
 
@@ -554,6 +733,15 @@ sysinfo_worker(void *data)
             dbus_error_free(&err);
             wlr_log(WLR_INFO, "sysinfo: NetworkManager not found on D-Bus");
         }
+        if (dbus_bus_name_has_owner(si->system_bus, UPower_SERVICE, &err)) {
+            pthread_mutex_lock(&si->lock);
+            si->upower_available = true;
+            pthread_mutex_unlock(&si->lock);
+            wlr_log(WLR_INFO, "sysinfo: UPower active");
+        } else {
+            dbus_error_free(&err);
+            wlr_log(WLR_INFO, "sysinfo: UPower not found on D-Bus");
+        }
     }
 
     /* test hook: seed a fake network name so tests can exercise the
@@ -566,9 +754,22 @@ sysinfo_worker(void *data)
         pthread_mutex_unlock(&si->lock);
     }
 
+    /* test hook: seed a fake battery so the tooltip test can run
+     * without UPower (the test environment has no UPower, so the
+     * first real poll never overwrites it) */
+    const char *test_tooltip = getenv("GUIBUX_TEST_TOOLTIP");
+    if (test_tooltip != NULL) {
+        pthread_mutex_lock(&si->lock);
+        snprintf(si->battery, sizeof(si->battery), "85%%");
+        si->bat_state = 2; /* discharging */
+        si->bat_eta_sec = 5400; /* 1h 30m */
+        pthread_mutex_unlock(&si->lock);
+    }
+
     while (true) {
         bool running = false;
         bool nm = false;
+        bool upower = false;
         pthread_mutex_lock(&si->lock);
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -576,12 +777,16 @@ sysinfo_worker(void *data)
         pthread_cond_timedwait(&si->wake, &si->lock, &ts);
         running = si->worker_running;
         nm = si->nm_available;
+        upower = si->upower_available;
         pthread_mutex_unlock(&si->lock);
         if (!running) {
             break;
         }
         if (nm && si->system_bus) {
             sysinfo_update_network(si);
+        }
+        /* battery works without NetworkManager (UPower poll) */
+        if (upower && si->system_bus) {
             sysinfo_update_battery(si);
         }
         /* audio works without NetworkManager (pactl poll) */
@@ -604,8 +809,11 @@ sysinfo_init(struct guibux_server *server)
 
     si->system_bus = NULL;
     si->nm_available = false;
+    si->upower_available = false;
     si->network[0] = '\0';
     si->battery[0] = '\0';
+    si->bat_state = 0;
+    si->bat_eta_sec = 0;
     si->audio_available = false;
     si->volume = -1;
     si->muted = false;
@@ -635,6 +843,8 @@ sysinfo_get(struct guibux_sysinfo *si, struct guibux_sysinfo_snapshot *snap)
     pthread_mutex_lock(&si->lock);
     snprintf(snap->net, sizeof(snap->net), "%s", si->network);
     snprintf(snap->bat, sizeof(snap->bat), "%s", si->battery);
+    snap->bat_state = si->bat_state;
+    snap->bat_eta_sec = si->bat_eta_sec;
     snap->audio_available = si->audio_available;
     snap->volume = si->volume;
     snap->muted = si->muted;

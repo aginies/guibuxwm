@@ -367,6 +367,26 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.audio_test_timer, 6500);
 	}
 
+	const char *battery_test = getenv("GUIBUX_TEST_BATTERY");
+	if (battery_test != NULL) {
+		/* fire after the first sysinfo UPower poll (~5s) so the
+		 * battery indicator has been rendered */
+		server.battery_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			battery_test_run, &server);
+		wl_event_source_timer_update(server.battery_test_timer, 6500);
+	}
+
+	const char *tooltip_test = getenv("GUIBUX_TEST_TOOLTIP");
+	if (tooltip_test != NULL) {
+		/* the sysinfo worker seeds a fake battery at startup, so the
+		 * indicator is rendered by the first topbar tick (~0.5s) */
+		server.tooltip_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			tooltip_test_run, &server);
+		wl_event_source_timer_update(server.tooltip_test_timer, 2000);
+	}
+
 	const char *notify_test = getenv("GUIBUX_TEST_NOTIFY");
 	if (notify_test != NULL) {
 		server.notify_test_timer = wl_event_loop_add_timer(
@@ -471,6 +491,7 @@ int main(int argc, char *argv[]) {
 
 	sysinfo_destroy(&server);
 	notify_destroy(&server);
+	tooltip_destroy(&server);
 	screensaver_destroy(&server);
 	if (server.notify_autohide_timer != NULL) {
 		wl_event_source_remove(server.notify_autohide_timer);
@@ -513,6 +534,12 @@ int main(int argc, char *argv[]) {
 	}
 	if (server.audio_test_timer != NULL) {
 		wl_event_source_remove(server.audio_test_timer);
+	}
+	if (server.battery_test_timer != NULL) {
+		wl_event_source_remove(server.battery_test_timer);
+	}
+	if (server.tooltip_test_timer != NULL) {
+		wl_event_source_remove(server.tooltip_test_timer);
 	}
 	if (server.scroll_test_timer != NULL) {
 		wl_event_source_remove(server.scroll_test_timer);

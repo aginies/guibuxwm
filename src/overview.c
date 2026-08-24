@@ -450,6 +450,7 @@ void overview_show(struct guibux_server *server) {
 	if (ov->active) {
 		return;
 	}
+	tooltip_hide(server);
 
 	/* settle in-flight animations: the saved geometry below must be the
 	 * final one, not a mid-animation position */

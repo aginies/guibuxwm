@@ -173,8 +173,14 @@ struct guibux_server;
 struct guibux_sysinfo {
     DBusConnection *system_bus;
     bool nm_available;
+    bool upower_available;
     char network[64];
     char battery[32];
+    /* UPower State: 0=unknown 1=charging 2=discharging 3=empty 4=full */
+    int bat_state;
+    /* TimeToEmpty (discharging) / TimeToFull (charging) in seconds;
+     * 0 = UPower has no estimate */
+    int bat_eta_sec;
     /* audio (pactl poll): -1 volume = unknown */
     bool audio_available;
     int volume;
@@ -190,6 +196,8 @@ struct guibux_sysinfo {
 struct guibux_sysinfo_snapshot {
     char net[64];
     char bat[32];
+    int bat_state;
+    int bat_eta_sec;
     bool audio_available;
     int volume;
     bool muted;
@@ -245,6 +253,24 @@ struct guibux_notif_panel {
     int row_y[NOTIF_PANEL_MAX];
     int num_rows;
     int clear_x, clear_y, clear_w, clear_h;
+};
+
+/* tooltip.c - small floating text box; currently shown when hovering
+ * the topbar battery indicator (remaining / charging time) */
+struct guibux_output;
+struct guibux_tooltip {
+    bool active;
+    struct wlr_output *output;
+    struct wlr_scene_buffer *scene_node;
+    struct wlr_buffer *buffer;
+    /* box position is logical px relative to the output origin */
+    int box_x, box_y, box_w, box_h, box_scale;
+    char text[128];
+    /* hover arming: the output whose battery indicator is under the
+     * pointer, and when it was entered (ms, compared against the
+     * monotonic clock by tooltip_tick) */
+    struct guibux_output *hover_output;
+    uint32_t hover_since;
 };
 
 /* window-restore.c: last known position per app, persisted across
@@ -312,6 +338,8 @@ struct guibux_output {
     int topbar_vol_w;
     int topbar_mic_x;
     int topbar_mic_w;
+    int topbar_bat_x;
+    int topbar_bat_w;
     int topbar_notif_x;
     int topbar_notif_w;
     int topbar_ws_x[NUM_WORKSPACES + 1];
@@ -547,6 +575,7 @@ struct guibux_server {
 	struct wl_event_source *topbar_timer;
 	struct wl_event_source *topbar_test_timer;
 	struct wl_event_source *audio_test_timer;
+	struct wl_event_source *battery_test_timer;
 	struct wl_event_source *scroll_test_timer;
 	struct wl_event_source *altdrag_test_timer;
 	struct wl_event_source *workspace_test_timer;
@@ -557,6 +586,7 @@ struct guibux_server {
 	struct wl_event_source *resize_test_timer;
 	struct wl_event_source *xmondrag_test_timer;
 	struct wl_event_source *notify_test_timer;
+	struct wl_event_source *tooltip_test_timer;
 	struct wl_event_source *quit_test_timer;
 	bool psel_test_enter_sent;
 struct guibux_launcher launcher;
@@ -566,6 +596,7 @@ struct guibux_launcher launcher;
 	struct guibux_help help;
 	struct guibux_notify notify;
 	struct guibux_notif_panel notify_panel;
+	struct guibux_tooltip tooltip;
 	/* auto-hide: a new notification pops the panel (like an indicator
 	 * click); it closes after a delay unless the user interacts with it.
 	 * The D-Bus worker thread writes to notify_pipe to wake the main loop */
@@ -626,6 +657,7 @@ int outputs_sorted_by_x(struct guibux_server *server, struct wlr_output **sorted
 
 struct guibux_toplevel *topbar_win_at(struct guibux_output *o, double lx, double ly);
 bool topbar_network_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
+bool topbar_battery_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
 /* 0 = none, 1 = volume, 2 = mic */
 int topbar_audio_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
 
@@ -702,6 +734,7 @@ bool topbar_workspace_at(struct guibux_server *server, double lx, double ly, str
 int topbar_tick(void *data);
 int topbar_test_run(void *data);
 int audio_test_run(void *data);
+int battery_test_run(void *data);
 int scroll_test_run(void *data);
 int alt_drag_test_run(void *data);
 int xmondrag_test_run(void *data);
@@ -715,6 +748,17 @@ void set_color(cairo_t *cr, uint32_t c);
 void topbar_rounded_rect(cairo_t *cr, double x, double y,
 	double w, double h, double r);
 bool topbar_notif_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
+
+/* tooltip.c */
+void tooltip_hide(struct guibux_server *server);
+bool tooltip_contains(struct guibux_server *server, double lx, double ly);
+/* arm/disarm the hover from pointer motion; called on every move */
+void tooltip_update_hover(struct guibux_server *server, uint32_t time);
+/* show the armed tooltip once the hover delay has elapsed; called
+ * from topbar_tick */
+void tooltip_tick(struct guibux_server *server);
+void tooltip_destroy(struct guibux_server *server);
+int tooltip_test_run(void *data);
 
 /* notify.c */
 void notify_init(struct guibux_server *server);
