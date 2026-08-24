@@ -98,7 +98,7 @@ Run:
 ## Keybindings
 
 `Mod` is the Super key. All bindings can be changed via the config file
-(see [Keybinds](../docs/keybindings.md)).
+(see [Keybinds](docs/keybindings.md)).
 
 | Shortcut | Action |
 |---|---|
@@ -173,7 +173,7 @@ selected command, with any arguments you typed after the first word appended
 (e.g. type `alac -w`, select `alacritty`, Enter runs `alacritty -w`). With
 no match, Enter runs exactly what you typed.
 
-Preferred apps configured with `preferred_app1..5` (see [Config](../docs/config.md#preferred-apps))
+Preferred apps configured with `preferred_app1..5` (see [Config](docs/config.md#preferred-apps))
 are always listed above the input line, up to 5. Each preferred app can
 optionally include an icon (`Name;command;icon-name`). Icons are resolved
 from the configured `icon_theme` (or the system GTK icon theme, falling back
@@ -262,7 +262,7 @@ are logged and ignored. Format: one `key = value` per line, `#` comments.
 A sample with all defaults is in [`config/guibuxwm`](config/guibuxwm) — copy
 it to `~/.config/guibuxwm/config` and edit.
 
-See [Configuration](../docs/config.md) for the full reference.
+See [Configuration](docs/config.md) for the full reference.
 
 ### Command-line flags
 
@@ -285,7 +285,7 @@ guibuxwm [-t terminal command] [-k keyboard layout] [-c config file]
 | `GUIBUX_XKB_LAYOUT` | Keyboard layout (overridden by `-k` and config `xkb_layout`) | `GUIBUX_XKB_LAYOUT="fr"` |
 | `XKB_DEFAULT_LAYOUT` | Keyboard layout, standard xkb env (lowest priority) | `XKB_DEFAULT_LAYOUT="fr,us"` |
 | `GUIBUX_OUTPUTS` | Manual monitor arrangement, see below | see below |
-| `GUIBUX_TEST_EXTRA_OUTPUTS` | Test-only, see [Testing](../docs/testing.md) | `GUIBUX_TEST_EXTRA_OUTPUTS=1` |
+| `GUIBUX_TEST_EXTRA_OUTPUTS` | Test-only, see [Testing](docs/testing.md) | `GUIBUX_TEST_EXTRA_OUTPUTS=1` |
 
 Terminal default: `gnome-terminal`. Keyboard layout default: system default
 (usually `us`).
@@ -392,7 +392,7 @@ The compositor can also be run headless directly for smoke testing:
 WLR_BACKENDS=headless WLR_RENDERER=gles2 ./build/guibuxwm
 ```
 
-See [Testing](../docs/testing.md) for full details.
+See [Testing](docs/testing.md) for full details.
 
 ## License
 
