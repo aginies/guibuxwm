@@ -438,12 +438,10 @@ sysinfo_worker(void *data)
         bool running = false;
         bool nm = false;
         pthread_mutex_lock(&si->lock);
-        while (si->worker_running) {
-            struct timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            ts.tv_sec += SYSINFO_INTERVAL_SEC;
-            pthread_cond_timedwait(&si->wake, &si->lock, &ts);
-        }
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        ts.tv_sec += SYSINFO_INTERVAL_SEC;
+        pthread_cond_timedwait(&si->wake, &si->lock, &ts);
         running = si->worker_running;
         nm = si->nm_available;
         pthread_mutex_unlock(&si->lock);
