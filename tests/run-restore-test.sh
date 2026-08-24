@@ -9,6 +9,8 @@
 # Phase 4: saved output has the same name but a different layout box
 #          (replugged monitor) -> compositor must NOT restore.
 # Phase 5: saved output name does not exist -> compositor must NOT restore.
+# Phase 6: app_id matches the configured terminal (term_app_id) ->
+#          compositor must NOT save its position.
 # The compositor log is the verdict.
 # State file line: app_id|output|box_x|box_y|workspace|x|y|w|h
 set -u
@@ -26,7 +28,9 @@ log2=$(mktemp)
 log3=$(mktemp)
 log4=$(mktemp)
 log5=$(mktemp)
-trap 'rm -rf "$state_home" "$cfg" "$log1" "$log2" "$log3" "$log4" "$log5"' EXIT
+log6=$(mktemp)
+cfg_term=$(mktemp)
+trap 'rm -rf "$state_home" "$cfg" "$cfg_term" "$log1" "$log2" "$log3" "$log4" "$log5" "$log6"' EXIT
 
 start_comp() {
   local log=$1
@@ -211,6 +215,53 @@ if grep -q "restore: '$APP' ->" "$log5"; then
   exit 1
 fi
 echo "PHASE5 OK: missing monitor skipped, cascade placement"
+
+echo "=== phase 6: configured terminal (term_app_id) is not saved ==="
+rm -f "$state_file"
+echo "term = some-other-terminal" >"$cfg_term"
+echo "term_app_id = $APP" >>"$cfg_term"
+GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TERM=true \
+  XDG_STATE_HOME="$state_home" WLR_RENDERER=gles2 \
+  "$COMP" -c "$cfg_term" >"$log6" 2>&1 &
+comp6=$!
+wd=""
+for i in $(seq 1 50); do
+  wd=$(grep -oP 'WAYLAND_DISPLAY=\K\S+' "$log6" | head -1)
+  [ -n "$wd" ] && break
+  sleep 0.1
+done
+if [ -z "$wd" ]; then
+  echo "NO WAYLAND_DISPLAY (phase 6)"
+  kill $comp6 2>/dev/null
+  cat "$log6"
+  exit 1
+fi
+sleep 0.5
+WAYLAND_DISPLAY=$wd "$CLIENT"
+rc6=$?
+kill $comp6 2>/dev/null
+wait $comp6 2>/dev/null
+if [ $rc6 -ne 0 ]; then
+  echo "FAIL: phase 6 client"
+  exit 1
+fi
+sleep 0.3
+if ! grep -q "restore: terminal app_id '$APP' (term_app_id)" "$log6"; then
+  echo "FAIL: term_app_id was not picked up"
+  echo "--- compositor log ---"; cat "$log6"
+  exit 1
+fi
+if grep -q "restore: saved '$APP'" "$log6"; then
+  echo "FAIL: terminal position was saved"
+  echo "--- compositor log ---"; cat "$log6"
+  exit 1
+fi
+if [ -f "$state_file" ] && grep -q "$APP" "$state_file"; then
+  echo "FAIL: terminal entry present in state file"
+  cat "$state_file"
+  exit 1
+fi
+echo "PHASE6 OK: terminal excluded from restore"
 
 echo "PASS"
 exit 0

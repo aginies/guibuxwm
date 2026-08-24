@@ -145,6 +145,8 @@ bool parse_keybind(struct guibux_server *server, const char *value) {
 		action = GUIBUX_ACT_BRIGHTNESS_DOWN;
 	} else if (!strcmp(action_str, "outputs-apply")) {
 		action = GUIBUX_ACT_OUTPUTS_APPLY;
+	} else if (!strcmp(action_str, "outputs-panel")) {
+		action = GUIBUX_ACT_OUTPUTS_PANEL;
 	} else {
 		wlr_log(WLR_ERROR, "config: bad keybind '%s' (unknown action '%s')",
 			value, action_str);
@@ -266,6 +268,10 @@ void load_config(struct guibux_server *server, const char *path) {
 			free(server->term_cmd);
 			server->term_cmd = strdup(val);
 			wlr_log(WLR_INFO, "config: term = %s", val);
+		} else if (!strcmp(key, "term_app_id")) {
+			free(server->term_app_id);
+			server->term_app_id = strdup(val);
+			wlr_log(WLR_INFO, "config: term_app_id = %s", val);
 		} else if (!strcmp(key, "xkb_layout")) {
 			free(server->xkb_layout);
 			server->xkb_layout = strdup(val);

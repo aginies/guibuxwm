@@ -572,6 +572,7 @@ struct guibux_server {
 
 	int cascade;
 	char *term_cmd;
+	char *term_app_id;  /* Wayland app_id of the terminal; NULL = derive from term_cmd */
 	char *xkb_layout;
 	char *xkb_variant;
 	char *xkb_options;

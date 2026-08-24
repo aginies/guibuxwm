@@ -73,6 +73,46 @@ static void restore_write_file(struct guibux_server *server) {
 	fclose(f);
 }
 
+// ---------------------------------------------------------------------------
+// Terminal detection: the basename of the first token of `term`, or the
+// explicit `term_app_id` config key when set (the command name and the
+// Wayland app_id differ, e.g. gnome-terminal vs org.gnome.Terminal)
+// ---------------------------------------------------------------------------
+
+void restore_derive_terminal_id(struct guibux_server *server) {
+	if (server->term_app_id != NULL) {
+		server->terminal_app_id = strdup(server->term_app_id);
+		wlr_log(WLR_INFO, "restore: terminal app_id '%s' (term_app_id)",
+			server->terminal_app_id);
+		return;
+	}
+	if (server->term_cmd == NULL) {
+		return;
+	}
+	char cmd[256];
+	snprintf(cmd, sizeof(cmd), "%s", server->term_cmd);
+	char *space = strchr(cmd, ' ');
+	if (space != NULL) {
+		*space = '\0';
+	}
+	char *slash = strrchr(cmd, '/');
+	server->terminal_app_id = strdup(slash != NULL ? slash + 1 : cmd);
+	wlr_log(WLR_INFO, "restore: terminal app_id '%s'",
+		server->terminal_app_id);
+}
+
+static bool restore_is_terminal(struct guibux_server *server,
+		const char *app_id) {
+	if (server->terminal_app_id == NULL || app_id == NULL ||
+			app_id[0] == '\0') {
+		return false;
+	}
+	/* exact or prefix match, like toplevel_for_app: the terminal's
+	 * app_id may carry a suffix (gnome-terminal vs gnome-terminal-server) */
+	size_t len = strlen(server->terminal_app_id);
+	return strncasecmp(app_id, server->terminal_app_id, len) == 0;
+}
+
 void restore_load(struct guibux_server *server) {
 	char path[PATH_MAX];
 	restore_state_path(path, sizeof(path));
@@ -116,6 +156,13 @@ void restore_load(struct guibux_server *server) {
 			wlr_log(WLR_ERROR, "restore: bad values in '%s'", line);
 			continue;
 		}
+		if (restore_is_terminal(server, app_id)) {
+			/* the terminal is excluded: also purges stale entries
+			 * saved before the exclusion (or a term_app_id change) */
+			wlr_log(WLR_INFO, "restore: skipping terminal entry '%s'",
+				app_id);
+			continue;
+		}
 		/* one entry per app: a newer line for the same app wins */
 		int idx = -1;
 		for (int i = 0; i < server->window_restore.count; i++) {
@@ -152,38 +199,6 @@ void restore_load(struct guibux_server *server) {
 
 void restore_free(struct guibux_server *server) {
 	server->window_restore.count = 0;
-}
-
-// ---------------------------------------------------------------------------
-// Terminal detection: the basename of the first token of `term`
-// ---------------------------------------------------------------------------
-
-void restore_derive_terminal_id(struct guibux_server *server) {
-	if (server->term_cmd == NULL) {
-		return;
-	}
-	char cmd[256];
-	snprintf(cmd, sizeof(cmd), "%s", server->term_cmd);
-	char *space = strchr(cmd, ' ');
-	if (space != NULL) {
-		*space = '\0';
-	}
-	char *slash = strrchr(cmd, '/');
-	server->terminal_app_id = strdup(slash != NULL ? slash + 1 : cmd);
-	wlr_log(WLR_INFO, "restore: terminal app_id '%s'",
-		server->terminal_app_id);
-}
-
-static bool restore_is_terminal(struct guibux_server *server,
-		const char *app_id) {
-	if (server->terminal_app_id == NULL || app_id == NULL ||
-			app_id[0] == '\0') {
-		return false;
-	}
-	/* exact or prefix match, like toplevel_for_app: the terminal's
-	 * app_id may carry a suffix (gnome-terminal vs gnome-terminal-server) */
-	size_t len = strlen(server->terminal_app_id);
-	return strncasecmp(app_id, server->terminal_app_id, len) == 0;
 }
 
 // ---------------------------------------------------------------------------

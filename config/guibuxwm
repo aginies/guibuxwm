@@ -7,6 +7,11 @@
 # terminal command started by Mod+Return
 term = gnome-terminal
 
+# Wayland app_id of the terminal: excluded from window position restore.
+# Defaults to the command name from `term`; GNOME Terminal reports
+# org.gnome.Terminal, not gnome-terminal.
+term_app_id = org.gnome.Terminal
+
 # preferred apps shown above the command box (Mod+e) prompt, up to 5.
 # Format: Name;command[;icon] — icon is a theme icon name or an
 # absolute path; without it the command name is used. A missing

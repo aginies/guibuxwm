@@ -29,6 +29,24 @@ term = foot
 
 ---
 
+### `term_app_id`
+
+Wayland app_id of the terminal, used to exclude it from window position
+restore (`restore_positions`). The command name from `term` is not always
+the app_id the terminal reports (GNOME Terminal runs as `gnome-terminal`
+but reports `org.gnome.Terminal`), so set this key when the exclusion does
+not match. Without it, the basename of the first word of `term` is used.
+
+**Default:** derived from `term`
+
+**Example:**
+
+```
+term_app_id = org.gnome.Terminal
+```
+
+---
+
 ### `preferred_app1..5`
 
 Preferred apps shown above the command box (`Mod+e`) prompt, up to 5.
@@ -433,7 +451,7 @@ window_open_effect = slide
 ### `restore_positions`
 
 Remember each app's last monitor, workspace, position and size and restore
-them on the next launch. The terminal is excluded.
+them on the next launch. The terminal is excluded (see `term_app_id`).
 
 The state is a plain text file, one line per app
 (`app_id|output|box_x|box_y|workspace|x|y|w|h`), stored at
