@@ -341,6 +341,24 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 		}
 	}
 	if (event->state == WL_POINTER_BUTTON_STATE_RELEASED) {
+		if (server->cursor_mode == GUIBUX_CURSOR_MOVE &&
+				server->grabbed_toplevel != NULL) {
+			struct guibux_toplevel *t = server->grabbed_toplevel;
+			struct wlr_output *new_wlr = toplevel_output_for(t);
+			struct guibux_output *new_o = guibux_output_for(server, new_wlr);
+			if (new_o != NULL && t->output != new_o) {
+				struct guibux_output *old_o = t->output;
+				t->output = new_o;
+				t->workspace = new_o->current_workspace;
+				if (new_o->tile_modes[new_o->current_workspace] != GUIBUX_TILE_FREE) {
+					retile_output(new_o);
+				}
+				if (old_o != NULL &&
+						old_o->tile_modes[old_o->current_workspace] != GUIBUX_TILE_FREE) {
+					retile_output(old_o);
+				}
+			}
+		}
 		/* a press consumed by the WM (Mod+drag, launcher) was never
 		 * forwarded; don't send the client a release for it */
 		if (server->button_consumed != event->button) {
