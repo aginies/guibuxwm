@@ -45,4 +45,4 @@ See [Testing](docs/testing.md) for details.
 
 ## License
 
-MIT. Derived from tinywl, part of wlroots (MIT).
+MIT
