@@ -188,7 +188,7 @@ color_bg = #1e1e2e
 
 ### `color_border`
 
-Topbar bottom border / launcher border.
+Topbar bottom border, topbar separators, launcher border, and panel borders.
 
 **Default:** `#45475a`
 
