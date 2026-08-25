@@ -642,7 +642,8 @@ static void output_sync_overlays(struct guibux_output *o) {
 		if (o->bg_node->node.x != box.x || o->bg_node->node.y != box.y) {
 			wlr_scene_node_set_position(&o->bg_node->node, box.x, box.y);
 		}
-		if (o->bg_w != box.width || o->bg_h != box.height) {
+		if (o->bg_w != box.width || o->bg_h != box.height ||
+			o->bg_scale != o->wlr_output->scale) {
 			background_render(o);
 		}
 	}

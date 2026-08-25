@@ -440,7 +440,7 @@ struct guibux_output {
     int topbar_ws_cell_w;
     struct wlr_scene_buffer *bg_node;
     struct wlr_buffer *bg_ws_buffers[NUM_WORKSPACES];
-    int bg_w, bg_h;
+    int bg_w, bg_h, bg_scale;
     struct wlr_scene_rect *overview_dim;
     struct wlr_scene_buffer *overview_ws_col_node;
     struct wlr_buffer *overview_ws_col_buf;

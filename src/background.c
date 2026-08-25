@@ -228,11 +228,14 @@ void background_render(struct guibux_output *o) {
 		wlr_scene_node_set_position(&o->bg_node->node, box.x, box.y);
 	}
 
-	/* output resized: all cached workspace buffers are stale */
-	if (o->bg_w != box.width || o->bg_h != box.height) {
+	/* output resized or rescaled: all cached workspace buffers are stale */
+	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+	if (o->bg_w != box.width || o->bg_h != box.height ||
+			o->bg_scale != scale) {
 		background_drop_ws_buffers(o);
 		o->bg_w = box.width;
 		o->bg_h = box.height;
+		o->bg_scale = scale;
 	}
 
 	/* already rendered for this workspace: just swap the buffer in */
