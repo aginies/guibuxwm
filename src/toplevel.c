@@ -821,15 +821,44 @@ static void xsurface_request_configure(struct wl_listener *listener, void *data)
 		 * on every ConfigureNotify */
 		return;
 	}
-	/* free mode: accept the app's requested geometry */
+	/* free mode: accept the app's requested geometry. X11 apps don't
+	 * know about the topbar and may re-assert a position at the top of
+	 * the screen (e.g. on activation), sliding a snapped window under
+	 * the bar so its visible height loses topbar_height on every focus:
+	 * keep the requested top edge inside the work area */
+	int nx = (int)toplevel->scene_tree->node.x;
+	int ny = (int)toplevel->scene_tree->node.y;
 	if (event->mask & XCB_CONFIG_WINDOW_X) {
-		toplevel->scene_tree->node.x = event->x;
+		nx = event->x;
 	}
 	if (event->mask & XCB_CONFIG_WINDOW_Y) {
-		toplevel->scene_tree->node.y = event->y;
+		ny = event->y;
+		/* the request may move the window to another output: clamp
+		 * against the work area of the output under the new center */
+		struct wlr_output *target = wlr_output_layout_output_at(
+			toplevel->server->output_layout,
+			nx + event->width / 2, ny + event->height / 2);
+		if (target != NULL) {
+			struct wlr_box box;
+			wlr_output_layout_get_box(toplevel->server->output_layout,
+				target, &box);
+			if (ny < box.y + toplevel->server->topbar_height) {
+				ny = box.y + toplevel->server->topbar_height;
+			}
+		}
 	}
-	wlr_xwayland_surface_configure(toplevel->xsurface,
-		toplevel->scene_tree->node.x, toplevel->scene_tree->node.y,
+	toplevel->scene_tree->node.x = nx;
+	toplevel->scene_tree->node.y = ny;
+	/* skip no-op configures: an app that re-asserts its position on
+	 * every ConfigureNotify would otherwise loop (it requests the
+	 * pre-clamp position, we answer with the clamped one, it requests
+	 * again, ...) */
+	if (nx == toplevel->xsurface->x && ny == toplevel->xsurface->y &&
+			event->width == toplevel->xsurface->width &&
+			event->height == toplevel->xsurface->height) {
+		return;
+	}
+	wlr_xwayland_surface_configure(toplevel->xsurface, nx, ny,
 		event->width, event->height);
 }
 
