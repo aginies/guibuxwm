@@ -39,7 +39,25 @@ wait $comp 2>/dev/null
 grep -E "topbar-test" "$log"
 if grep -q "topbar-test: OK" "$log"; then
   rm -f "$log" "$cfg"
-  exit 0
+  # third run: seed 3 fake toplevels on workspace 2 and verify the
+  # occupancy dot count matches
+  log=$(mktemp)
+  GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_TOPBAR=1 \
+    GUIBUX_TEST_WS_DOTS_SEED=2:3 GUIBUX_TEST_WS_DOTS=2:3 \
+    GUIBUX_TERM=true WLR_RENDERER=gles2 "$COMP" >"$log" 2>&1 &
+  comp=$!
+  sleep 4
+  kill $comp 2>/dev/null
+  wait $comp 2>/dev/null
+  grep -E "topbar-test" "$log"
+  if grep -q "topbar-test: OK" "$log"; then
+    rm -f "$log"
+    exit 0
+  fi
+  echo "topbar-test: FAILED (ws dots run)"
+  cat "$log"
+  rm -f "$log"
+  exit 1
 fi
 echo "topbar-test: FAILED (disabled items run)"
 cat "$log"

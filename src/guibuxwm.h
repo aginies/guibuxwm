@@ -434,6 +434,12 @@ struct guibux_output {
     int topbar_mic_w;
     int topbar_bat_x;
     int topbar_bat_w;
+    /* last rendered battery values: pct (-1 = none), UPower state */
+    int topbar_bat_pct;
+    int topbar_bat_state;
+    /* occupancy dots: number of (non-fullscreen) windows per workspace,
+     * rendered as small dots under the workspace number */
+    int topbar_ws_dots[NUM_WORKSPACES + 1];
     int topbar_notif_x;
     int topbar_notif_w;
     int topbar_ws_x[NUM_WORKSPACES + 1];
@@ -914,6 +920,7 @@ void topbar_win_remove(struct guibux_output *o, struct guibux_toplevel *toplevel
 bool topbar_workspace_at(struct guibux_server *server, double lx, double ly, struct guibux_output **output, int *ws);
 int topbar_tick(void *data);
 int topbar_test_run(void *data);
+void topbar_seed_fake_toplevels(struct guibux_server *server);
 int audio_test_run(void *data);
 int battery_test_run(void *data);
 int scroll_test_run(void *data);

@@ -436,21 +436,20 @@ static void draw_bell(cairo_t *cr, double x, double cy, double s,
 	cairo_fill(cr);
 }
 
-/* indicator layout (logical px): 8 pad | 12 bell | 6 gap | count | 8 pad */
-#define NOTIF_IND_PAD 8
+/* indicator layout (logical px): 4 pad | 12 bell | 6 gap | count | 4 pad */
+#define NOTIF_IND_PAD 4
 #define NOTIF_IND_BELL 12
 #define NOTIF_IND_GAP 6
 #define NOTIF_IND_DIGIT_MAX 3
 #define NOTIF_IND_DIGIT_CAP 100
 
-/* worst-case width: the digit count is capped at NOTIF_IND_DIGIT_MAX
- * (larger counts render as "NNN+"); reserving the maximum keeps the
- * indicator's cell a constant size so the clock (and every item to its
- * right) never shifts when the count changes */
+/* worst-case width: the count renders as "NNN" (up to 3 digits) or "100+"
+ * when capped; reserving the maximum keeps the cell a constant size so the
+ * clock (and every item to its right) never shifts when the count changes */
 int notify_indicator_width(FT_Face face, int scale, int count) {
 	(void)count;
 	char cnt[16];
-	snprintf(cnt, sizeof(cnt), "%d", NOTIF_IND_DIGIT_CAP * 10);
+	snprintf(cnt, sizeof(cnt), "%d+", NOTIF_IND_DIGIT_CAP);
 	return 2 * NOTIF_IND_PAD + NOTIF_IND_BELL + NOTIF_IND_GAP +
 		guibux_text_width(face, cnt) / scale;
 }

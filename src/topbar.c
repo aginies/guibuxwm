@@ -235,11 +235,22 @@ static void topbar_items_prepare(struct topbar_items *ctx) {
 		ctx->mic[0] = '\0';
 	}
 
-	/* battery label: "BAT NN%" */
+	/* battery label: "BAT NN%"; remember the parsed pct + state for
+	 * the color-state render and the test hooks */
 	if (bat[0] != '\0') {
 		snprintf(ctx->batbuf, sizeof(ctx->batbuf), "BAT %s", bat);
+		int pct = 0;
+		const char *p = bat;
+		while (*p >= '0' && *p <= '9') {
+			pct = pct * 10 + (*p - '0');
+			p++;
+		}
+		o->topbar_bat_pct = pct;
+		o->topbar_bat_state = ctx->snap.bat_state;
 	} else {
 		ctx->batbuf[0] = '\0';
+		o->topbar_bat_pct = -1;
+		o->topbar_bat_state = 0;
 	}
 
 	ctx->notif_count = notify_count(&server->notify);
@@ -256,14 +267,34 @@ static void topbar_items_prepare(struct topbar_items *ctx) {
 	o->topbar_mic_muted = ctx->snap.mic_muted;
 }
 
+/* 3px vertical separator with a vertical alpha gradient (transparent at
+ * both ends, solid in the middle) so it reads as a soft divider instead
+ * of a hard line; x/y/h in logical units */
+static void topbar_draw_separator(cairo_t *cr, int x, int y, int h,
+		int scale, uint32_t color) {
+	cairo_pattern_t *grad = cairo_pattern_create_linear(
+		0, y * scale, 0, (y + h) * scale);
+	cairo_pattern_add_color_stop_rgba(grad, 0.0,
+		((color >> 16) & 0xFF) / 255.0,
+		((color >> 8) & 0xFF) / 255.0,
+		(color & 0xFF) / 255.0, 0.0);
+	cairo_pattern_add_color_stop_rgba(grad, 0.5,
+		((color >> 16) & 0xFF) / 255.0,
+		((color >> 8) & 0xFF) / 255.0,
+		(color & 0xFF) / 255.0, 1.0);
+	cairo_pattern_add_color_stop_rgba(grad, 1.0,
+		((color >> 16) & 0xFF) / 255.0,
+		((color >> 8) & 0xFF) / 255.0,
+		(color & 0xFF) / 255.0, 0.0);
+	cairo_set_source(cr, grad);
+	cairo_rectangle(cr, x * scale, y * scale, 3 * scale, h * scale);
+	cairo_fill(cr);
+	cairo_pattern_destroy(grad);
+}
+
 static void topbar_item_draw_separator(struct topbar_items *ctx, int x, int gap) {
-	cairo_set_source_rgb(ctx->cr,
-		((ctx->server->color_border >> 16) & 0xFF) / 255.0,
-		((ctx->server->color_border >> 8) & 0xFF) / 255.0,
-		(ctx->server->color_border & 0xFF) / 255.0);
-	cairo_rectangle(ctx->cr, (int)((x + gap / 2.0) * ctx->scale) - (int)(ctx->scale),
-		ctx->cell_y * ctx->scale, 2 * ctx->scale, ctx->cell_h * ctx->scale);
-	cairo_fill(ctx->cr);
+	topbar_draw_separator(ctx->cr, x + gap / 2, ctx->cell_y, ctx->cell_h,
+		ctx->scale, ctx->server->color_border);
 }
 
 /* plan + draw one indicator at the current ctx->ind_x; returns the
@@ -332,9 +363,18 @@ static int topbar_item_render(struct topbar_items *ctx, int id) {
 			o->topbar_bat_x = x;
 			o->topbar_bat_w = guibux_text_width(server->launcher.face,
 				ctx->batbuf) / ctx->scale;
+			/* color states: low charge red, medium orange, else the
+			 * normal topbar text color; charging stays normal */
+			uint32_t bc = server->color_topbar_text;
+			if (o->topbar_bat_state != 1) {
+				if (o->topbar_bat_pct <= 20) {
+					bc = 0xef4444;
+				} else if (o->topbar_bat_pct <= 50) {
+					bc = 0xf59e0b;
+				}
+			}
 			launcher_draw_text_on_surface(ctx->cs, server->launcher.face,
-				ctx->batbuf, x * ctx->scale, ctx->baseline,
-				server->color_topbar_text);
+				ctx->batbuf, x * ctx->scale, ctx->baseline, bc);
 			x += o->topbar_bat_w;
 		}
 		break;
@@ -357,7 +397,21 @@ static int topbar_item_render(struct topbar_items *ctx, int id) {
 	case TOPBAR_ITEM_CLOCK:
 		break;
 	}
-	ctx->ind_x = x + TOPBAR_ITEM_PAD;
+	/* no trailing pad when a separator follows: the separator's own
+	 * margins (6+7) provide the spacing, so the item keeps a symmetric
+	 * gap on both sides instead of pad + margin on the right */
+	bool next_real = false;
+	for (int j = 0; j < server->topbar_item_count; j++) {
+		if (server->topbar_items[j] == id) {
+			for (int k = j + 1; k < server->topbar_item_count; k++) {
+				if (server->topbar_items[k] != TOPBAR_ITEM_CLOCK) {
+					next_real = true;
+				}
+			}
+			break;
+		}
+	}
+	ctx->ind_x = x + (next_real ? 0 : TOPBAR_ITEM_PAD);
 	return ctx->ind_x;
 }
 
@@ -446,6 +500,10 @@ void topbar_render(struct guibux_output *o) {
 
 	set_color(cr, server->color_topbar_bg);
 	cairo_paint(cr);
+	/* faint inner top highlight: a raised edge against the wallpaper */
+	cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.06);
+	cairo_rectangle(cr, 0, 0, w, scale);
+	cairo_fill(cr);
 	set_color(cr, server->color_border);
 	cairo_rectangle(cr, 0, h - scale, w, scale);
 	cairo_fill(cr);
@@ -480,7 +538,7 @@ void topbar_render(struct guibux_output *o) {
 		(TOPBAR_PAD + badge_pad) * scale, baseline,
 		server->color_topbar_text);
 
-	int cell_w = guibux_text_width(server->launcher.face, "9") / scale + 8;
+	int cell_w = guibux_text_width(server->launcher.face, "9") / scale + 16;
 	o->topbar_ws_cell_w = cell_w;
 	int x = TOPBAR_PAD + badge_w + 12;
 	for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {
@@ -493,23 +551,53 @@ void topbar_render(struct guibux_output *o) {
 				cell_w * scale, cell_h * scale, 4 * scale);
 			cairo_fill(cr);
 			launcher_draw_text_on_surface(cs, server->launcher.face, num,
-				(x + 4) * scale, baseline, server->color_text);
+				(x + 8) * scale, baseline, server->color_text);
 		} else {
 			launcher_draw_text_on_surface(cs, server->launcher.face, num,
-				(x + 4) * scale, baseline, server->color_topbar_text);
+				(x + 8) * scale, baseline, server->color_topbar_text);
 		}
 		x += cell_w;
 	}
 
+	/* occupancy dots: one small dot per non-fullscreen window on the
+	 * workspace (this monitor), up to 4, under the workspace number */
+	{
+		int dot_r = 3;
+		int dot_gap = 2;
+		struct guibux_toplevel *dt;
+		for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {
+			int n = 0;
+			wl_list_for_each(dt, &server->toplevels, link) {
+				if (dt->is_fullscreen)
+					continue;
+				if (dt->workspace == ws &&
+						toplevel_output_for(dt) == o->wlr_output)
+					n++;
+			}
+			o->topbar_ws_dots[ws] = n;
+			if (n == 0)
+				continue;
+			int shown = n > 4 ? 4 : n;
+			int total = shown * (2 * dot_r) + (shown - 1) * dot_gap;
+			int dx0 = o->topbar_ws_x[ws] + cell_w / 2 - total / 2;
+			int dy = cell_y + cell_h - dot_r - 2;
+			if (ws == o->current_workspace) {
+				set_color(cr, server->color_text);
+			} else {
+				set_color_alpha(cr, server->color_topbar_text, 0.5);
+			}
+			for (int d = 0; d < shown; d++) {
+				cairo_arc(cr, (dx0 + d * (2 * dot_r + dot_gap) + dot_r) * scale,
+					(dy + dot_r) * scale, dot_r * scale, 0, 2 * M_PI);
+				cairo_fill(cr);
+			}
+		}
+	}
+
 	/* vertical separator after workspaces */
 	int sep_gap = 12;
-	cairo_set_source_rgb(cr,
-		((server->color_border >> 16) & 0xFF) / 255.0,
-		((server->color_border >> 8) & 0xFF) / 255.0,
-		(server->color_border & 0xFF) / 255.0);
-	cairo_rectangle(cr, (int)((x + sep_gap / 2) * scale) - (int)(scale),
-		cell_y * scale, 2 * scale, cell_h * scale);
-	cairo_fill(cr);
+	topbar_draw_separator(cr, x + sep_gap / 2, cell_y, cell_h, scale,
+		server->color_border);
 
 	/* render window titles between workspaces and date */
 	int win_x = x + sep_gap;
@@ -539,14 +627,14 @@ void topbar_render(struct guibux_output *o) {
 	 * groups). The prefix "A2: " (monitor letter + workspace number)
 	 * disambiguates cross-monitor entries */
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->is_fullscreen)
+		if (t->is_fullscreen || (t->xdg_toplevel == NULL && t->xsurface == NULL))
 			continue;
 		if (toplevel_output_for(t) == o->wlr_output &&
 				nwins < TOPBAR_WIN_MAX)
 			wins[nwins++] = t;
 	}
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->is_fullscreen)
+		if (t->is_fullscreen || (t->xdg_toplevel == NULL && t->xsurface == NULL))
 			continue;
 		if (toplevel_output_for(t) != o->wlr_output &&
 				nwins < TOPBAR_WIN_MAX)
@@ -556,7 +644,7 @@ void topbar_render(struct guibux_output *o) {
 	 * many cells (only when there are windows on both sides) */
 	int own_count = 0;
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->is_fullscreen)
+		if (t->is_fullscreen || (t->xdg_toplevel == NULL && t->xsurface == NULL))
 			continue;
 		if (toplevel_output_for(t) == o->wlr_output)
 			own_count++;
@@ -641,10 +729,22 @@ void topbar_render(struct guibux_output *o) {
 			break;
 		}
 		if (seg > 0) {
-			seg += 2 * TOPBAR_ITEM_PAD;
+			/* trailing pad is dropped when a separator follows (the
+			 * separator's margins provide the spacing), so count only
+			 * the leading pad here */
+			seg += TOPBAR_ITEM_PAD;
+			bool has_next = false;
+			for (int k = i + 1; k < server->topbar_item_count; k++) {
+				if (server->topbar_items[k] != TOPBAR_ITEM_CLOCK) {
+					has_next = true;
+				}
+			}
+			if (!has_next) {
+				seg += TOPBAR_ITEM_PAD;
+			}
 			if (ind_w > 0) {
-				/* separator between groups: 5px + 2px line + 5px */
-				ind_w += 12;
+				/* separator between groups: 8px + 3px line + 9px */
+				ind_w += 20;
 			}
 			ind_w += seg;
 		}
@@ -653,21 +753,13 @@ void topbar_render(struct guibux_output *o) {
 	int date_w = ctx.clock_enabled ?
 		guibux_text_width(server->launcher.face, o->topbar_right) / scale : 0;
 	int date_x = w / scale - TOPBAR_PAD - date_w;
-	int ind_start = date_x - (ind_w > 0 ? 12 : 0) - ind_w;
+	/* the gap before the clock holds the separator + a clear margin on
+	 * both sides (8px + 3px line + 9px) */
+	int date_gap = (ind_w > 0 && ctx.clock_enabled) ? 20 : 0;
+	int ind_start = date_x - date_gap - ind_w;
 	int win_end = ind_start - sep_gap;
 	if (win_end < win_x)
 		win_end = win_x;
-
-	/* vertical separator before indicators */
-	if (win_x < win_end - sep_gap) {
-		cairo_set_source_rgb(cr,
-			((server->color_border >> 16) & 0xFF) / 255.0,
-			((server->color_border >> 8) & 0xFF) / 255.0,
-			(server->color_border & 0xFF) / 255.0);
-		cairo_rectangle(cr, (int)((win_end + sep_gap / 2) * scale) - (int)(scale),
-			cell_y * scale, 2 * scale, cell_h * scale);
-		cairo_fill(cr);
-	}
 
 	/* calculate max width per window to fit all in available space */
 	int avail = win_end - win_x;
@@ -766,28 +858,25 @@ void topbar_render(struct guibux_output *o) {
 		win_x += cell_w + TOPBAR_WIN_GAP;
 		rendered++;
 		/* separator between the own-monitor group and the
-		 * other-monitor group */
+		 * other-monitor group: drawn inside a widened gap so the
+		 * neighbouring pills keep a clear margin from the line */
 		if (rendered == own_count && own_count < nwins &&
 				win_x < win_end) {
-			cairo_set_source_rgb(cr,
-				((server->color_border >> 16) & 0xFF) / 255.0,
-				((server->color_border >> 8) & 0xFF) / 255.0,
-				(server->color_border & 0xFF) / 255.0);
-			cairo_rectangle(cr,
-				(int)((win_x + TOPBAR_WIN_GAP / 2) * scale) - (int)(scale),
-				cell_y * scale, 2 * scale, cell_h * scale);
-			cairo_fill(cr);
-			win_x += TOPBAR_WIN_GAP;
+			int cx = win_x + 7;
+			topbar_draw_separator(cr, cx, cell_y, cell_h, scale,
+				server->color_border);
+			win_x += 14;
 		}
 	}
 	o->topbar_win_count = rendered;
 
 	/* render the enabled indicator items in config order */
-	ctx.ind_x = date_x - (ind_w > 0 ? 12 : 0) - ind_w;
+	ctx.ind_x = date_x - date_gap - ind_w;
 
-	/* separator between indicators and the right edge */
-	if (ind_w > 0) {
-		topbar_item_draw_separator(&ctx, date_x - 6, 12);
+	/* separator between indicators and the clock: centered in the gap so
+	 * both the last item and the date keep a clear margin */
+	if (date_gap > 0) {
+		topbar_item_draw_separator(&ctx, date_x - date_gap, date_gap);
 	}
 
 	for (int i = 0; i < server->topbar_item_count; i++) {
@@ -797,10 +886,22 @@ void topbar_render(struct guibux_output *o) {
 		}
 		int before = ctx.ind_x;
 		topbar_item_render(&ctx, id);
-		if (ctx.ind_x > before && i + 1 < server->topbar_item_count) {
-			/* separator between groups (not after the last item) */
-			topbar_item_draw_separator(&ctx, ctx.ind_x + 6, 12);
-			ctx.ind_x += 12;
+		/* separator only when the next entry is a real item: the clock
+		 * gets its own separator via date_gap, so a separator after the
+		 * last real item (the one before the clock) would double up */
+		bool next_real = false;
+		for (int j = i + 1; j < server->topbar_item_count; j++) {
+			if (server->topbar_items[j] != TOPBAR_ITEM_CLOCK) {
+				next_real = true;
+				break;
+			}
+		}
+		if (ctx.ind_x > before && next_real) {
+			/* the 20px gap starts at ctx.ind_x (item's right edge, no
+			 * trailing pad); the helper centers the 3px line in the gap,
+			 * so both the item and the next item keep a clear margin */
+			topbar_item_draw_separator(&ctx, ctx.ind_x, 20);
+			ctx.ind_x += 20;
 		}
 	}
 
@@ -1090,6 +1191,50 @@ int topbar_tick(void *data) {
 	return 0;
 }
 
+/* test hook: seed N fake toplevels on the first output's workspace <ws>
+ * so the occupancy-dot count can be verified without a Wayland client.
+ * The fakes have no xdg/xwayland surface (only a scene tree), so the
+ * title/pill/switcher paths that dereference those are skipped for them;
+ * the dot count and the pill list (which only reads workspace + output)
+ * work. GUIBUX_TEST_WS_DOTS_SEED=<ws>:<n>. */
+void topbar_seed_fake_toplevels(struct guibux_server *server) {
+	const char *spec = getenv("GUIBUX_TEST_WS_DOTS_SEED");
+	if (spec == NULL) {
+		return;
+	}
+	int ws = 0, n = 0;
+	if (sscanf(spec, "%d:%d", &ws, &n) != 2 ||
+			ws < 1 || ws > NUM_WORKSPACES || n < 1 || n > 8) {
+		return;
+	}
+	struct guibux_output *o = NULL;
+	wl_list_for_each(o, &server->outputs, link) {
+		break;
+	}
+	if (o == NULL || o->wlr_output == NULL) {
+		return;
+	}
+	for (int i = 0; i < n; i++) {
+		struct guibux_toplevel *t = calloc(1, sizeof(*t));
+		if (t == NULL) {
+			break;
+		}
+		t->server = server;
+		t->workspace = ws;
+		t->output = o;
+		t->managed = true;
+		t->is_fullscreen = false;
+		t->scene_tree = wlr_scene_tree_create(&server->scene->tree);
+		if (t->scene_tree == NULL) {
+			free(t);
+			break;
+		}
+		t->scene_tree->node.data = t;
+		wl_list_insert(&server->toplevels, &t->link);
+	}
+	topbar_mark_dirty(o);
+}
+
 int topbar_test_run(void *data) {
 	struct guibux_server *server = data;
 	struct wlr_output *sorted[16];
@@ -1110,6 +1255,22 @@ int topbar_test_run(void *data) {
 			wlr_log(WLR_ERROR, "topbar-test: FAIL time string '%s'",
 				o->topbar_right);
 			return 0;
+		}
+		/* test hook: GUIBUX_TEST_WS_DOTS=<ws>:<n> — the occupancy dot
+		 * count for workspace <ws> must equal <n> (the test client
+		 * maps that many toplevels there) */
+		const char *dots = getenv("GUIBUX_TEST_WS_DOTS");
+		if (dots != NULL) {
+			int dws = 0, dn = 0;
+			if (sscanf(dots, "%d:%d", &dws, &dn) == 2 &&
+					dws >= 1 && dws <= NUM_WORKSPACES) {
+				if (o->topbar_ws_dots[dws] != dn) {
+					wlr_log(WLR_ERROR,
+						"topbar-test: FAIL ws%d dots (got %d, want %d)",
+						dws, o->topbar_ws_dots[dws], dn);
+					return 0;
+				}
+			}
 		}
 		/* test hook: GUIBUX_TEST_TOPBAR_DISABLED=volume,battery — the
 		 * listed items must not be rendered (hit rect zero) */
@@ -1242,6 +1403,17 @@ int battery_test_run(void *data) {
 			}
 			if (strcmp(o->topbar_battery, snap.bat) != 0) {
 				wlr_log(WLR_ERROR, "battery-test: FAIL indicator not rendered");
+				return 0;
+			}
+			/* color-state inputs: the rendered pct + state must match
+			 * the snapshot (the render picks red/orange/normal from
+			 * these) */
+			if (o->topbar_bat_pct != pct ||
+					o->topbar_bat_state != snap.bat_state) {
+				wlr_log(WLR_ERROR,
+					"battery-test: FAIL pct/state (got %d/%d, want %d/%d)",
+					o->topbar_bat_pct, o->topbar_bat_state,
+					pct, snap.bat_state);
 				return 0;
 			}
 			if (want_eta && snap.bat_eta_sec <= 0) {

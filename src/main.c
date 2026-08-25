@@ -433,6 +433,9 @@ int main(int argc, char *argv[]) {
 
 	const char *topbar_test = getenv("GUIBUX_TEST_TOPBAR");
 	if (topbar_test != NULL) {
+		/* seed fake toplevels before the first render so the occupancy
+		 * dot count is present when the test hook fires */
+		topbar_seed_fake_toplevels(&server);
 		server.topbar_test_timer = wl_event_loop_add_timer(
 			wl_display_get_event_loop(server.wl_display),
 			topbar_test_run, &server);
