@@ -22,10 +22,11 @@ reload-config`) to re-read the config file without a restart.
 Reloaded live: colors, `topbar_height`/`topbar_font_size`/`topbar_win_pad`/`topbar_items`,
 keybinds, `term`/`term_app_id`, backgrounds (`background`, `background1..4`,
 `background_scale`), `screensaver_timeout`, `focus_follow_mouse`, `effects*`,
-`osd*`, `restore_positions`, `outputs`, overview colors.
+`osd*`, `restore_positions`, `outputs`, overview colors, `icon_theme`,
+`preferred_app1..5`.
 
 Not reloadable (a restart is required, a warning is logged): `renderer`,
-`xkb_layout`/`xkb_variant`/`xkb_options`, `icon_theme`, `preferred_app1..5`.
+`xkb_layout`/`xkb_variant`/`xkb_options`.
 
 ## Keys
 

@@ -19,6 +19,7 @@
 
 static char icon_dirs[ICON_MAX_DIRS][PATH_MAX];
 static int num_icon_dirs;
+static char icon_dirs_current_theme[64];  /* theme the dirs were built for */
 
 static const char *icon_sizes[] = {
 	"24x24",
@@ -98,6 +99,14 @@ static void icon_build_dirs(struct guibux_launcher *l) {
 	} else {
 		icon_detect_gtk_theme(theme, sizeof(theme));
 	}
+	/* nothing changed since the last build: keep the dirs (and the
+	 * cached icons, which still point into them) */
+	if (strcmp(theme, icon_dirs_current_theme) == 0) {
+		return;
+	}
+	snprintf(icon_dirs_current_theme, sizeof(icon_dirs_current_theme),
+		"%s", theme);
+	num_icon_dirs = 0;
 	char dir[PATH_MAX];
 	const char *home = getenv("HOME");
 	if (home) {
@@ -517,8 +526,56 @@ void launcher_free_commands(struct guibux_launcher *l) {
 void launcher_free_icons(struct guibux_launcher *l) {
 	for (int i = 0; i < l->num_icons; i++) {
 		stbi_image_free(l->icon_cache[i].data);
+		l->icon_cache[i].path[0] = '\0';
 	}
 	l->num_icons = 0;
+}
+
+/* re-resolve the preferred apps' icons after a config reload: the
+ * theme dirs may have changed (icon_theme) or the preferred_appN
+ * entries themselves. Old cached icons for paths that are no longer
+ * referenced are dropped */
+void launcher_rebuild_preferred(struct guibux_launcher *l) {
+	for (int i = 0; i < l->num_preferred; i++) {
+		/* config stores the raw icon (theme name or absolute path); an
+		 * absolute path is already final */
+		if (l->preferred[i].icon_path[0] == '/' ||
+				l->preferred[i].icon_path[0] == '\0') {
+			continue;
+		}
+		char *resolved = resolve_icon(l->preferred[i].icon_path);
+		if (resolved) {
+			snprintf(l->preferred[i].icon_path,
+				sizeof(l->preferred[i].icon_path), "%s", resolved);
+			free(resolved);
+		} else {
+			wlr_log(WLR_INFO, "launcher: preferred app '%s': icon '%s' not found",
+				l->preferred[i].name, l->preferred[i].icon_path);
+		}
+	}
+	/* drop cached icons whose path is not referenced by any preferred
+	 * app anymore (theme change) */
+	for (int i = 0; i < l->num_icons; i++) {
+		bool used = false;
+		for (int p = 0; p < l->num_preferred; p++) {
+			if (strcmp(l->icon_cache[i].path,
+					l->preferred[p].icon_path) == 0) {
+				used = true;
+				break;
+			}
+		}
+		if (!used) {
+			stbi_image_free(l->icon_cache[i].data);
+			memmove(&l->icon_cache[i], &l->icon_cache[i + 1],
+				(size_t)(l->num_icons - i - 1) * sizeof(l->icon_cache[0]));
+			l->num_icons--;
+			i--;
+		}
+	}
+}
+
+void launcher_rebuild_icon_dirs(struct guibux_launcher *l) {
+	icon_build_dirs(l);
 }
 
 void launcher_filter(struct guibux_launcher *l) {
@@ -685,7 +742,7 @@ void launcher_show(struct guibux_server *server) {
 	wlr_output_layout_get_box(server->output_layout, output, &box);
 	int ew, eh;
 	wlr_output_effective_resolution(output, &ew, &eh);
-	int scale = output->scale > 1 ? (int)output->scale : 1;
+	int scale = guibux_scale_round(output->scale);
 
 	int bw = LAUNCHER_BOX_W;
 	if (bw > ew - 20) {
