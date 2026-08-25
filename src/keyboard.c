@@ -13,29 +13,41 @@
  * relies on waitpid() for xkbcomp and would lose its child; waiting
  * only for tracked PIDs is a no-op in the inherited copy (none of
  * them are Xwayland's children).
+ *
+ * The table is a fixed lock-free ring: the SIGCHLD handler (any
+ * thread, async signal context) and spawn_track (main thread) must
+ * not share a mutex (not async-signal-safe) or plain counters (data
+ * race). A slot is claimed by writing the PID last; the reaper only
+ * trusts a slot whose PID is positive and either reaps it or leaves
+ * it for the next pass. A PID can be lost if the ring is full
+ * (zombie until exit) - acceptable at SPAWNED_MAX slots.
  */
 #define SPAWNED_MAX 256
-static volatile pid_t spawned_pids[SPAWNED_MAX];
-static volatile int num_spawned = 0;
+static pid_t spawned_pids[SPAWNED_MAX];
 
 void spawn_track(pid_t pid) {
-	int i = num_spawned;
-	if (i < SPAWNED_MAX) {
-		spawned_pids[i] = pid;
-		num_spawned = i + 1;
+	/* scan for a free (0) slot; pid_t 0 is never a valid child pid */
+	for (int i = 0; i < SPAWNED_MAX; i++) {
+		if (spawned_pids[i] == 0) {
+			spawned_pids[i] = pid;
+			return;
+		}
 	}
+	/* ring full: the child becomes a zombie until the WM exits */
+	wlr_log(WLR_ERROR, "spawn: pid table full, %d will not be reaped", (int)pid);
 }
 
 static void spawn_reap(void) {
-	for (int i = 0; i < num_spawned; ) {
+	for (int i = 0; i < SPAWNED_MAX; i++) {
+		pid_t pid = spawned_pids[i];
+		if (pid == 0) {
+			continue;
+		}
 		int st;
-		pid_t r = waitpid(spawned_pids[i], &st, WNOHANG);
-		if (r == spawned_pids[i] || r == -1) {
-			/* exited (or already gone: duplicate entry) */
-			num_spawned--;
-			spawned_pids[i] = spawned_pids[num_spawned];
-		} else {
-			i++;
+		pid_t r = waitpid(pid, &st, WNOHANG);
+		if (r == pid || r == -1) {
+			/* exited (or already reaped: duplicate slot) */
+			spawned_pids[i] = 0;
 		}
 	}
 }
@@ -44,9 +56,6 @@ void spawn_sigchld_handler(int sig) {
 	(void)sig;
 	spawn_reap();
 }
-
-/* Quote s for embedding in a /bin/sh -c command line */
-
 
 void spawn_terminal(struct guibux_server *server) {
 	pid_t pid = fork();
@@ -551,8 +560,20 @@ bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
 		uint32_t modifiers) {
 	uint32_t mods = modifiers & (WLR_MODIFIER_LOGO | WLR_MODIFIER_SHIFT |
 		WLR_MODIFIER_ALT | WLR_MODIFIER_CTRL);
-	struct guibux_toplevel *toplevel = wl_list_empty(&server->toplevels) ? NULL :
-		wl_container_of(server->toplevels.next, toplevel, link);
+	/* the action targets the keyboard-focused window, not the most
+	 * recently mapped one (map order and focus can differ after a
+	 * workspace switch or clear_keyboard_focus) */
+	struct guibux_toplevel *toplevel = NULL;
+	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
+	if (focused != NULL) {
+		struct guibux_toplevel *t;
+		wl_list_for_each(t, &server->toplevels, link) {
+			if (toplevel_get_surface(t) == focused) {
+				toplevel = t;
+				break;
+			}
+		}
+	}
 	for (int i = 0; i < server->num_keybinds; i++) {
 		struct guibux_keybind *kb = &server->keybinds[i];
 		if (kb->modifiers == mods && kb->keysym == sym) {

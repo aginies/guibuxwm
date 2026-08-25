@@ -620,6 +620,11 @@ void config_reload(struct guibux_server *server) {
 		outputs_apply(server);
 	}
 
+	/* launcher: rebuild the icon theme dirs when icon_theme changed and
+	 * re-resolve the preferred apps' icons (preferred_appN is reloadable
+	 * too) */
+	launcher_rebuild_icon_dirs(&server->launcher);
+	launcher_rebuild_preferred(&server->launcher);
 	/* colors, topbar height/font/pad: picked up on the next render;
 	 * mark every bar dirty so the change shows without other activity */
 	struct guibux_output *o;

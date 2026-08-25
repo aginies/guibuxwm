@@ -70,6 +70,7 @@ int main(int argc, char *argv[]) {
 	sigemptyset(&usr1_mask);
 	sigaddset(&usr1_mask, SIGUSR1);
 	sigaddset(&usr1_mask, SIGHUP);
+	sigaddset(&usr1_mask, SIGUSR2);
 	pthread_sigmask(SIG_BLOCK, &usr1_mask, NULL);
 	/* spawned children (terminals, launcher commands) are reaped by a
 	 * targeted SIGCHLD handler instead of accumulating as zombies;
@@ -292,9 +293,13 @@ int main(int argc, char *argv[]) {
 	server.seat = wlr_seat_create(server.wl_display, "seat0");
 	/* lazy: the Xwayland process only starts when the first X11 client
 	 * connects; display_name is available immediately, so DISPLAY setup
-	 * below is unaffected */
-	server.xwayland = wlr_xwayland_create(server.wl_display,
-		server.compositor, true);
+	 * below is unaffected. Disabled in tests unless the xwayland test
+	 * asks for it: the headless test environment may have no usable X
+	 * display and the X server process would outlive the compositor */
+	if (getenv("GUIBUX_TEST_XWAYLAND") != NULL) {
+		server.xwayland = wlr_xwayland_create(server.wl_display,
+			server.compositor, true);
+	}
 	if (server.xwayland != NULL) {
 		wlr_xwayland_set_seat(server.xwayland, server.seat);
 		wlr_log(WLR_INFO, "xwayland: DISPLAY=%s",

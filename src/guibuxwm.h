@@ -445,7 +445,6 @@ struct guibux_output {
     struct wlr_scene_buffer *overview_ws_col_node;
     struct wlr_buffer *overview_ws_col_buf;
     int overview_ws_col_h;
-#define TOPBAR_WIN_W 100
 #define TOPBAR_WIN_GAP 10
 #define TOPBAR_WIN_MAX MAX_WINDOWS
 
@@ -498,7 +497,6 @@ struct guibux_toplevel {
 	struct wl_listener request_configure;
 	struct wl_listener set_title;
 	struct wl_listener ping_timeout;
-	struct wl_listener map_request;
 };
 
 struct guibux_popup {
@@ -794,6 +792,21 @@ struct guibux_launcher launcher;
 };
 
 /* output.c */
+/* an output's fractional scale (1.5) as an integer buffer multiplier;
+ * wlroots has no public helper and a plain (int) cast truncates 1.5 to 1,
+ * rendering 1x buffers on a 1.5x output (blurry). Round to nearest, min 1 */
+static inline int guibux_scale_round(float scale) {
+	int s = (int)(scale + 0.5f);
+	return s > 1 ? s : 1;
+}
+/* wall-clock milliseconds (CLOCK_MONOTONIC); used as a synthetic event
+ * time when the compositor itself generates pointer input (switcher,
+ * xdg-activation cursor warp) */
+static inline uint32_t guibux_now_msec(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
 struct wlr_output *output_at_cursor(struct guibux_server *server);
 struct guibux_output *guibux_output_for(struct guibux_server *server, struct wlr_output *wlr_output);
 struct wlr_output *toplevel_output_for(struct guibux_toplevel *toplevel);
@@ -999,6 +1012,10 @@ void launcher_hide(struct guibux_server *server);
 bool launcher_handle_key(struct guibux_server *server, xkb_keysym_t sym);
 int launcher_test_run(void *data);
 void launcher_free_commands(struct guibux_launcher *l);
+void launcher_rebuild_preferred(struct guibux_launcher *l);
+/* rebuild the launcher icon theme search path (no-op when the theme
+ * did not change); used by config reload for icon_theme */
+void launcher_rebuild_icon_dirs(struct guibux_launcher *l);
 void launcher_filter(struct guibux_launcher *l);
 char *resolve_icon(const char *icon_name);
 void launcher_free_icons(struct guibux_launcher *l);
@@ -1092,7 +1109,6 @@ void parse_output_placements_to(struct output_placement *arr, int cap,
 	const char *spec, int *num);
 /* re-read the `outputs` value from a config file; malloc'd, NULL if absent */
 char *config_read_outputs_line(const char *path);
-
 /* window-restore.c */
 /* XDG state file path: $XDG_STATE_HOME/guibuxwm/<file> */
 void guibux_state_path(char *path, size_t path_size, const char *file);
