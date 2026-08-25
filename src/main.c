@@ -296,7 +296,8 @@ int main(int argc, char *argv[]) {
 	 * below is unaffected. Disabled in tests unless the xwayland test
 	 * asks for it: the headless test environment may have no usable X
 	 * display and the X server process would outlive the compositor */
-	if (getenv("GUIBUX_TEST_XWAYLAND") != NULL) {
+	if (getenv("GUIBUX_TEST_XWAYLAND") != NULL ||
+	    getenv("GUIBUX_TEST_EXTRA_OUTPUTS") == NULL) {
 		server.xwayland = wlr_xwayland_create(server.wl_display,
 			server.compositor, true);
 	}
