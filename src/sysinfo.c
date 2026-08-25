@@ -8,6 +8,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <arpa/inet.h>
 
 /*
  * sysinfo - system information via D-Bus
@@ -447,6 +448,268 @@ dbus_call_path_array(DBusConnection *conn, const char *service,
 }
 
 /*
+ * Get a D-Bus property as object path (e.g. NM IP4Config).
+ * Returns newly allocated string, or NULL.
+ */
+static char *
+dbus_get_property_object_path(DBusConnection *conn, const char *service,
+                               const char *object_path,
+                               const char *interface, const char *property,
+                               DBusError *err)
+{
+    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
+        interface, property, err);
+    if (!reply) {
+        return NULL;
+    }
+
+    DBusMessageIter iter, variant;
+    dbus_message_iter_init(reply, &iter);
+    dbus_message_iter_recurse(&iter, &variant);
+
+    char *result = NULL;
+    if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_OBJECT_PATH) {
+        const char *p = NULL;
+        dbus_message_iter_get_basic(&variant, &p);
+        if (p && p[0] != '\0') {
+            result = strdup(p);
+        }
+    }
+
+    dbus_message_unref(reply);
+    return result;
+}
+
+/*
+ * Get the first address from a D-Bus AddressData property (NM
+ * IP4Config/IP6Config AddressData: aa{sv}, array of dicts with
+ * "address" (s) and "prefix" (u)). Fills addr (4 or 16 bytes) and
+ * sets *af to AF_INET or AF_INET6. Returns false on failure or empty
+ * array.
+ */
+static bool
+dbus_get_property_first_address(DBusConnection *conn, const char *service,
+                                  const char *object_path,
+                                  const char *interface, const char *property,
+                                  void *addr, int *af, DBusError *err)
+{
+    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
+        interface, property, err);
+    if (!reply) {
+        return false;
+    }
+
+    DBusMessageIter iter, variant, arr, dict, val;
+    dbus_message_iter_init(reply, &iter);
+    dbus_message_iter_recurse(&iter, &variant);
+
+    bool ok = false;
+    if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_ARRAY) {
+        /* AddressData is aa{sv}: the variant holds an array whose first
+         * element is the inner array of dict entries */
+        dbus_message_iter_recurse(&variant, &arr);
+        if (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_ARRAY) {
+            dbus_message_iter_recurse(&arr, &arr);
+        }
+        if (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_DICT_ENTRY) {
+            dbus_message_iter_recurse(&arr, &dict);
+            while (dbus_message_iter_get_arg_type(&dict) != DBUS_TYPE_INVALID) {
+                const char *key = NULL;
+                dbus_message_iter_get_basic(&dict, &key);
+                dbus_message_iter_next(&dict);
+                /* dict values are wrapped in a variant */
+                if (dbus_message_iter_get_arg_type(&dict) == DBUS_TYPE_VARIANT) {
+                    dbus_message_iter_recurse(&dict, &val);
+                } else {
+                    val = dict;
+                }
+                if (key && strcmp(key, "address") == 0 &&
+                        dbus_message_iter_get_arg_type(&val) == DBUS_TYPE_STRING) {
+                    const char *s = NULL;
+                    dbus_message_iter_get_basic(&val, &s);
+                    struct in_addr a4;
+                    struct in6_addr a6;
+                    if (inet_pton(AF_INET, s, &a4) == 1) {
+                        memcpy(addr, &a4, 4);
+                        *af = AF_INET;
+                        ok = true;
+                    } else if (inet_pton(AF_INET6, s, &a6) == 1) {
+                        memcpy(addr, &a6, 16);
+                        *af = AF_INET6;
+                        ok = true;
+                    }
+                    break;
+                }
+                dbus_message_iter_next(&dict);
+            }
+        }
+    }
+
+    dbus_message_unref(reply);
+    return ok;
+}
+
+/*
+ * Get the gateway for an interface from the kernel route table via
+ * `ip -4 -o route show dev <iface>`. Prefers the default route's "via"
+ * address; falls back to the first "via" address of any route. Used when
+ * NM's Gateway property is empty (e.g. tunnels, point-to-point links).
+ * Returns false on failure or no gateway.
+ */
+static bool
+route_gateway(const char *iface, unsigned char *gw, int *af)
+{
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd),
+        "ip -4 -o route show dev %s 2>/dev/null", iface);
+    char *out = run_capture(cmd);
+    if (!out) {
+        return false;
+    }
+    bool ok = false;
+    char fallback[INET_ADDRSTRLEN] = {0};
+    char *save = NULL;
+    for (char *line = strtok_r(out, "\n", &save); line;
+            line = strtok_r(NULL, "\n", &save)) {
+        const char *via = strstr(line, " via ");
+        if (!via) {
+            continue;
+        }
+        via += 5;
+        char addr[INET_ADDRSTRLEN] = {0};
+        int n = 0;
+        while (via[n] && via[n] != ' ' && n < (int)sizeof(addr) - 1) {
+            addr[n] = via[n];
+            n++;
+        }
+        addr[n] = '\0';
+        struct in_addr a4;
+        if (inet_pton(AF_INET, addr, &a4) != 1) {
+            continue;
+        }
+        if (strncmp(line, "default", 7) == 0) {
+            memcpy(gw, &a4, 4);
+            *af = AF_INET;
+            ok = true;
+            break;
+        }
+        if (fallback[0] == '\0') {
+            snprintf(fallback, sizeof(fallback), "%s", addr);
+        }
+    }
+    if (!ok && fallback[0] != '\0') {
+        struct in_addr a4;
+        if (inet_pton(AF_INET, fallback, &a4) == 1) {
+            memcpy(gw, &a4, 4);
+            *af = AF_INET;
+            ok = true;
+        }
+    }
+    free(out);
+    return ok;
+}
+
+/*
+ * Get the default gateway from a D-Bus Gateway property (NM
+ * IP4Config/IP6Config Gateway: a plain string, possibly empty).
+ * Returns false on failure or empty string.
+ */
+static bool
+dbus_get_property_gateway(DBusConnection *conn, const char *service,
+                           const char *object_path,
+                           const char *interface,
+                           unsigned char *gw, int *af, DBusError *err)
+{
+    char *s = dbus_get_property_string(conn, service, object_path,
+        interface, "Gateway", err);
+    if (!s) {
+        return false;
+    }
+    bool ok = false;
+    struct in_addr a4;
+    struct in6_addr a6;
+    if (inet_pton(AF_INET, s, &a4) == 1) {
+        memcpy(gw, &a4, 4);
+        *af = AF_INET;
+        ok = true;
+    } else if (inet_pton(AF_INET6, s, &a6) == 1) {
+        memcpy(gw, &a6, 16);
+        *af = AF_INET6;
+        ok = true;
+    }
+    free(s);
+    return ok;
+}
+
+/*
+ * Get the DNS servers from a D-Bus NameserverData property (NM
+ * IP4Config/IP6Config NameserverData: aa{sv}, array of dicts with
+ * "address" (s)). Fills out (NUL-terminated, comma-separated).
+ * Returns false on failure or no DNS.
+ */
+static bool
+dbus_get_property_dns(DBusConnection *conn, const char *service,
+                        const char *object_path,
+                        const char *interface, const char *property,
+                        char *out, size_t out_size, DBusError *err)
+{
+    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
+        interface, property, err);
+    if (!reply) {
+        return false;
+    }
+
+    DBusMessageIter iter, variant, arr, dict, val;
+    dbus_message_iter_init(reply, &iter);
+    dbus_message_iter_recurse(&iter, &variant);
+
+    bool ok = false;
+    out[0] = '\0';
+    int len = 0;
+    if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_ARRAY) {
+        dbus_message_iter_recurse(&variant, &arr);
+        if (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_ARRAY) {
+            dbus_message_iter_recurse(&arr, &arr);
+        }
+        while (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_DICT_ENTRY) {
+            dbus_message_iter_recurse(&arr, &dict);
+            while (dbus_message_iter_get_arg_type(&dict) != DBUS_TYPE_INVALID) {
+                const char *key = NULL;
+                dbus_message_iter_get_basic(&dict, &key);
+                dbus_message_iter_next(&dict);
+                /* dict values are wrapped in a variant */
+                if (dbus_message_iter_get_arg_type(&dict) == DBUS_TYPE_VARIANT) {
+                    dbus_message_iter_recurse(&dict, &val);
+                } else {
+                    val = dict;
+                }
+                if (key && strcmp(key, "address") == 0 &&
+                        dbus_message_iter_get_arg_type(&val) == DBUS_TYPE_STRING) {
+                    const char *s = NULL;
+                    dbus_message_iter_get_basic(&val, &s);
+                    len += snprintf(out + len, out_size - (size_t)len,
+                        "%s%s", len ? ", " : "", s);
+                    if (len >= (int)out_size - 1) {
+                        len = (int)out_size - 1;
+                        break;
+                    }
+                    ok = true;
+                    break;
+                }
+                dbus_message_iter_next(&dict);
+            }
+            dbus_message_iter_next(&arr);
+            if (len >= (int)out_size - 1) {
+                break;
+            }
+        }
+    }
+
+    dbus_message_unref(reply);
+    return ok;
+}
+
+/*
  * Append a formatted string to the display buffer, clamped so the
  * result always fits and stays NUL-terminated.
  */
@@ -470,10 +733,16 @@ display_append(char *buf, size_t size, int len, const char *fmt, ...)
 }
 
 static void
-sysinfo_set_network(struct guibux_sysinfo *si, const char *s)
+sysinfo_set_network(struct guibux_sysinfo *si, const char *s,
+                    const struct guibux_net_iface *ifaces, int count)
 {
     pthread_mutex_lock(&si->lock);
     snprintf(si->network, sizeof(si->network), "%s", s);
+    si->net_iface_count = 0;
+    for (int i = 0; i < count && i < NET_IFACES_MAX; i++) {
+        memcpy(&si->net_ifaces[i], &ifaces[i], sizeof(struct guibux_net_iface));
+        si->net_iface_count++;
+    }
     pthread_mutex_unlock(&si->lock);
 }
 
@@ -486,7 +755,7 @@ static void
 sysinfo_update_network(struct guibux_sysinfo *si)
 {
     if (!si->nm_available || !si->system_bus) {
-        sysinfo_set_network(si, "NM");
+        sysinfo_set_network(si, "NM", NULL, 0);
         return;
     }
 
@@ -498,20 +767,23 @@ sysinfo_update_network(struct guibux_sysinfo *si)
     if (dbus_error_is_set(&err)) {
         wlr_log(WLR_INFO, "sysinfo: Devices failed: %s", err.message);
         dbus_error_free(&err);
-        sysinfo_set_network(si, "NM");
+        sysinfo_set_network(si, "NM", NULL, 0);
         return;
     }
 
     if (!all_devices || !all_devices[0]) {
         free_path_array(all_devices);
-        sysinfo_set_network(si, "No net");
+        sysinfo_set_network(si, "No net", NULL, 0);
         return;
     }
 
-    /* Collect display strings for each connected non-loopback device */
+    /* Collect display strings + per-device details for each connected
+     * non-loopback device */
     char display[128] = {0};
     int display_len = 0;
     bool any_connected = false;
+    struct guibux_net_iface ifaces[NET_IFACES_MAX];
+    int iface_count = 0;
 
     for (int i = 0; all_devices[i]; i++) {
         const char *dev_path = all_devices[i];
@@ -554,6 +826,7 @@ sysinfo_update_network(struct guibux_sysinfo *si)
             iface = NULL;
         }
 
+        char label[64] = {0};
         if (dev_type == 2) {
             /* WiFi: get SSID and signal */
             char *ssid = dbus_get_property_byte_array(si->system_bus, NM_SERVICE, dev_path,
@@ -572,20 +845,92 @@ sysinfo_update_network(struct guibux_sysinfo *si)
             }
 
             if (ssid && ssid[0] != '\0') {
-                display_len = display_append(display, sizeof(display),
-                    display_len, "%s%s %u%%",
-                    display_len ? " " : "", ssid, strength);
-            } else if (iface) {
+                snprintf(label, sizeof(label), "%s %u%%", ssid, strength);
                 display_len = display_append(display, sizeof(display),
                     display_len, "%s%s",
-                    display_len ? " " : "", iface);
+                    display_len ? " " : "", label);
+            } else if (iface) {
+                snprintf(label, sizeof(label), "%s", iface);
+                display_len = display_append(display, sizeof(display),
+                    display_len, "%s%s",
+                    display_len ? " " : "", label);
             }
 
             free(ssid);
         } else if (iface) {
+            snprintf(label, sizeof(label), "%s", iface);
             display_len = display_append(display, sizeof(display),
                 display_len, "%s%s",
-                display_len ? " " : "", iface);
+                display_len ? " " : "", label);
+        }
+
+        /* Per-device IP/DNS/GW from the IP config (v4 preferred, v6
+         * fallback); unknown fields stay empty */
+        if (iface_count < NET_IFACES_MAX && label[0] != '\0') {
+            struct guibux_net_iface *ni = &ifaces[iface_count];
+            memset(ni, 0, sizeof(*ni));
+            snprintf(ni->label, sizeof(ni->label), "%s", label);
+
+            char *ipcfg = dbus_get_property_object_path(si->system_bus,
+                NM_SERVICE, dev_path, NM_DEVICE_IFACE, "Ip4Config", &err);
+            if (dbus_error_is_set(&err)) {
+                dbus_error_free(&err);
+                ipcfg = NULL;
+            }
+            if (ipcfg == NULL) {
+                ipcfg = dbus_get_property_object_path(si->system_bus,
+                    NM_SERVICE, dev_path, NM_DEVICE_IFACE, "Ip6Config", &err);
+                if (dbus_error_is_set(&err)) {
+                    dbus_error_free(&err);
+                    ipcfg = NULL;
+                }
+            }
+            /* the config object exposes its data on the IP4Config/IP6Config
+             * interface, not the base NetworkManager one */
+            const char *cfg_iface = strstr(ipcfg, "IP6Config") ?
+                "org.freedesktop.NetworkManager.IP6Config" :
+                "org.freedesktop.NetworkManager.IP4Config";
+            if (ipcfg != NULL) {
+                unsigned char addr[16];
+                int af = 0;
+                if (dbus_get_property_first_address(si->system_bus,
+                        NM_SERVICE, ipcfg, cfg_iface, "AddressData",
+                        addr, &af, &err)) {
+                    if (dbus_error_is_set(&err)) {
+                        dbus_error_free(&err);
+                    }
+                    inet_ntop(af, addr, ni->ip, sizeof(ni->ip));
+                } else if (dbus_error_is_set(&err)) {
+                    dbus_error_free(&err);
+                }
+                unsigned char gw_bytes[16];
+                int gw_af = 0;
+                if (dbus_get_property_gateway(si->system_bus,
+                        NM_SERVICE, ipcfg, cfg_iface,
+                        gw_bytes, &gw_af, &err)) {
+                    if (dbus_error_is_set(&err)) {
+                        dbus_error_free(&err);
+                    }
+                    inet_ntop(gw_af, gw_bytes, ni->gw, sizeof(ni->gw));
+                } else if (dbus_error_is_set(&err)) {
+                    dbus_error_free(&err);
+                }
+                /* NM's Gateway is empty for tunnels / point-to-point links;
+                 * fall back to the kernel route table */
+                if (ni->gw[0] == '\0' && iface != NULL) {
+                    route_gateway(iface, gw_bytes, &gw_af);
+                    if (gw_af != 0) {
+                        inet_ntop(gw_af, gw_bytes, ni->gw, sizeof(ni->gw));
+                    }
+                }
+                dbus_get_property_dns(si->system_bus, NM_SERVICE, ipcfg,
+                    cfg_iface, "NameserverData", ni->dns, sizeof(ni->dns), &err);
+                if (dbus_error_is_set(&err)) {
+                    dbus_error_free(&err);
+                }
+                free(ipcfg);
+            }
+            iface_count++;
         }
 
         free(iface);
@@ -594,9 +939,9 @@ sysinfo_update_network(struct guibux_sysinfo *si)
     free_path_array(all_devices);
 
     if (!any_connected) {
-        sysinfo_set_network(si, "No net");
+        sysinfo_set_network(si, "No net", NULL, 0);
     } else {
-        sysinfo_set_network(si, display);
+        sysinfo_set_network(si, display, ifaces, iface_count);
     }
 }
 
@@ -749,6 +1094,13 @@ sysinfo_update_audio(struct guibux_sysinfo *si)
         }
     }
 
+    int brightness = -1;
+    out = run_capture("brightnessctl get 2>/dev/null");
+    if (out) {
+        brightness = parse_percent(out);
+        free(out);
+    }
+
     pthread_mutex_lock(&si->lock);
     if (volume >= 0) {
         si->volume = volume;
@@ -759,6 +1111,10 @@ sysinfo_update_audio(struct guibux_sysinfo *si)
         si->mic_volume = mic_volume;
         si->mic_muted = mic_muted;
         si->audio_available = true;
+    }
+    if (brightness >= 0) {
+        si->brightness = brightness;
+        si->brightness_available = true;
     }
     pthread_mutex_unlock(&si->lock);
 }
@@ -797,13 +1153,21 @@ sysinfo_worker(void *data)
         }
     }
 
-    /* test hook: seed a fake network name so tests can exercise the
-     * topbar net indicator without NetworkManager (the first real poll
-     * only happens 5s in) */
+    /* test hook: seed a fake network name + one fake iface so tests can
+     * exercise the topbar net indicator and its tooltip without
+     * NetworkManager (the first real poll only happens 5s in) */
     const char *test_net = getenv("GUIBUX_TEST_NET");
     if (test_net != NULL) {
+        struct guibux_net_iface ni;
+        memset(&ni, 0, sizeof(ni));
+        snprintf(ni.label, sizeof(ni.label), "%s", test_net);
+        snprintf(ni.ip, sizeof(ni.ip), "10.0.0.5");
+        snprintf(ni.dns, sizeof(ni.dns), "1.1.1.1");
+        snprintf(ni.gw, sizeof(ni.gw), "10.0.0.1");
         pthread_mutex_lock(&si->lock);
         snprintf(si->network, sizeof(si->network), "%s", test_net);
+        memcpy(&si->net_ifaces[0], &ni, sizeof(ni));
+        si->net_iface_count = 1;
         pthread_mutex_unlock(&si->lock);
     }
 
@@ -864,6 +1228,7 @@ sysinfo_init(struct guibux_server *server)
     si->nm_available = false;
     si->upower_available = false;
     si->network[0] = '\0';
+    si->net_iface_count = 0;
     si->battery[0] = '\0';
     si->bat_state = 0;
     si->bat_eta_sec = 0;
@@ -872,6 +1237,8 @@ sysinfo_init(struct guibux_server *server)
     si->muted = false;
     si->mic_volume = -1;
     si->mic_muted = false;
+    si->brightness = -1;
+    si->brightness_available = false;
     si->worker = 0;
 
     pthread_mutex_init(&si->lock, NULL);
@@ -895,6 +1262,11 @@ sysinfo_get(struct guibux_sysinfo *si, struct guibux_sysinfo_snapshot *snap)
 {
     pthread_mutex_lock(&si->lock);
     snprintf(snap->net, sizeof(snap->net), "%s", si->network);
+    snap->net_iface_count = si->net_iface_count;
+    for (int i = 0; i < si->net_iface_count && i < NET_IFACES_MAX; i++) {
+        memcpy(&snap->net_ifaces[i], &si->net_ifaces[i],
+            sizeof(struct guibux_net_iface));
+    }
     snprintf(snap->bat, sizeof(snap->bat), "%s", si->battery);
     snap->bat_state = si->bat_state;
     snap->bat_eta_sec = si->bat_eta_sec;
@@ -903,6 +1275,8 @@ sysinfo_get(struct guibux_sysinfo *si, struct guibux_sysinfo_snapshot *snap)
     snap->muted = si->muted;
     snap->mic_volume = si->mic_volume;
     snap->mic_muted = si->mic_muted;
+    snap->brightness = si->brightness;
+    snap->brightness_available = si->brightness_available;
     pthread_mutex_unlock(&si->lock);
 }
 
@@ -948,6 +1322,28 @@ sysinfo_audio_toggle_mute(struct guibux_sysinfo *si, bool mic)
             si->mic_muted = !si->mic_muted;
         } else {
             si->muted = !si->muted;
+        }
+    }
+    pthread_mutex_unlock(&si->lock);
+}
+
+/*
+ * Optimistic local update for brightness: the WM just changed it via
+ * brightnessctl, so apply the delta to the published snapshot now
+ * instead of waiting for the next poll. No-op until the first
+ * successful read; the periodic poll self-corrects any drift.
+ */
+void
+sysinfo_brightness_adjust(struct guibux_sysinfo *si, int delta)
+{
+    pthread_mutex_lock(&si->lock);
+    if (si->brightness_available) {
+        si->brightness += delta;
+        if (si->brightness < 0) {
+            si->brightness = 0;
+        }
+        if (si->brightness > 100) {
+            si->brightness = 100;
         }
     }
     pthread_mutex_unlock(&si->lock);

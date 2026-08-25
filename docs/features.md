@@ -10,6 +10,7 @@
 - **Cascading window placement** in free mode
 - **Window switcher** (`Alt+Tab`): on-screen list of window titles (up to 16 lines) on the monitor under the cursor; `Tab` cycles, releasing `Alt` or `Enter` selects, `Esc` dismisses; the cursor warps to the selected window
 - **Primary selection** (`wl_primary_selection_v1`) for X11-style mouse selection
+- **xdg-activation-v1:** background apps (portals, `gtk-launch`, scripts) can request focus of a window they spawned; the compositor switches to the window's workspace, focuses it and warps the cursor to it
 
 ## Overview
 
@@ -30,10 +31,13 @@
 ## Topbar
 
 - **Topbar** on each monitor: monitor letter (A, B, C, ...) on the left, window pills, workspace numbers (click to switch), network status, audio and battery indicators, notification bell, and date/time on the right (updates every second); tiled windows are laid out below it
-- **Window pills:** one per window on the current workspace; click to focus (switches to the window's workspace first if needed), double-click to toggle fullscreen
-- **Network indicator:** SSID for WiFi, interface name for Ethernet, or "No net"/"NM" when unavailable, updated via NetworkManager D-Bus; right-click opens `nmtui`
+- **Window pills:** a global list — this monitor's windows first, then the windows of the other monitors after a separator (the `A2:` prefix, monitor letter + workspace number, disambiguates); click to focus (switches to the window's monitor and workspace first if needed), double-click to toggle fullscreen
+- **Window preview:** hovering a window pill for half a second shows a live thumbnail of the window (480x300) below the pill, so the content of a window on another workspace is visible without switching to it; the preview tracks the window's live buffer and hides when the pointer leaves
+- **Network indicator:** SSID for WiFi, interface name for Ethernet, or "No net"/"NM" when unavailable, updated via NetworkManager D-Bus; right-click opens `nmtui`; hovering an interface shows a multi-line tooltip with its IP, gateway and DNS servers
 - **Audio indicators** (`VOL` / `MIC`, PulseAudio or PipeWire via `pactl`): scroll to adjust by 1% per step, left-click toggles mute, right-click opens `pavucontrol`
 - **Battery indicator** (UPower): `BAT NN%` with a hover tooltip showing the time estimate
+- **Configurable topbar items** (`topbar_items`): the right-side indicators (network, volume, mic, battery, notifications, clock) can be enabled, disabled or reordered per config; live-reloadable via SIGHUP
+- **Topbar items panel** (`Mod+l`): a popup listing all six indicators with an on/off column; `d` or Enter toggles the selected row, changes apply live to every topbar immediately
 
 ## Workspaces
 
@@ -44,6 +48,7 @@
 ## Configuration
 
 - **Config file** (`~/.config/guibuxwm/config` or `-c`): keybinds, terminal, keyboard layout, colors, backgrounds, icon theme, topbar, effects, monitor layout, position restore, and more
+- **Config reload:** `SIGHUP` or the `reload-config` keybind action re-reads the config file live (colors, keybinds, topbar, backgrounds, outputs, screensaver); `renderer` and `xkb_*` require a restart
 - **Terminal** command configurable (default: `gnome-terminal`), started by `Mod+Return`
 - **Keyboard layout** configurable (xkb layout, variant, options)
 - **Keybinding help overlay** (`Mod+h`): lists all active keybinds on the monitor under the cursor
@@ -83,3 +88,11 @@
 
 - **Hardware media keys** work without any keybind: volume up/down, mute, mic mute, brightness up/down
 - **Keybind actions** for volume up/down, mute, mic volume up/down, mic mute, and brightness up/down (via `pactl` and `brightnessctl`)
+
+## On-Screen Display (OSD)
+
+- **OSD** for volume, mic and brightness changes: a centered box on the monitor under the cursor shows the label, value (`VOL 65%`, `MIC 30%`, `BRI 40%`, `MUTE` when muted) and a horizontal bar; auto-hides after a configurable timeout (default 1500ms)
+
+## Power Menu
+
+- **Power menu** (`Mod+p`): a centered list of system actions — Suspend, Hibernate, Lock, Log out, Restart, Shut down — driven by keyboard (Up/Down/Enter, or the letter shortcut) or mouse (click a row); each action runs the matching `systemctl`/`loginctl` command

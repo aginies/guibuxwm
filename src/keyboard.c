@@ -252,6 +252,11 @@ void volume_change(struct guibux_server *server, bool mic, int delta_pct) {
 		vol_pending_sink += delta_pct;
 	}
 	volume_flush(server);
+	struct guibux_sysinfo_snapshot snap;
+	sysinfo_get(&server->sysinfo, &snap);
+	osd_show(server, mic ? OSD_MIC : OSD_VOLUME,
+		mic ? snap.mic_volume : snap.volume,
+		mic ? snap.mic_muted : snap.muted);
 }
 
 void volume_toggle_mute(struct guibux_server *server, bool mic) {
@@ -266,6 +271,11 @@ void volume_toggle_mute(struct guibux_server *server, bool mic) {
 		topbar_mark_dirty(o);
 		topbar_render(o);
 	}
+	struct guibux_sysinfo_snapshot snap;
+	sysinfo_get(&server->sysinfo, &snap);
+	osd_show(server, mic ? OSD_MIC : OSD_VOLUME,
+		mic ? snap.mic_volume : snap.volume,
+		mic ? snap.mic_muted : snap.muted);
 }
 
 /*
@@ -279,6 +289,10 @@ static void brightness_change(struct guibux_server *server, int delta_pct) {
 		"brightnessctl set -- %c%d%% 2>/dev/null",
 		delta_pct > 0 ? '+' : '-', abs(delta_pct));
 	spawn_cmd(cmd);
+	sysinfo_brightness_adjust(&server->sysinfo, delta_pct);
+	struct guibux_sysinfo_snapshot snap;
+	sysinfo_get(&server->sysinfo, &snap);
+	osd_show(server, OSD_BRIGHTNESS, snap.brightness, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -438,12 +452,33 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 			outputs_panel_show(server);
 		}
 		break;
+	case GUIBUX_ACT_POWER:
+		if (server->power_panel.active) {
+			power_panel_hide(server);
+		} else {
+			power_panel_show(server);
+		}
+		break;
+	case GUIBUX_ACT_RELOAD_CONFIG:
+		config_reload(server);
+		break;
+	case GUIBUX_ACT_TOPBAR_ITEMS:
+		if (server->topbar_items_panel.active) {
+			topbar_items_panel_hide(server);
+		} else {
+			topbar_items_panel_show(server);
+		}
+		break;
 	}
 }
 
 // ---------------------------------------------------------------------------
 // Keybind table
 // ---------------------------------------------------------------------------
+
+void keybinds_reset(struct guibux_server *server) {
+	server->num_keybinds = 0;
+}
 
 void keybind_add(struct guibux_server *server, uint32_t modifiers,
 		xkb_keysym_t keysym, enum guibux_action action, int arg) {
@@ -506,6 +541,10 @@ void keybinds_defaults(struct guibux_server *server) {
 		GUIBUX_ACT_SHOW_HELP, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_m,
 		GUIBUX_ACT_OUTPUTS_PANEL, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_p,
+		GUIBUX_ACT_POWER, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_l,
+		GUIBUX_ACT_TOPBAR_ITEMS, 0);
 }
 
 bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
@@ -603,6 +642,22 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 				handled = notify_panel_handle_key(server, syms[i]);
 			} else if (server->outputs_panel.active) {
 				handled = outputs_panel_handle_key(server, syms[i]);
+			} else if (server->power_panel.active) {
+				handled = power_panel_handle_key(server, syms[i]);
+				if (!handled) {
+					/* unhandled keys (e.g. Mod+p to toggle the
+					 * panel) fall through to keybind dispatch */
+					handled = handle_keybinding(server, base_sym, modifiers) ||
+						handle_keybinding(server, syms[i], modifiers);
+				}
+			} else if (server->topbar_items_panel.active) {
+				handled = topbar_items_panel_handle_key(server, syms[i]);
+				if (!handled) {
+					/* unhandled keys (e.g. Mod+l to toggle the
+					 * panel) fall through to keybind dispatch */
+					handled = handle_keybinding(server, base_sym, modifiers) ||
+						handle_keybinding(server, syms[i], modifiers);
+				}
 			} else if (repeat) {
 				break;
 			} else if (syms[i] == XKB_KEY_F12) {

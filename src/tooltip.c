@@ -5,10 +5,12 @@
 #include <string.h>
 
 /* delay before the tooltip appears after the pointer enters the
- * battery indicator; checked by tooltip_tick (topbar_tick, 500ms) */
+ * indicator; checked by tooltip_tick (topbar_tick, 500ms) */
 #define TOOLTIP_HOVER_DELAY_MS 500
-#define TOOLTIP_PAD 8
-#define TOOLTIP_H 24
+#define TOOLTIP_PAD_X 8
+#define TOOLTIP_PAD_Y 6
+#define TOOLTIP_LINE_H 20
+#define TOOLTIP_MAX_LINES 4
 
 static uint32_t monotonic_ms(void) {
 	struct timespec ts;
@@ -26,6 +28,69 @@ static void fmt_eta(int sec, char *out, size_t n) {
 	} else {
 		snprintf(out, n, "<1m");
 	}
+}
+
+/* build the tooltip lines for the given kind; returns the line count */
+static int tooltip_build_lines(struct guibux_server *server,
+		struct guibux_output *o, enum guibux_tooltip_kind kind,
+		int net_idx, char lines[][NET_STR_MAX], int *widths) {
+	struct guibux_sysinfo_snapshot snap;
+	sysinfo_get(&server->sysinfo, &snap);
+	int n = 0;
+	if (kind == TOOLTIP_BATTERY) {
+		if (snap.bat[0] == '\0') {
+			return 0;
+		}
+		char eta[16];
+		if (snap.bat_state == 1 && snap.bat_eta_sec > 0) {
+			fmt_eta(snap.bat_eta_sec, eta, sizeof(eta));
+			snprintf(lines[n], NET_STR_MAX, "BAT %s - %s to full", snap.bat, eta);
+		} else if (snap.bat_state == 2 && snap.bat_eta_sec > 0) {
+			fmt_eta(snap.bat_eta_sec, eta, sizeof(eta));
+			snprintf(lines[n], NET_STR_MAX, "BAT %s - %s left", snap.bat, eta);
+		} else if (snap.bat_state == 3) {
+			snprintf(lines[n], NET_STR_MAX, "BAT %s - fully charged", snap.bat);
+		} else {
+			snprintf(lines[n], NET_STR_MAX, "BAT %s", snap.bat);
+		}
+		n = 1;
+	} else {
+		if (net_idx < 0 || net_idx >= snap.net_iface_count) {
+			return 0;
+		}
+		const struct guibux_net_iface *ni = &snap.net_ifaces[net_idx];
+		if (ni->label[0] == '\0') {
+			return 0;
+		}
+		snprintf(lines[n], NET_STR_MAX, "%s", ni->label);
+		n++;
+		if (ni->ip[0] != '\0') {
+			snprintf(lines[n], NET_STR_MAX, "IP  %s", ni->ip);
+			n++;
+		}
+		if (ni->gw[0] != '\0') {
+			snprintf(lines[n], NET_STR_MAX, "GW  %s", ni->gw);
+			n++;
+		}
+		if (ni->dns[0] != '\0') {
+			snprintf(lines[n], NET_STR_MAX, "DNS %s", ni->dns);
+			n++;
+		}
+		if (n > TOOLTIP_MAX_LINES) {
+			n = TOOLTIP_MAX_LINES;
+		}
+	}
+	/* measure each line at the output's scaled font size: the caller
+	 * uses the widths directly in logical px (no further division) */
+	struct wlr_box tbox;
+	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &tbox);
+	int tscale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+	int tfont_px = server->topbar_font_size * tscale;
+	FT_Set_Pixel_Sizes(server->launcher.face, 0, tfont_px);
+	for (int i = 0; i < n; i++) {
+		widths[i] = guibux_text_width(server->launcher.face, lines[i]) / tscale;
+	}
+	return n;
 }
 
 bool tooltip_contains(struct guibux_server *server, double lx, double ly) {
@@ -56,31 +121,19 @@ void tooltip_hide(struct guibux_server *server) {
 
 static void tooltip_show(struct guibux_server *server, struct guibux_output *o) {
 	struct guibux_tooltip *tt = &server->tooltip;
-	if (tt->active || o->topbar_buffer == NULL || o->topbar_bat_w <= 0) {
+	if (tt->active || o->topbar_buffer == NULL) {
 		return;
 	}
 	if (server->launcher.face == NULL || server->launcher.shm_alloc == NULL) {
 		return;
 	}
 
-	struct guibux_sysinfo_snapshot snap;
-	sysinfo_get(&server->sysinfo, &snap);
-	if (snap.bat[0] == '\0') {
+	char lines[TOOLTIP_MAX_LINES][NET_STR_MAX];
+	int widths[TOOLTIP_MAX_LINES];
+	int nlines = tooltip_build_lines(server, o, tt->hover_kind,
+		tt->hover_net_idx, lines, widths);
+	if (nlines <= 0) {
 		return;
-	}
-
-	char text[128];
-	char eta[16];
-	if (snap.bat_state == 1 && snap.bat_eta_sec > 0) {
-		fmt_eta(snap.bat_eta_sec, eta, sizeof(eta));
-		snprintf(text, sizeof(text), "BAT %s - %s to full", snap.bat, eta);
-	} else if (snap.bat_state == 2 && snap.bat_eta_sec > 0) {
-		fmt_eta(snap.bat_eta_sec, eta, sizeof(eta));
-		snprintf(text, sizeof(text), "BAT %s - %s left", snap.bat, eta);
-	} else if (snap.bat_state == 3) {
-		snprintf(text, sizeof(text), "BAT %s - fully charged", snap.bat);
-	} else {
-		snprintf(text, sizeof(text), "BAT %s", snap.bat);
 	}
 
 	struct wlr_box box;
@@ -88,12 +141,32 @@ static void tooltip_show(struct guibux_server *server, struct guibux_output *o) 
 	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
 	int font_px = server->topbar_font_size * scale;
 	FT_Set_Pixel_Sizes(server->launcher.face, 0, font_px);
-	int tw = guibux_text_width(server->launcher.face, text) / scale;
-	int bw = tw + 2 * TOOLTIP_PAD;
-	int bh = TOOLTIP_H;
 
-	/* centered under the battery indicator, clamped to the output */
-	int bx = o->topbar_bat_x + o->topbar_bat_w / 2 - bw / 2;
+	/* box size: widest line (already logical px) + padding */
+	int max_tw = 0;
+	for (int i = 0; i < nlines; i++) {
+		if (widths[i] > max_tw)
+			max_tw = widths[i];
+	}
+	int bw = max_tw + 2 * TOOLTIP_PAD_X;
+	int bh = nlines * TOOLTIP_LINE_H + 2 * TOOLTIP_PAD_Y;
+
+	/* anchor: centered under the indicator, clamped to the output */
+	int ax, aw;
+	if (tt->hover_kind == TOOLTIP_BATTERY) {
+		if (o->topbar_bat_w <= 0)
+			return;
+		ax = o->topbar_bat_x;
+		aw = o->topbar_bat_w;
+	} else {
+		int idx = tt->hover_net_idx;
+		if (idx < 0 || idx >= o->topbar_net_count ||
+				o->topbar_net_w[idx] <= 0)
+			return;
+		ax = o->topbar_net_x[idx];
+		aw = o->topbar_net_w[idx];
+	}
+	int bx = ax + aw / 2 - bw / 2;
 	if (bx < 4)
 		bx = 4;
 	if (bx + bw > box.width - 4)
@@ -127,7 +200,10 @@ static void tooltip_show(struct guibux_server *server, struct guibux_output *o) 
 	tt->box_y = by;
 	tt->box_scale = scale;
 	tt->output = o->wlr_output;
-	snprintf(tt->text, sizeof(tt->text), "%s", text);
+	tt->kind = tt->hover_kind;
+	tt->net_idx = tt->hover_net_idx;
+	/* store the first line as the text (used by tests + single-line case) */
+	snprintf(tt->text, sizeof(tt->text), "%s", lines[0]);
 	wlr_scene_buffer_set_dest_size(tt->scene_node, bw, bh);
 	wlr_scene_node_set_position(&tt->scene_node->node, box.x + bx, box.y + by);
 	wlr_scene_node_raise_to_top(&tt->scene_node->node);
@@ -150,9 +226,14 @@ static void tooltip_show(struct guibux_server *server, struct guibux_output *o) 
 			cairo_set_line_width(cr, scale);
 			cairo_rectangle(cr, scale / 2.0, scale / 2.0, w - scale, h - scale);
 			cairo_stroke(cr);
-			int baseline = bh / 2 * scale + font_px * 35 / 100;
-			launcher_draw_text_on_surface(cs, server->launcher.face, text,
-				TOOLTIP_PAD * scale, baseline, server->color_text);
+			for (int i = 0; i < nlines; i++) {
+				int baseline = TOOLTIP_PAD_Y * scale +
+					i * TOOLTIP_LINE_H * scale +
+					TOOLTIP_LINE_H * scale / 2 + font_px * 35 / 100;
+				launcher_draw_text_on_surface(cs, server->launcher.face,
+					lines[i], TOOLTIP_PAD_X * scale, baseline,
+					server->color_text);
+			}
 			cairo_destroy(cr);
 			cairo_surface_destroy(cs);
 		}
@@ -183,10 +264,28 @@ void tooltip_update_hover(struct guibux_server *server, uint32_t time) {
 	}
 	struct guibux_output *o = NULL;
 	int ws = 0;
-	if (topbar_workspace_at(server, x, y, &o, &ws) &&
-			topbar_battery_at(server, o, x, y)) {
-		if (tt->hover_output != o) {
+	if (topbar_workspace_at(server, x, y, &o, &ws)) {
+		enum guibux_tooltip_kind kind = TOOLTIP_BATTERY;
+		int net_idx = -1;
+		if (topbar_battery_at(server, o, x, y)) {
+			kind = TOOLTIP_BATTERY;
+		} else {
+			net_idx = topbar_network_index_at(server, o, x, y);
+			if (net_idx >= 0) {
+				kind = TOOLTIP_NET;
+			} else {
+				tt->hover_output = NULL;
+				if (tt->active) {
+					tooltip_hide(server);
+				}
+				return;
+			}
+		}
+		if (tt->hover_output != o || tt->hover_kind != kind ||
+				tt->hover_net_idx != net_idx) {
 			tt->hover_output = o;
+			tt->hover_kind = kind;
+			tt->hover_net_idx = net_idx;
 			tt->hover_since = time;
 		}
 	} else {
@@ -215,6 +314,8 @@ void tooltip_destroy(struct guibux_server *server) {
 
 int tooltip_test_run(void *data) {
 	struct guibux_server *server = data;
+
+	/* --- battery tooltip --- */
 	struct guibux_output *o = NULL;
 	wl_list_for_each(o, &server->outputs, link) {
 		if (o->topbar_buffer != NULL && o->topbar_bat_w > 0) {
@@ -233,18 +334,19 @@ int tooltip_test_run(void *data) {
 	server->cursor->x = box.x + o->topbar_bat_x + o->topbar_bat_w / 2.0;
 	server->cursor->y = box.y + server->topbar_height / 2.0;
 	process_cursor_motion(server, 1);
-	if (server->tooltip.hover_output != o) {
-		wlr_log(WLR_ERROR, "tooltip-test: FAIL hover not armed");
+	if (server->tooltip.hover_output != o ||
+			server->tooltip.hover_kind != TOOLTIP_BATTERY) {
+		wlr_log(WLR_ERROR, "tooltip-test: FAIL battery hover not armed");
 		return 0;
 	}
 	tooltip_tick(server);
 	if (!server->tooltip.active) {
-		wlr_log(WLR_ERROR, "tooltip-test: FAIL tooltip not shown");
+		wlr_log(WLR_ERROR, "tooltip-test: FAIL battery tooltip not shown");
 		return 0;
 	}
 	if (strstr(server->tooltip.text, "85%") == NULL ||
 			strstr(server->tooltip.text, "1h 30m") == NULL) {
-		wlr_log(WLR_ERROR, "tooltip-test: FAIL bad text '%s'",
+		wlr_log(WLR_ERROR, "tooltip-test: FAIL bad battery text '%s'",
 			server->tooltip.text);
 		return 0;
 	}
@@ -253,9 +355,71 @@ int tooltip_test_run(void *data) {
 	server->cursor->y = box.y + server->topbar_height / 2.0;
 	process_cursor_motion(server, 2);
 	if (server->tooltip.active) {
-		wlr_log(WLR_ERROR, "tooltip-test: FAIL tooltip not hidden");
+		wlr_log(WLR_ERROR, "tooltip-test: FAIL battery tooltip not hidden");
 		return 0;
 	}
-	wlr_log(WLR_INFO, "tooltip-test: OK ('%s')", server->tooltip.text);
+
+	/* --- net tooltip --- */
+	struct guibux_output *no = NULL;
+	wl_list_for_each(no, &server->outputs, link) {
+		if (no->topbar_buffer != NULL && no->topbar_net_count > 0) {
+			break;
+		}
+		no = NULL;
+	}
+	if (no == NULL) {
+		wlr_log(WLR_ERROR, "tooltip-test: FAIL net indicator not rendered");
+		return 0;
+	}
+	struct wlr_box nbox;
+	wlr_output_layout_get_box(server->output_layout, no->wlr_output, &nbox);
+
+	/* hover the first net segment: the tooltip must arm and show */
+	server->cursor->x = nbox.x + no->topbar_net_x[0] +
+		no->topbar_net_w[0] / 2.0;
+	server->cursor->y = nbox.y + server->topbar_height / 2.0;
+	process_cursor_motion(server, 3);
+	if (server->tooltip.hover_output != no ||
+			server->tooltip.hover_kind != TOOLTIP_NET ||
+			server->tooltip.hover_net_idx != 0) {
+		wlr_log(WLR_ERROR, "tooltip-test: FAIL net hover not armed");
+		return 0;
+	}
+	tooltip_tick(server);
+	if (!server->tooltip.active) {
+		wlr_log(WLR_ERROR, "tooltip-test: FAIL net tooltip not shown");
+		return 0;
+	}
+	/* the net tooltip is multi-line: label + IP + GW + DNS */
+	if (server->tooltip.box_h < 3 * TOOLTIP_LINE_H) {
+		wlr_log(WLR_ERROR, "tooltip-test: FAIL net tooltip not multi-line (h=%d)",
+			server->tooltip.box_h);
+		return 0;
+	}
+	/* verify the rendered text contains the seeded values by checking
+	 * the snapshot directly (the tooltip text field only holds line 1) */
+	struct guibux_sysinfo_snapshot snap;
+	sysinfo_get(&server->sysinfo, &snap);
+	if (snap.net_iface_count < 1) {
+		wlr_log(WLR_ERROR, "tooltip-test: FAIL no net ifaces in snapshot");
+		return 0;
+	}
+	if (strcmp(snap.net_ifaces[0].ip, "10.0.0.5") != 0 ||
+			strcmp(snap.net_ifaces[0].dns, "1.1.1.1") != 0 ||
+			strcmp(snap.net_ifaces[0].gw, "10.0.0.1") != 0) {
+		wlr_log(WLR_ERROR, "tooltip-test: FAIL bad net details ip=%s dns=%s gw=%s",
+			snap.net_ifaces[0].ip, snap.net_ifaces[0].dns,
+			snap.net_ifaces[0].gw);
+		return 0;
+	}
+	/* move away: the tooltip must hide */
+	server->cursor->x = nbox.x + 5;
+	server->cursor->y = nbox.y + server->topbar_height / 2.0;
+	process_cursor_motion(server, 4);
+	if (server->tooltip.active) {
+		wlr_log(WLR_ERROR, "tooltip-test: FAIL net tooltip not hidden");
+		return 0;
+	}
+	wlr_log(WLR_INFO, "tooltip-test: OK (battery + net)");
 	return 0;
 }

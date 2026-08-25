@@ -33,13 +33,18 @@ run "topbar" ./run-topbar-test.sh
 run "notify" ./run-notify-test.sh
 run "audio" ./run-audio-test.sh
 run "battery" ./run-battery-test.sh
-run "battery tooltip" ./run-tooltip-test.sh
+run "topbar tooltips" ./run-tooltip-test.sh
+run "osd" ./run-osd-test.sh
+run "power menu" ./run-power-test.sh
+run "topbar items panel" ./run-topbar-items-test.sh
 run "topbar scroll" ./run-scroll-test.sh
 run "alt+drag move" ./run-altdrag-test.sh
 run "cross-monitor drag" ./run-xmondrag-test.sh
 run "resize edges" ./run-resize-test.sh
 run "launcher" ./run-launcher-test.sh
 run "config" ./run-config-test.sh
+run "config reload" ./run-config-reload-test.sh
+run "global topbar" ./run-global-topbar-test.sh
 run "primary selection" ./run-psel-test.sh
 run "xwayland" ./run-xwayland-test.sh
 run "restore positions" ./run-restore-test.sh

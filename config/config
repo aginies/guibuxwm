@@ -82,7 +82,7 @@ color_highlight = #3a3c55
 color_text = #ffffff
 color_dim = #8888aa
 # topbar (openSUSE green)
-topbar_bg = #73ba25
+topbar_bg = #8839ef
 topbar_text = #1e1e2e
 
 # topbar height in pixels (default: 24)
@@ -94,6 +94,11 @@ topbar_font_size = 18
 # vertical padding of window pills inside the topbar in pixels (default: 2)
 # smaller = taller pills, 0 = pills fill the whole topbar height
 topbar_win_pad = 2
+
+# right-side topbar indicators, comma-separated, in layout order.
+# available: network, volume, mic, battery, notifications, clock
+# (default: network, volume, mic, battery, notifications, clock)
+#topbar_items = network, volume, mic, battery, notifications, clock
 
 # desktop background image (PNG or JPEG), used for workspaces
 # without their own image

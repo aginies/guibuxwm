@@ -46,6 +46,9 @@ At least one modifier is required:
 | `show-help` | Show the keybinding help overlay |
 | `outputs-apply` | Re-apply the `outputs` config (monitor layout) without a restart |
 | `outputs-panel` | Open the monitor layout panel (`Mod+m`) |
+| `power` | Open the power menu (`Mod+p`): Suspend, Hibernate, Lock, Log out, Restart, Shut down |
+| `topbar-items` | Open the topbar items panel (`Mod+l`): enable/disable and reorder the right-side indicators; `d` or Enter toggles the selected row, `Esc` closes |
+| `reload-config` | Re-read the config file live (colors, keybinds, topbar, backgrounds, outputs, screensaver); `renderer` and `xkb_*` require a restart |
 | `volume-up` | Raise default sink volume by 5% |
 | `volume-down` | Lower default sink volume by 5% |
 | `mute` | Toggle default sink mute |
@@ -76,6 +79,8 @@ At least one modifier is required:
 | `Mod+Up` | Fullscreen focused window |
 | `Mod+h` | Show the keybinding help overlay |
 | `Mod+m` | Open the monitor layout panel |
+| `Mod+p` | Open the power menu (Suspend, Hibernate, Lock, Log out, Restart, Shut down) |
+| `Mod+l` | Open the topbar items panel (enable/disable indicators, `d` toggles) |
 | `Mod+Shift+q` | Quit |
 | `Alt+Escape` | Quit |
 | `Mod+Alt+Escape` | Quit |
@@ -104,6 +109,11 @@ Hardware media keys work without any keybind:
 | `XF86AudioMicMute` | Toggle mic mute |
 | `XF86MonBrightnessUp` | Increase brightness by 5% |
 | `XF86MonBrightnessDown` | Decrease brightness by 5% |
+
+Every volume, mic and brightness change (keybind, media key or topbar
+scroll) shows a centered on-screen display (label, value and bar) on the
+monitor under the cursor; it auto-hides after `osd_timeout_ms` (default
+1500ms). See [Config](config.md#osd).
 
 ## Network
 
@@ -173,6 +183,18 @@ In tile modes, new windows are placed into the layout (instead of cascading), cl
 - `Esc`/`Enter` close
 
 Every change is saved to the `outputs` line of the config and applied live, the same as `guibuxwm-output set/enable/disable`. The status line at the bottom shows the result (`saved`, `no monitor to the left`, `not connected`, ...).
+
+## Power Menu (`Mod+p`)
+
+`Mod+p` opens the power menu on the monitor under the cursor: a centered list of system actions, the selected row highlighted.
+
+- `Up`/`Down` select a row
+- `Enter` runs the selected action
+- letter shortcuts run a specific action directly: `s` Suspend, `h` Hibernate, `l` Lock, `o` Log out, `r` Restart, `q` Shut down
+- click a row to run it, click outside to dismiss
+- `Esc` closes without running anything
+
+Each action runs the matching command: `systemctl suspend`, `systemctl hibernate`, `guibuxwm-lock` (falling back to `loginctl lock-session`), `loginctl terminate-session`, `systemctl reboot`, `systemctl poweroff`.
 
 ## Overriding Defaults
 

@@ -440,13 +440,17 @@ static void draw_bell(cairo_t *cr, double x, double cy, double s,
 #define NOTIF_IND_PAD 8
 #define NOTIF_IND_BELL 12
 #define NOTIF_IND_GAP 6
+#define NOTIF_IND_DIGIT_MAX 3
+#define NOTIF_IND_DIGIT_CAP 100
 
+/* worst-case width: the digit count is capped at NOTIF_IND_DIGIT_MAX
+ * (larger counts render as "NNN+"); reserving the maximum keeps the
+ * indicator's cell a constant size so the clock (and every item to its
+ * right) never shifts when the count changes */
 int notify_indicator_width(FT_Face face, int scale, int count) {
-	if (count <= 0) {
-		return 0;
-	}
+	(void)count;
 	char cnt[16];
-	snprintf(cnt, sizeof(cnt), "%d", count);
+	snprintf(cnt, sizeof(cnt), "%d", NOTIF_IND_DIGIT_CAP * 10);
 	return 2 * NOTIF_IND_PAD + NOTIF_IND_BELL + NOTIF_IND_GAP +
 		guibux_text_width(face, cnt) / scale;
 }
@@ -461,7 +465,11 @@ void notify_draw_indicator(cairo_surface_t *cs, cairo_t *cr, FT_Face face,
 	draw_bell(cr, (x + NOTIF_IND_PAD + NOTIF_IND_BELL / 2) * scale,
 		cy, NOTIF_IND_BELL * scale, color);
 	char cnt[16];
-	snprintf(cnt, sizeof(cnt), "%d", count);
+	if (count > NOTIF_IND_DIGIT_CAP) {
+		snprintf(cnt, sizeof(cnt), "%d+", NOTIF_IND_DIGIT_CAP);
+	} else {
+		snprintf(cnt, sizeof(cnt), "%d", count);
+	}
 	launcher_draw_text_on_surface(cs, face, cnt,
 		(x + NOTIF_IND_PAD + NOTIF_IND_BELL + NOTIF_IND_GAP) * scale,
 		baseline, color);
@@ -640,6 +648,8 @@ void notify_panel_show(struct guibux_server *server,
 		return;
 	}
 	tooltip_hide(server);
+	osd_hide(server);
+	power_panel_hide(server);
 	/* a slide-out may still be in flight: cancel it and start fresh */
 	if (p->hiding) {
 		effects_cancel_node(server, &p->scene_node->node);
@@ -1165,6 +1175,23 @@ int notify_test_run(void *data) {
 		}
 		notify_panel_hide(server);
 	}
+	/* the bell hit area must not be swallowed by the battery hit area:
+	 * the planning phase used to under-count the battery->date separator
+	 * by 8px, shifting the whole indicator block and misaligning the
+	 * bell's hit area from the drawn bell */
+	static bool block_checked = false;
+	if (!block_checked && nn > 0 && autohide_done) {
+		block_checked = true;
+		struct guibux_output *o = guibux_output_for(server, sorted[0]);
+		if (o != NULL && o->topbar_notif_w > 0 && o->topbar_bat_w > 0) {
+			if (o->topbar_notif_x < o->topbar_bat_x + o->topbar_bat_w) {
+				wlr_log(WLR_ERROR,
+					"notify-test: FAIL bell hit area overlaps battery (notif_x=%d bat_end=%d)",
+					o->topbar_notif_x, o->topbar_bat_x + o->topbar_bat_w);
+				return 0;
+			}
+		}
+	}
 	/* clicking the bell must open the panel: the net hit area used to
 	 * span the whole indicator block and swallowed the bell click */
 	static bool click_checked = false;
@@ -1192,7 +1219,7 @@ int notify_test_run(void *data) {
 	/* all checks done: log OK once and stop the timer. Until then keep
 	 * ticking — the auto-show/auto-hide sequence spans several ticks */
 	static bool ok_logged = false;
-	if (autohide_done && panel_checked && click_checked) {
+	if (autohide_done && panel_checked && click_checked && block_checked) {
 		if (!ok_logged) {
 			ok_logged = true;
 			wlr_log(WLR_INFO,

@@ -2,6 +2,7 @@
 #include <wlr/types/wlr_scene.h>
 #include <string.h>
 #include <strings.h>
+#include <time.h>
 
 // ---------------------------------------------------------------------------
 // Focus
@@ -796,6 +797,80 @@ static void xsurface_request_activate(struct wl_listener *listener, void *data) 
 		return;
 	}
 	focus_toplevel(toplevel, true);
+}
+
+// ---------------------------------------------------------------------------
+// xdg-activation-v1: a background app (portal, gtk-launch, script)
+// requests focus of a window it spawned
+// ---------------------------------------------------------------------------
+
+void xdg_activation_handle_request(struct wl_listener *listener, void *data) {
+	struct wlr_xdg_activation_v1_request_activate_event *ev = data;
+	struct guibux_server *server = wl_container_of(listener, server,
+		xdg_activation_request);
+	/* the requesting surface's client owns the window to activate;
+	 * prefer the currently focused toplevel of that client, falling
+	 * back to its most-recently-mapped one (the list is ordered by
+	 * map time, not focus) */
+	struct wl_client *client = NULL;
+	if (ev->surface != NULL && ev->surface->resource != NULL) {
+		client = wl_resource_get_client(ev->surface->resource);
+	}
+	struct guibux_toplevel *t = NULL;
+	struct guibux_toplevel *fallback = NULL;
+	struct wlr_surface *kb_focus =
+		server->seat->keyboard_state.focused_surface;
+	struct guibux_toplevel *kb_focus_t = NULL;
+	if (kb_focus != NULL) {
+		struct guibux_toplevel *tmp;
+		wl_list_for_each(tmp, &server->toplevels, link) {
+			struct wlr_surface *s = toplevel_get_surface(tmp);
+			if (s == kb_focus) {
+				kb_focus_t = tmp;
+				break;
+			}
+		}
+	}
+	struct guibux_toplevel *tmp;
+	wl_list_for_each(tmp, &server->toplevels, link) {
+		struct wlr_surface *s = toplevel_get_surface(tmp);
+		if (s == NULL || s->resource == NULL) {
+			continue;
+		}
+		if (wl_resource_get_client(s->resource) != client) {
+			continue;
+		}
+		if (tmp == kb_focus_t) {
+			t = tmp;
+			break;
+		}
+		if (fallback == NULL) {
+			fallback = tmp;
+		}
+	}
+	if (t == NULL) {
+		t = fallback;
+	}
+	if (t == NULL || t->scene_tree == NULL) {
+		return;
+	}
+	/* the window may live on another workspace: switch to it first */
+	struct guibux_output *o = guibux_output_for(server,
+		toplevel_output_for(t));
+	if (o != NULL && t->workspace != o->current_workspace) {
+		switch_workspace(o, t->workspace);
+	}
+	focus_toplevel(t, true);
+	/* warp the cursor to the window center (like the switcher) */
+	struct wlr_box geo;
+	toplevel_get_geometry(t, &geo);
+	wlr_cursor_warp(server->cursor, NULL,
+		t->scene_tree->node.x + geo.width / 2.0,
+		t->scene_tree->node.y + geo.height / 2.0);
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	process_cursor_motion(server,
+		(uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000));
 }
 
 static void xsurface_request_close(struct wl_listener *listener, void *data) {

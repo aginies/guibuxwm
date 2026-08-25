@@ -167,6 +167,101 @@ static struct guibux_output *other_output(struct guibux_server *server,
 	return NULL;
 }
 
+/* Global topbar list: with two outputs and one window on each, every bar
+ * must list both windows, own-monitor windows first. The window's own
+ * output is the first group; the other monitor's window follows after the
+ * separator. */
+int global_topbar_test_run(void *data) {
+	struct guibux_server *server = data;
+	struct guibux_output *o;
+	int n_outputs = 0;
+	wl_list_for_each(o, &server->outputs, link) {
+		n_outputs++;
+	}
+	if (n_outputs < 2) {
+		wlr_log(WLR_ERROR, "global-topbar-test: FAIL need two outputs (GUIBUX_TEST_EXTRA_OUTPUTS=1)");
+		return 0;
+	}
+	/* collect the toplevels and their outputs */
+	struct guibux_toplevel *ts[8];
+	int n_t = 0;
+	struct guibux_toplevel *t;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->managed && n_t < 8) {
+			ts[n_t++] = t;
+		}
+	}
+	if (n_t < 2) {
+		wlr_log(WLR_ERROR, "global-topbar-test: FAIL need two toplevels (got %d)", n_t);
+		return 0;
+	}
+	/* ensure one window per output: move the second to the other output
+	 * if both landed on the same one */
+	struct guibux_output *o1 = guibux_output_for(server,
+		toplevel_output_for(ts[0]));
+	struct guibux_output *o2 = guibux_output_for(server,
+		toplevel_output_for(ts[1]));
+	if (o1 == o2) {
+		struct guibux_output *alt = other_output(server, o1);
+		if (alt == NULL) {
+			wlr_log(WLR_ERROR, "global-topbar-test: FAIL no second output");
+			return 0;
+		}
+		move_toplevel_to_output(ts[1], alt->wlr_output);
+		o2 = alt;
+	}
+	/* render both bars and verify the global list */
+	o1->topbar_dirty = true;
+	o2->topbar_dirty = true;
+	topbar_render(o1);
+	topbar_render(o2);
+	/* o1's bar: ts[0] (own) must come before ts[1] (other) */
+	int idx0 = -1, idx1 = -1;
+	for (int i = 0; i < o1->topbar_win_count; i++) {
+		if (o1->topbar_wins[i] == ts[0]) idx0 = i;
+		if (o1->topbar_wins[i] == ts[1]) idx1 = i;
+	}
+	if (idx0 < 0 || idx1 < 0 || idx0 >= idx1) {
+		wlr_log(WLR_ERROR, "global-topbar-test: FAIL o1 list order (own idx %d, other idx %d, count %d)",
+			idx0, idx1, o1->topbar_win_count);
+		return 0;
+	}
+	/* o2's bar: ts[1] (own) must come before ts[0] (other) */
+	idx0 = -1; idx1 = -1;
+	for (int i = 0; i < o2->topbar_win_count; i++) {
+		if (o2->topbar_wins[i] == ts[0]) idx0 = i;
+		if (o2->topbar_wins[i] == ts[1]) idx1 = i;
+	}
+	if (idx0 < 0 || idx1 < 0 || idx1 >= idx0) {
+		wlr_log(WLR_ERROR, "global-topbar-test: FAIL o2 list order (own idx %d, other idx %d, count %d)",
+			idx1, idx0, o2->topbar_win_count);
+		return 0;
+	}
+	/* cross-monitor entries must carry the window's own monitor letter,
+	 * not the bar's: on o1's bar, ts[1] (on o2) must be prefixed with
+	 * o2's letter; on o2's bar, ts[0] (on o1) with o1's. Look up by the
+	 * window pointer, not the ordering index, because "focused first"
+	 * reorders the list. */
+	char want0 = 'A' + (o1->topbar_number - 1);
+	char want1 = 'A' + (o2->topbar_number - 1);
+	int ti1 = -1, ti0 = -1;
+	for (int i = 0; i < o1->topbar_win_count; i++)
+		if (o1->topbar_wins[i] == ts[1]) ti1 = i;
+	for (int i = 0; i < o2->topbar_win_count; i++)
+		if (o2->topbar_wins[i] == ts[0]) ti0 = i;
+	if (ti1 < 0 || ti0 < 0 ||
+			o1->topbar_win_titles[ti1][0] != want1 ||
+			o2->topbar_win_titles[ti0][0] != want0) {
+		wlr_log(WLR_ERROR, "global-topbar-test: FAIL cross-monitor prefix (o1 ts1: '%s', o2 ts0: '%s')",
+			ti1 >= 0 ? o1->topbar_win_titles[ti1] : "?",
+			ti0 >= 0 ? o2->topbar_win_titles[ti0] : "?");
+		return 0;
+	}
+	wlr_log(WLR_INFO, "global-topbar-test: OK (%d outputs, %d toplevels, both bars list both, own first)",
+		n_outputs, n_t);
+	return 0;
+}
+
 int overview_test_run(void *data) {
 	struct guibux_server *server = data;
 	struct guibux_toplevel *t;
@@ -637,10 +732,14 @@ int xmondrag_test_run(void *data) {
 		dst->topbar_dirty = true;
 		topbar_render(src);
 		topbar_render(dst);
-		if (!topbar_lists(dst, t) || topbar_lists(src, t)) {
-			wlr_log(WLR_ERROR, "xmondrag-test: FAIL topbar lists after drag (dst %s, src %s)",
+		/* the topbar list is global (own + other monitors): both bars
+		 * list the window; the window's own output must be the dst */
+		if (!topbar_lists(dst, t) || !topbar_lists(src, t) ||
+				t->output != dst) {
+			wlr_log(WLR_ERROR, "xmondrag-test: FAIL topbar lists after drag (dst %s, src %s, output %s)",
 				topbar_lists(dst, t) ? "yes" : "no",
-				topbar_lists(src, t) ? "yes" : "no");
+				topbar_lists(src, t) ? "yes" : "no",
+				t->output == dst ? "dst" : "other");
 			return 0;
 		}
 
@@ -690,10 +789,14 @@ int xmondrag_test_run(void *data) {
 		dst->topbar_dirty = true;
 		topbar_render(src);
 		topbar_render(dst);
-		if (!topbar_lists(src, t) || topbar_lists(dst, t)) {
-			wlr_log(WLR_ERROR, "xmondrag-test: FAIL topbar lists after resize (src %s, dst %s)",
+		/* the topbar list is global: both bars list the window; the
+		 * window's own output must be back on the src */
+		if (!topbar_lists(src, t) || !topbar_lists(dst, t) ||
+				t->output != src) {
+			wlr_log(WLR_ERROR, "xmondrag-test: FAIL topbar lists after resize (src %s, dst %s, output %s)",
 				topbar_lists(src, t) ? "yes" : "no",
-				topbar_lists(dst, t) ? "yes" : "no");
+				topbar_lists(dst, t) ? "yes" : "no",
+				t->output == src ? "src" : "other");
 			return 0;
 		}
 		wlr_log(WLR_INFO, "xmondrag-test: OK (drag + resize across outputs)");

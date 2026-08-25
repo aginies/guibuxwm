@@ -97,7 +97,7 @@ no-op, the compositor keeps working.
 | `pavucontrol` | mixer, right-click on an audio indicator | right-click is a no-op |
 | `nmtui` (NetworkManager package) | network configuration, right-click on the network indicator (opened in the terminal) | right-click is a no-op |
 | `brightnessctl` | brightness keybinds and media keys | brightness actions are no-ops |
-| NetworkManager (`org.freedesktop.NetworkManager` on the session bus) | network status indicator (SSID / interface name) | indicator shows "No net" / "NM" |
+| NetworkManager (`org.freedesktop.NetworkManager` on the session bus) | network status indicator (SSID / interface name) + hover tooltip (IP / gateway / DNS per interface) | indicator shows "No net" / "NM" |
 | UPower (`org.freedesktop.UPower` on the session bus) | battery indicator and hover tooltip (percentage, time estimate) | no battery indicator |
 | a D-Bus session bus | notification daemon (`org.freedesktop.Notifications`), the indicators above | notifications still work internally (panel + indicator), no external apps can send notifications |
 | `xdg-desktop-portal` (+ `gnome-terminal-server` if the terminal is GNOME Terminal) | clicking a URL in an app opens the default browser (the compositor imports `DISPLAY`/`WAYLAND_DISPLAY` into the systemd user manager and restarts the portal services) | URL clicks may not open a browser |

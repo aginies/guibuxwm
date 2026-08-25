@@ -41,6 +41,7 @@ static const char *action_name(enum guibux_action action, int arg) {
 	case GUIBUX_ACT_BRIGHTNESS_DOWN: return "brightness-down";
 	case GUIBUX_ACT_OUTPUTS_APPLY:   return "outputs-apply";
 	case GUIBUX_ACT_OUTPUTS_PANEL:  return "outputs-panel";
+	case GUIBUX_ACT_POWER:          return "power";
 	default:                       return "unknown";
 	}
 }
@@ -122,6 +123,8 @@ void help_show(struct guibux_server *server) {
 	struct guibux_help *h = &server->help;
 	if (h->active) return;
 	tooltip_hide(server);
+	osd_hide(server);
+	power_panel_hide(server);
 
 	struct wlr_output *output = output_at_cursor(server);
 	if (output == NULL) return;

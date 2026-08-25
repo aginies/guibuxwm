@@ -42,12 +42,18 @@
 #include <limits.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/signalfd.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <wlr/backend.h>
 #include <wlr/backend/headless.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/drm_format_set.h>
+#include <wlr/render/gles2.h>
+#include <wlr/render/pixman.h>
+#if GUIBUX_HAS_VULKAN
+#include <wlr/render/vulkan.h>
+#endif
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_xcursor_manager.h>
@@ -55,13 +61,15 @@
 
 int main(int argc, char *argv[]) {
 	wlr_log_init(WLR_INFO, NULL);
-	/* SIGUSR1 (guibuxwm-output live re-apply) is read via a signalfd on
-	 * the main thread; block it process-wide so every worker thread
-	 * inherits the blocked mask and the kernel never delivers it to a
-	 * thread that would take the default action (terminate) */
+	/* SIGUSR1 (guibuxwm-output live re-apply) and SIGHUP (config
+	 * reload) are read via signalfd on the main thread; block them
+	 * process-wide so every worker thread inherits the blocked mask
+	 * and the kernel never delivers them to a thread that would take
+	 * the default action (terminate / hang up) */
 	sigset_t usr1_mask;
 	sigemptyset(&usr1_mask);
 	sigaddset(&usr1_mask, SIGUSR1);
+	sigaddset(&usr1_mask, SIGHUP);
 	pthread_sigmask(SIG_BLOCK, &usr1_mask, NULL);
 	/* spawned children (terminals, launcher commands) are reaped by a
 	 * targeted SIGCHLD handler instead of accumulating as zombies;
@@ -105,6 +113,13 @@ int main(int argc, char *argv[]) {
 	server.topbar_height = DEFAULT_TOPBAR_H;
 	server.topbar_font_size = DEFAULT_TOPBAR_FONT_SIZE;
 	server.topbar_win_pad = DEFAULT_TOPBAR_WIN_PAD;
+	server.topbar_items[0] = TOPBAR_ITEM_NETWORK;
+	server.topbar_items[1] = TOPBAR_ITEM_VOLUME;
+	server.topbar_items[2] = TOPBAR_ITEM_MIC;
+	server.topbar_items[3] = TOPBAR_ITEM_BATTERY;
+	server.topbar_items[4] = TOPBAR_ITEM_NOTIFICATIONS;
+	server.topbar_items[5] = TOPBAR_ITEM_CLOCK;
+	server.topbar_item_count = TOPBAR_ITEMS_MAX;
 	server.background_scale = BG_FILL;
 	server.screensaver.timeout = 300;
 	server.focus_follow_mouse = true;
@@ -112,7 +127,10 @@ int main(int argc, char *argv[]) {
 	server.effects_duration_ms = 200;
 	server.window_open_effect = OPEN_EFFECT_SCALE;
 	server.notify_effect_slide = true;
+	server.osd_enabled = true;
+	server.osd_timeout_ms = 1500;
 	server.restore_positions = true;
+	server.renderer_name = strdup("auto");
 	keybinds_defaults(&server);
 
 	if (config_path == NULL) {
@@ -185,11 +203,29 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
+	/* config `renderer` selects the wlroots render backend; an explicit
+	 * WLR_RENDERER env always wins (tests and power users rely on it) */
+	if (strcmp(server.renderer_name, "auto") != 0 &&
+			getenv("WLR_RENDERER") == NULL) {
+		setenv("WLR_RENDERER", server.renderer_name, 0);
+	}
+
 	server.renderer = wlr_renderer_autocreate(server.backend);
 	if (server.renderer == NULL) {
 		wlr_log(WLR_ERROR, "failed to create wlr_renderer");
 		return 1;
 	}
+
+	const char *renderer_type = "pixman";
+	if (wlr_renderer_is_gles2(server.renderer)) {
+		renderer_type = "gles2";
+	}
+#if GUIBUX_HAS_VULKAN
+	else if (wlr_renderer_is_vk(server.renderer)) {
+		renderer_type = "vulkan";
+	}
+#endif
+	wlr_log(WLR_INFO, "renderer: %s", renderer_type);
 
 	wlr_renderer_init_wl_display(server.renderer, server.wl_display);
 
@@ -227,6 +263,11 @@ int main(int argc, char *argv[]) {
 	wl_signal_add(&server.xdg_shell->events.new_toplevel, &server.new_xdg_toplevel);
 	server.new_xdg_popup.notify = server_new_xdg_popup;
 	wl_signal_add(&server.xdg_shell->events.new_popup, &server.new_xdg_popup);
+
+	server.xdg_activation = wlr_xdg_activation_v1_create(server.wl_display);
+	server.xdg_activation_request.notify = xdg_activation_handle_request;
+	wl_signal_add(&server.xdg_activation->events.request_activate,
+		&server.xdg_activation_request);
 
 	server.cursor = wlr_cursor_create();
 	wlr_cursor_attach_output_layout(server.cursor, server.output_layout);
@@ -299,6 +340,22 @@ int main(int argc, char *argv[]) {
 	/* SIGUSR1 (sent by the guibuxwm-output tool): re-apply the outputs
 	 * config live */
 	outputs_apply_init(&server);
+
+	/* SIGHUP: reload the config file live (keybinds, colors, topbar,
+	 * backgrounds, outputs, screensaver) */
+	{
+		sigset_t hup_mask;
+		sigemptyset(&hup_mask);
+		sigaddset(&hup_mask, SIGHUP);
+		int sfd = signalfd(-1, &hup_mask, SFD_NONBLOCK | SFD_CLOEXEC);
+		if (sfd < 0) {
+			wlr_log(WLR_ERROR, "config: signalfd(SIGHUP) failed: %m");
+		} else {
+			server.config_signal_source = wl_event_loop_add_fd(
+				wl_display_get_event_loop(server.wl_display), sfd,
+				WL_EVENT_READABLE, config_signal_readable, &server);
+		}
+	}
 
 	if (!wlr_backend_start(server.backend)) {
 		wlr_backend_destroy(server.backend);
@@ -406,6 +463,30 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.tooltip_test_timer, 2000);
 	}
 
+	const char *osd_test = getenv("GUIBUX_TEST_OSD");
+	if (osd_test != NULL) {
+		server.osd_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			osd_test_run, &server);
+		wl_event_source_timer_update(server.osd_test_timer, 2000);
+	}
+
+	const char *power_test = getenv("GUIBUX_TEST_POWER");
+	if (power_test != NULL) {
+		server.power_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			power_panel_test_run, &server);
+		wl_event_source_timer_update(server.power_test_timer, 2000);
+	}
+
+	const char *topbar_items_test = getenv("GUIBUX_TEST_TOPBAR_ITEMS");
+	if (topbar_items_test != NULL) {
+		server.topbar_items_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			topbar_items_panel_test_run, &server);
+		wl_event_source_timer_update(server.topbar_items_test_timer, 2000);
+	}
+
 	const char *notify_test = getenv("GUIBUX_TEST_NOTIFY");
 	if (notify_test != NULL) {
 		server.notify_test_timer = wl_event_loop_add_timer(
@@ -509,6 +590,14 @@ int main(int argc, char *argv[]) {
 			delay > 0 ? delay : 2000);
 	}
 
+	const char *global_topbar_test = getenv("GUIBUX_TEST_GLOBAL_TOPBAR");
+	if (global_topbar_test != NULL) {
+		server.global_topbar_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			global_topbar_test_run, &server);
+		wl_event_source_timer_update(server.global_topbar_test_timer, 4000);
+	}
+
 	wlr_log(WLR_INFO, "guibuxwm running on WAYLAND_DISPLAY=%s", socket);
 	wl_display_run(server.wl_display);
 
@@ -519,6 +608,10 @@ int main(int argc, char *argv[]) {
 	sysinfo_destroy(&server);
 	notify_destroy(&server);
 	tooltip_destroy(&server);
+	preview_destroy(&server);
+	osd_destroy(&server);
+	power_panel_destroy(&server);
+	topbar_items_panel_destroy(&server);
 	screensaver_destroy(&server);
 	if (server.notify_autohide_timer != NULL) {
 		wl_event_source_remove(server.notify_autohide_timer);
@@ -528,6 +621,9 @@ int main(int argc, char *argv[]) {
 	}
 	if (server.outputs_signal_source != NULL) {
 		wl_event_source_remove(server.outputs_signal_source);
+	}
+	if (server.config_signal_source != NULL) {
+		wl_event_source_remove(server.config_signal_source);
 	}
 	if (server.notify_pipe[0] >= 0) {
 		close(server.notify_pipe[0]);
@@ -571,6 +667,15 @@ int main(int argc, char *argv[]) {
 	if (server.tooltip_test_timer != NULL) {
 		wl_event_source_remove(server.tooltip_test_timer);
 	}
+	if (server.osd_test_timer != NULL) {
+		wl_event_source_remove(server.osd_test_timer);
+	}
+	if (server.power_test_timer != NULL) {
+		wl_event_source_remove(server.power_test_timer);
+	}
+	if (server.topbar_items_test_timer != NULL) {
+		wl_event_source_remove(server.topbar_items_test_timer);
+	}
 	if (server.scroll_test_timer != NULL) {
 		wl_event_source_remove(server.scroll_test_timer);
 	}
@@ -607,6 +712,9 @@ int main(int argc, char *argv[]) {
 	if (server.quit_test_timer != NULL) {
 		wl_event_source_remove(server.quit_test_timer);
 	}
+	if (server.global_topbar_test_timer != NULL) {
+		wl_event_source_remove(server.global_topbar_test_timer);
+	}
 
 	launcher_hide(&server);
 	launcher_free_commands(&server.launcher);
@@ -633,6 +741,7 @@ int main(int argc, char *argv[]) {
 	free(server.outputs_spec);
 	free(server.outputs_env_spec);
 	free(server.config_path);
+	free(server.renderer_name);
 	free(server.xkb_layout);
 	free(server.xkb_variant);
 	free(server.xkb_options);

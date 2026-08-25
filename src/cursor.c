@@ -132,11 +132,22 @@ void process_cursor_motion(struct guibux_server *server, uint32_t time) {
 	} else if (in_topbar && topbar_notif_at(server, o, server->cursor->x,
 			server->cursor->y)) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
+	} else if (in_topbar && topbar_win_at(o, server->cursor->x,
+			server->cursor->y) != NULL) {
+		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
 	} else if (server->notify_panel.active &&
 			(notify_panel_row_at(server, server->cursor->x,
 				server->cursor->y) != 0 ||
 			 notify_panel_clear_at(server, server->cursor->x,
 				server->cursor->y))) {
+		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
+	} else if (server->power_panel.active &&
+			power_panel_action_at(server, server->cursor->x,
+				server->cursor->y) >= 0) {
+		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
+	} else if (server->topbar_items_panel.active &&
+			topbar_items_panel_row_at(server, server->cursor->x,
+				server->cursor->y) >= 0) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
 	} else if (!toplevel) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "default");
@@ -144,6 +155,8 @@ void process_cursor_motion(struct guibux_server *server, uint32_t time) {
 	server->cursor_topbar_output = o;
 	/* battery indicator tooltip: arm/disarm the hover on every move */
 	tooltip_update_hover(server, time);
+	/* window preview: arm/disarm the hover on every move */
+	preview_update_hover(server, time);
 	if (surface) {
 		wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
 		wlr_seat_pointer_notify_motion(seat, time, sx, sy);
@@ -212,6 +225,32 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 		} else {
 			overview_button_release(server);
 		}
+		return;
+	}
+	if (server->power_panel.active) {
+		if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
+			int idx = power_panel_action_at(server, server->cursor->x,
+				server->cursor->y);
+			if (idx >= 0) {
+				power_panel_select(server, idx);
+			} else {
+				power_panel_hide(server);
+			}
+		}
+		server->button_consumed = event->button;
+		return;
+	}
+	if (server->topbar_items_panel.active) {
+		if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
+			int idx = topbar_items_panel_row_at(server, server->cursor->x,
+				server->cursor->y);
+			if (idx >= 0) {
+				topbar_items_panel_toggle(server, idx);
+			} else {
+				topbar_items_panel_hide(server);
+			}
+		}
+		server->button_consumed = event->button;
 		return;
 	}
 	if (server->notify_panel.active) {
@@ -284,9 +323,12 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 				}
 				return;
 			}
-			/* check notification indicator */
-			if (topbar_notif_at(server, o, server->cursor->x,
-					server->cursor->y)) {
+			/* check notification indicator: only while there are
+			 * unread notifications (the cell is reserved but empty
+			 * otherwise) */
+			if (notify_count(&server->notify) > 0 &&
+					topbar_notif_at(server, o, server->cursor->x,
+						server->cursor->y)) {
 				notify_panel_show(server, o->wlr_output);
 				return;
 			}
@@ -296,7 +338,18 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 				server->cursor->x,
 				server->cursor->y);
 			if (win) {
-				if (win->workspace != o->current_workspace) {
+				/* the list is global (own + other monitors): switch to
+				 * the window's own monitor's workspace when it differs
+				 * from the clicked bar's monitor */
+				struct wlr_output *win_out =
+					toplevel_output_for(win);
+				struct guibux_output *win_o = win_out != NULL
+					? guibux_output_for(server, win_out) : NULL;
+				if (win_o != NULL && win_o != o) {
+					if (win->workspace != win_o->current_workspace) {
+						switch_workspace(win_o, win->workspace);
+					}
+				} else if (win->workspace != o->current_workspace) {
 					switch_workspace(o, win->workspace);
 				}
 				uint32_t dt = event->time_msec - server->last_topbar_click_time;

@@ -13,6 +13,20 @@ are logged and ignored. Format: one `key = value` per line, `#` comments.
 A sample with all defaults is in [`config/guibuxwm`](config/guibuxwm) — copy
 it to `~/.config/guibuxwm/config` and edit.
 
+### Reloading
+
+Send `SIGHUP` to the compositor process (`kill -HUP $(pidof guibuxwm)`) or
+bind the `reload-config` action to a key (e.g. `keybind = Mod+Shift+c:
+reload-config`) to re-read the config file without a restart.
+
+Reloaded live: colors, `topbar_height`/`topbar_font_size`/`topbar_win_pad`/`topbar_items`,
+keybinds, `term`/`term_app_id`, backgrounds (`background`, `background1..4`,
+`background_scale`), `screensaver_timeout`, `focus_follow_mouse`, `effects*`,
+`osd*`, `restore_positions`, `outputs`, overview colors.
+
+Not reloadable (a restart is required, a warning is logged): `renderer`,
+`xkb_layout`/`xkb_variant`/`xkb_options`, `icon_theme`, `preferred_app1..5`.
+
 ## Keys
 
 ### `term`
@@ -231,12 +245,12 @@ color_dim = #8888aa
 
 Topbar background color.
 
-**Default:** `#73ba25` (openSUSE green)
+**Default:** `#8839ef` (openSUSE green)
 
 **Example:**
 
 ```
-topbar_bg = #73ba25
+topbar_bg = #8839ef
 ```
 
 ---
@@ -294,6 +308,25 @@ Vertical padding of window pills inside the topbar, in pixels.
 
 ```
 topbar_win_pad = 0
+```
+
+---
+
+### `topbar_items`
+
+Right-side topbar indicators, comma-separated, in layout order.
+Available items: `network`, `volume`, `mic`, `battery`,
+`notifications`, `clock`. Items not listed are not rendered (and
+their click/scroll/tooltip handlers are inactive). An item that is
+enabled but has no data (e.g. no battery, no audio) stays hidden
+automatically.
+
+**Default:** `network, volume, mic, battery, notifications, clock`
+
+**Example:**
+
+```
+topbar_items = network, battery, clock
 ```
 
 ---
@@ -489,6 +522,37 @@ notify_effect = none
 
 ---
 
+### `osd`
+
+On-screen display for volume, mic and brightness changes: a centered box
+on the monitor under the cursor shows the label, value (`VOL 65%`,
+`MIC 30%`, `BRI 40%`, `MUTE` when muted) and a horizontal bar.
+
+**Default:** `true`
+
+**Example:**
+
+```
+osd = false
+```
+
+---
+
+### `osd_timeout_ms`
+
+How long the OSD stays visible after a change, in milliseconds. `0`
+disables the OSD.
+
+**Default:** `1500`
+
+**Example:**
+
+```
+osd_timeout_ms = 2000
+```
+
+---
+
 ### `outputs`
 
 Monitor arrangement spec, see [Multi-monitor](multi-monitor.md).
@@ -504,7 +568,27 @@ and signals a re-apply, so changes take effect without a restart.
 **Example:**
 
 ```
-outputs = DP-1@0x0,HDMI-A-1@1920x0:1920x1080:90
+outputs = DP-1@0x0,HDMI-A-1@1920x1080:1920x1080:90
+```
+
+---
+
+### `renderer`
+
+Render backend used by wlroots: `auto` (let wlroots pick), `gles2`,
+`vulkan`, or `pixman` (software, fallback only). On wlroots 0.20, `auto`
+prefers GLES2; `vulkan` is the fastest option on modern GPUs and the
+only GPU backend in wlroots 0.21+. If the requested backend cannot be
+created, the compositor exits — remove the line to fall back to `auto`.
+An explicit `WLR_RENDERER` env var always wins over this key. The active
+backend is logged at startup (`renderer: vulkan|gles2|pixman`).
+
+**Default:** `auto`
+
+**Example:**
+
+```
+renderer = vulkan
 ```
 
 ---

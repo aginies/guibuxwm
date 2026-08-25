@@ -177,6 +177,190 @@ int launcher_draw_text_on_surface(cairo_surface_t *cs, FT_Face face,
 	return cx - x;
 }
 
+/* per-render context for the right-side indicator items: the enabled
+ * set + order comes from the config `topbar_items` key */
+#define TOPBAR_ITEM_PAD 4
+
+struct topbar_items {
+	struct guibux_server *server;
+	struct guibux_output *o;
+	cairo_t *cr;
+	cairo_surface_t *cs;
+	int scale;
+	int baseline;
+	int cell_y;
+	int cell_h;
+	struct guibux_sysinfo_snapshot snap;
+	char vol[16];
+	char mic[16];
+	char batbuf[40];
+	int notif_count;
+	int ind_w;
+	int ind_x;
+	int date_x;
+	bool clock_enabled;
+};
+
+static bool topbar_item_enabled(struct guibux_server *server, int id) {
+	for (int i = 0; i < server->topbar_item_count; i++) {
+		if (server->topbar_items[i] == id) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void topbar_items_prepare(struct topbar_items *ctx) {
+	struct guibux_server *server = ctx->server;
+	struct guibux_output *o = ctx->o;
+	sysinfo_get(&server->sysinfo, &ctx->snap);
+	const char *net = ctx->snap.net;
+	const char *bat = ctx->snap.bat;
+
+	/* audio indicators: "VOL 65%" / "VOL MUTE", "MIC 80%" / "MIC MUTE";
+	 * empty when no audio is available (hidden) */
+	if (ctx->snap.audio_available) {
+		if (ctx->snap.muted) {
+			snprintf(ctx->vol, sizeof(ctx->vol), "VOL MUTE");
+		} else {
+			snprintf(ctx->vol, sizeof(ctx->vol), "VOL %d%%", ctx->snap.volume);
+		}
+		if (ctx->snap.mic_muted) {
+			snprintf(ctx->mic, sizeof(ctx->mic), "MIC MUTE");
+		} else {
+			snprintf(ctx->mic, sizeof(ctx->mic), "MIC %d%%", ctx->snap.mic_volume);
+		}
+	} else {
+		ctx->vol[0] = '\0';
+		ctx->mic[0] = '\0';
+	}
+
+	/* battery label: "BAT NN%" */
+	if (bat[0] != '\0') {
+		snprintf(ctx->batbuf, sizeof(ctx->batbuf), "BAT %s", bat);
+	} else {
+		ctx->batbuf[0] = '\0';
+	}
+
+	ctx->notif_count = notify_count(&server->notify);
+
+	/* remember the rendered sysinfo values: topbar_tick marks the bar
+	 * dirty when the worker thread publishes a change, so external
+	 * updates (network, volume) show up without other activity */
+	snprintf(o->topbar_network, sizeof(o->topbar_network), "%s", net);
+	snprintf(o->topbar_battery, sizeof(o->topbar_battery), "%s", bat);
+	o->topbar_audio_avail = ctx->snap.audio_available;
+	o->topbar_vol_pct = ctx->snap.volume;
+	o->topbar_vol_muted = ctx->snap.muted;
+	o->topbar_mic_pct = ctx->snap.mic_volume;
+	o->topbar_mic_muted = ctx->snap.mic_muted;
+}
+
+static void topbar_item_draw_separator(struct topbar_items *ctx, int x, int gap) {
+	cairo_set_source_rgb(ctx->cr,
+		((ctx->server->color_border >> 16) & 0xFF) / 255.0,
+		((ctx->server->color_border >> 8) & 0xFF) / 255.0,
+		(ctx->server->color_border & 0xFF) / 255.0);
+	cairo_rectangle(ctx->cr, (int)((x + gap / 2.0) * ctx->scale) - (int)(ctx->scale),
+		ctx->cell_y * ctx->scale, 2 * ctx->scale, ctx->cell_h * ctx->scale);
+	cairo_fill(ctx->cr);
+}
+
+/* plan + draw one indicator at the current ctx->ind_x; returns the
+ * advanced x (unchanged when the item is disabled or has no data).
+ * Each item gets TOPBAR_ITEM_PAD on both sides so text does not touch
+ * the separators */
+static int topbar_item_render(struct topbar_items *ctx, int id) {
+	struct guibux_server *server = ctx->server;
+	struct guibux_output *o = ctx->o;
+	if (!topbar_item_enabled(server, id)) {
+		return ctx->ind_x;
+	}
+	int x = ctx->ind_x + TOPBAR_ITEM_PAD;
+	switch (id) {
+	case TOPBAR_ITEM_NETWORK: {
+		o->topbar_net_count = 0;
+		for (int i = 0; i < ctx->snap.net_iface_count; i++) {
+			const char *lbl = ctx->snap.net_ifaces[i].label;
+			if (lbl[0] == '\0') {
+				continue;
+			}
+			if (o->topbar_net_count > 0) {
+				x += 8;
+			}
+			o->topbar_net_x[o->topbar_net_count] = x;
+			o->topbar_net_w[o->topbar_net_count] = guibux_text_width(
+				server->launcher.face, lbl) / ctx->scale;
+			launcher_draw_text_on_surface(ctx->cs, server->launcher.face,
+				lbl, x * ctx->scale, ctx->baseline,
+				server->color_topbar_text);
+			x += o->topbar_net_w[o->topbar_net_count];
+			o->topbar_net_count++;
+		}
+		break;
+	}
+	case TOPBAR_ITEM_VOLUME:
+		o->topbar_vol_x = 0;
+		o->topbar_vol_w = 0;
+		if (ctx->vol[0] != '\0') {
+			o->topbar_vol_x = x;
+			o->topbar_vol_w = guibux_text_width(server->launcher.face,
+				ctx->vol) / ctx->scale;
+			launcher_draw_text_on_surface(ctx->cs, server->launcher.face,
+				ctx->vol, x * ctx->scale, ctx->baseline,
+				server->color_topbar_text);
+			x += o->topbar_vol_w;
+		}
+		break;
+	case TOPBAR_ITEM_MIC:
+		o->topbar_mic_x = 0;
+		o->topbar_mic_w = 0;
+		if (ctx->mic[0] != '\0') {
+			o->topbar_mic_x = x;
+			o->topbar_mic_w = guibux_text_width(server->launcher.face,
+				ctx->mic) / ctx->scale;
+			launcher_draw_text_on_surface(ctx->cs, server->launcher.face,
+				ctx->mic, x * ctx->scale, ctx->baseline,
+				server->color_topbar_text);
+			x += o->topbar_mic_w;
+		}
+		break;
+	case TOPBAR_ITEM_BATTERY:
+		o->topbar_bat_x = 0;
+		o->topbar_bat_w = 0;
+		if (ctx->batbuf[0] != '\0') {
+			o->topbar_bat_x = x;
+			o->topbar_bat_w = guibux_text_width(server->launcher.face,
+				ctx->batbuf) / ctx->scale;
+			launcher_draw_text_on_surface(ctx->cs, server->launcher.face,
+				ctx->batbuf, x * ctx->scale, ctx->baseline,
+				server->color_topbar_text);
+			x += o->topbar_bat_w;
+		}
+		break;
+	case TOPBAR_ITEM_NOTIFICATIONS:
+		o->topbar_notif_x = 0;
+		o->topbar_notif_w = 0;
+		/* the cell is always reserved (fixed width) so the clock and
+		 * the items to its right never shift as the count changes; the
+		 * bell + count only draw while there are unread notifications */
+		o->topbar_notif_w = notify_indicator_width(
+			server->launcher.face, ctx->scale, ctx->notif_count);
+		if (ctx->notif_count > 0) {
+			o->topbar_notif_x = x;
+			notify_draw_indicator(ctx->cs, ctx->cr, server->launcher.face,
+				x, ctx->baseline, ctx->scale, ctx->notif_count,
+				server->color_topbar_text);
+		}
+		x += o->topbar_notif_w;
+		break;
+	case TOPBAR_ITEM_CLOCK:
+		break;
+	}
+	ctx->ind_x = x + TOPBAR_ITEM_PAD;
+	return ctx->ind_x;
+}
+
 void topbar_render(struct guibux_output *o) {
 	struct guibux_server *server = o->server;
 	if (server->launcher.face == NULL || server->launcher.shm_alloc == NULL) {
@@ -282,20 +466,31 @@ void topbar_render(struct guibux_output *o) {
 
 	char left[16];
 	snprintf(left, sizeof(left), "%c", 'A' + (o->topbar_number - 1));
+	/* monitor badge: outlined rounded rect around the letter so the
+	 * monitor is visually distinct from the workspace numbers */
+	int badge_pad = 4;
+	int badge_w = guibux_text_width(server->launcher.face, left) / scale
+		+ 2 * badge_pad;
+	topbar_rounded_rect(cr, TOPBAR_PAD * scale, cell_y * scale,
+		badge_w * scale, cell_h * scale, 4 * scale);
+	set_color(cr, server->color_border);
+	cairo_set_line_width(cr, 1.0 * scale);
+	cairo_stroke(cr);
 	launcher_draw_text_on_surface(cs, server->launcher.face, left,
-		TOPBAR_PAD * scale, baseline, server->color_topbar_text);
+		(TOPBAR_PAD + badge_pad) * scale, baseline,
+		server->color_topbar_text);
 
 	int cell_w = guibux_text_width(server->launcher.face, "9") / scale + 8;
 	o->topbar_ws_cell_w = cell_w;
-	int x = TOPBAR_PAD + guibux_text_width(server->launcher.face, left) / scale + 12;
+	int x = TOPBAR_PAD + badge_w + 12;
 	for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {
 		o->topbar_ws_x[ws] = x;
 		char num[8];
 		snprintf(num, sizeof(num), "%d", ws);
 		if (ws == o->current_workspace) {
 			set_color(cr, server->color_highlight);
-			cairo_rectangle(cr, x * scale, cell_y * scale,
-				cell_w * scale, cell_h * scale);
+			topbar_rounded_rect(cr, x * scale, cell_y * scale,
+				cell_w * scale, cell_h * scale, 4 * scale);
 			cairo_fill(cr);
 			launcher_draw_text_on_surface(cs, server->launcher.face, num,
 				(x + 4) * scale, baseline, server->color_text);
@@ -339,13 +534,32 @@ void topbar_render(struct guibux_output *o) {
 
 	struct guibux_toplevel *wins[TOPBAR_WIN_MAX];
 	int nwins = 0;
+	/* global list: own-monitor windows first, then the windows of the
+	 * other monitors (a vertical separator is drawn between the two
+	 * groups). The prefix "A2: " (monitor letter + workspace number)
+	 * disambiguates cross-monitor entries */
 	wl_list_for_each(t, &server->toplevels, link) {
 		if (t->is_fullscreen)
 			continue;
-		if (toplevel_output_for(t) != o->wlr_output)
-			continue;
-		if (nwins < TOPBAR_WIN_MAX)
+		if (toplevel_output_for(t) == o->wlr_output &&
+				nwins < TOPBAR_WIN_MAX)
 			wins[nwins++] = t;
+	}
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->is_fullscreen)
+			continue;
+		if (toplevel_output_for(t) != o->wlr_output &&
+				nwins < TOPBAR_WIN_MAX)
+			wins[nwins++] = t;
+	}
+	/* number of own-monitor windows: the separator is drawn after this
+	 * many cells (only when there are windows on both sides) */
+	int own_count = 0;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->is_fullscreen)
+			continue;
+		if (toplevel_output_for(t) == o->wlr_output)
+			own_count++;
 	}
 
 	/* put focused first */
@@ -365,82 +579,81 @@ void topbar_render(struct guibux_output *o) {
 		"%a %d %b %Y  %H:%M", &tm);
 	o->topbar_minute = now / 60;
 
-	/* snapshot sysinfo (published by the sysinfo worker thread) */
-	struct guibux_sysinfo_snapshot snap;
-	sysinfo_get(&o->server->sysinfo, &snap);
-	const char *net = snap.net;
-	const char *bat = snap.bat;
-
-	/* audio indicators: "VOL 65%" / "VOL MUTE", "MIC 80%" / "MIC MUTE";
-	 * empty when no audio is available (hidden) */
-	char vol[16], mic[16];
-	if (snap.audio_available) {
-		if (snap.muted) {
-			snprintf(vol, sizeof(vol), "VOL MUTE");
-		} else {
-			snprintf(vol, sizeof(vol), "VOL %d%%", snap.volume);
-		}
-		if (snap.mic_muted) {
-			snprintf(mic, sizeof(mic), "MIC MUTE");
-		} else {
-			snprintf(mic, sizeof(mic), "MIC %d%%", snap.mic_volume);
-		}
-	} else {
-		vol[0] = '\0';
-		mic[0] = '\0';
-	}
-
-	/* battery label: "BAT NN%" */
-	char batbuf[40];
-	if (bat[0] != '\0') {
-		snprintf(batbuf, sizeof(batbuf), "BAT %s", bat);
-	} else {
-		batbuf[0] = '\0';
-	}
-
-	/* remember the rendered sysinfo values: topbar_tick marks the bar
-	 * dirty when the worker thread publishes a change, so external
-	 * updates (network, volume) show up without other activity */
-	snprintf(o->topbar_network, sizeof(o->topbar_network), "%s", net);
-	snprintf(o->topbar_battery, sizeof(o->topbar_battery), "%s", bat);
-	o->topbar_audio_avail = snap.audio_available;
-	o->topbar_vol_pct = snap.volume;
-	o->topbar_vol_muted = snap.muted;
-	o->topbar_mic_pct = snap.mic_volume;
-	o->topbar_mic_muted = snap.mic_muted;
+	/* right-side indicator items: the enabled set + order comes from
+	 * the config `topbar_items` key */
+	struct topbar_items ctx = {
+		.server = server,
+		.o = o,
+		.cr = cr,
+		.cs = cs,
+		.scale = scale,
+		.baseline = baseline,
+		.cell_y = cell_y,
+		.cell_h = cell_h,
+	};
+	topbar_items_prepare(&ctx);
+	ctx.clock_enabled = topbar_item_enabled(server, TOPBAR_ITEM_CLOCK);
 
 	/* calculate indicator width (logical units; text widths come back
 	 * in device pixels at the scaled font size) */
 	int ind_w = 0;
-	if (net[0] != '\0') {
-		ind_w += guibux_text_width(server->launcher.face, net) / scale;
-	}
-	if (vol[0] != '\0') {
-		/* separator between net and audio: 4px + 2px line + 4px */
-		if (ind_w > 0) ind_w += 10;
-		ind_w += guibux_text_width(server->launcher.face, vol) / scale;
-	}
-	if (mic[0] != '\0') {
-		if (ind_w > 0) ind_w += 8;
-		ind_w += guibux_text_width(server->launcher.face, mic) / scale;
-	}
-	if (batbuf[0] != '\0') {
-		/* separator between audio indicators and battery:
-		 * 4px + 2px line + 4px */
-		if (ind_w > 0) ind_w += 10;
-		ind_w += guibux_text_width(server->launcher.face, batbuf) / scale;
-	}
-	int notif_count = notify_count(&server->notify);
-	int notif_w = notify_indicator_width(server->launcher.face, scale,
-		notif_count);
-	if (notif_count > 0) {
-		if (ind_w > 0) ind_w += 8;
-		ind_w += notif_w;
+	for (int i = 0; i < server->topbar_item_count; i++) {
+		int id = server->topbar_items[i];
+		if (id == TOPBAR_ITEM_CLOCK) {
+			continue;
+		}
+		int seg = 0;
+		switch (id) {
+		case TOPBAR_ITEM_NETWORK:
+			for (int j = 0; j < ctx.snap.net_iface_count; j++) {
+				if (ctx.snap.net_ifaces[j].label[0] == '\0') {
+					continue;
+				}
+				if (seg > 0) {
+					seg += 8;
+				}
+				seg += guibux_text_width(server->launcher.face,
+					ctx.snap.net_ifaces[j].label) / scale;
+			}
+			break;
+		case TOPBAR_ITEM_VOLUME:
+			if (ctx.vol[0] != '\0') {
+				seg = guibux_text_width(server->launcher.face,
+					ctx.vol) / scale;
+			}
+			break;
+		case TOPBAR_ITEM_MIC:
+			if (ctx.mic[0] != '\0') {
+				seg = guibux_text_width(server->launcher.face,
+					ctx.mic) / scale;
+			}
+			break;
+		case TOPBAR_ITEM_BATTERY:
+			if (ctx.batbuf[0] != '\0') {
+				seg = guibux_text_width(server->launcher.face,
+					ctx.batbuf) / scale;
+			}
+			break;
+		case TOPBAR_ITEM_NOTIFICATIONS:
+			/* fixed-width cell, see topbar_item_render */
+			seg = notify_indicator_width(server->launcher.face, scale,
+				ctx.notif_count);
+			break;
+		}
+		if (seg > 0) {
+			seg += 2 * TOPBAR_ITEM_PAD;
+			if (ind_w > 0) {
+				/* separator between groups: 5px + 2px line + 5px */
+				ind_w += 12;
+			}
+			ind_w += seg;
+		}
 	}
 
-	int date_w = guibux_text_width(server->launcher.face, o->topbar_right) / scale;
+	int date_w = ctx.clock_enabled ?
+		guibux_text_width(server->launcher.face, o->topbar_right) / scale : 0;
 	int date_x = w / scale - TOPBAR_PAD - date_w;
-	int ind_start = date_x - 10 - ind_w;
+	int ind_start = date_x - (ind_w > 0 ? 12 : 0) - ind_w;
 	int win_end = ind_start - sep_gap;
 	if (win_end < win_x)
 		win_end = win_x;
@@ -470,9 +683,14 @@ void topbar_render(struct guibux_output *o) {
 	for (int i = 0; i < nwins && win_x < win_end; i++) {
 		const char *title = toplevel_get_title(wins[i]) ?
 			toplevel_get_title(wins[i]) : "(untitled)";
+		/* the prefix letter is the window's own monitor, not this bar's:
+		 * the list is global, so cross-monitor entries need their real
+		 * monitor letter to be unambiguous */
+		struct guibux_output *wo = guibux_output_for(o->server,
+			toplevel_output_for(wins[i]));
+		char mon = wo != NULL ? 'A' + (wo->topbar_number - 1) : 'A';
 		char prefix[8];
-		snprintf(prefix, sizeof(prefix), "%c%d: ",
-			'A' + (o->topbar_number - 1), wins[i]->workspace);
+		snprintf(prefix, sizeof(prefix), "%c%d: ", mon, wins[i]->workspace);
 		int pw = guibux_text_width(server->launcher.face, prefix);
 		int budget = max_w - 16 - pw;
 		if (budget < 0)
@@ -547,136 +765,50 @@ void topbar_render(struct guibux_output *o) {
 		}
 		win_x += cell_w + TOPBAR_WIN_GAP;
 		rendered++;
+		/* separator between the own-monitor group and the
+		 * other-monitor group */
+		if (rendered == own_count && own_count < nwins &&
+				win_x < win_end) {
+			cairo_set_source_rgb(cr,
+				((server->color_border >> 16) & 0xFF) / 255.0,
+				((server->color_border >> 8) & 0xFF) / 255.0,
+				(server->color_border & 0xFF) / 255.0);
+			cairo_rectangle(cr,
+				(int)((win_x + TOPBAR_WIN_GAP / 2) * scale) - (int)(scale),
+				cell_y * scale, 2 * scale, cell_h * scale);
+			cairo_fill(cr);
+			win_x += TOPBAR_WIN_GAP;
+		}
 	}
 	o->topbar_win_count = rendered;
 
-	/* render network + battery indicators */
-	int ind_x = date_x - ind_w - 10;
+	/* render the enabled indicator items in config order */
+	ctx.ind_x = date_x - (ind_w > 0 ? 12 : 0) - ind_w;
 
-	/* separator between indicators and date */
+	/* separator between indicators and the right edge */
 	if (ind_w > 0) {
-		cairo_set_source_rgb(cr,
-			((server->color_border >> 16) & 0xFF) / 255.0,
-			((server->color_border >> 8) & 0xFF) / 255.0,
-			(server->color_border & 0xFF) / 255.0);
-		cairo_rectangle(cr, (int)((date_x - 5) * scale) - (int)(scale),
-			cell_y * scale, 2 * scale, cell_h * scale);
-		cairo_fill(cr);
+		topbar_item_draw_separator(&ctx, date_x - 6, 12);
 	}
 
-	o->topbar_net_x = 0;
-	o->topbar_net_w = 0;
-	if (net[0] != '\0') {
-		/* hit area is the net text only: the block also holds the
-		 * audio/battery/notification indicators, which have their own */
-		o->topbar_net_x = ind_x;
-		o->topbar_net_w = guibux_text_width(server->launcher.face,
-			net) / scale;
-		launcher_draw_text_on_surface(cs, server->launcher.face,
-			net,
-			ind_x * scale, baseline, server->color_topbar_text);
-		ind_x += o->topbar_net_w;
-		if (vol[0] != '\0') {
-			/* separator between net and audio indicators */
-			cairo_set_source_rgb(cr,
-				((server->color_border >> 16) & 0xFF) / 255.0,
-				((server->color_border >> 8) & 0xFF) / 255.0,
-				(server->color_border & 0xFF) / 255.0);
-			cairo_rectangle(cr, (int)((ind_x + 5) * scale) - (int)(scale),
-				cell_y * scale, 2 * scale, cell_h * scale);
-			cairo_fill(cr);
-			ind_x += 10;
-		} else {
-			ind_x += 8;
+	for (int i = 0; i < server->topbar_item_count; i++) {
+		int id = server->topbar_items[i];
+		if (id == TOPBAR_ITEM_CLOCK) {
+			continue;
+		}
+		int before = ctx.ind_x;
+		topbar_item_render(&ctx, id);
+		if (ctx.ind_x > before && i + 1 < server->topbar_item_count) {
+			/* separator between groups (not after the last item) */
+			topbar_item_draw_separator(&ctx, ctx.ind_x + 6, 12);
+			ctx.ind_x += 12;
 		}
 	}
-	o->topbar_vol_x = 0;
-	o->topbar_vol_w = 0;
-	if (vol[0] != '\0') {
-		o->topbar_vol_x = ind_x;
-		o->topbar_vol_w = guibux_text_width(server->launcher.face,
-			vol) / scale;
-		launcher_draw_text_on_surface(cs, server->launcher.face,
-			vol,
-			ind_x * scale, baseline, server->color_topbar_text);
-		ind_x += o->topbar_vol_w;
-	}
-	o->topbar_mic_x = 0;
-	o->topbar_mic_w = 0;
-	if (mic[0] != '\0') {
-		ind_x += 8;
-		o->topbar_mic_x = ind_x;
-		o->topbar_mic_w = guibux_text_width(server->launcher.face,
-			mic) / scale;
-		launcher_draw_text_on_surface(cs, server->launcher.face,
-			mic,
-			ind_x * scale, baseline, server->color_topbar_text);
-		ind_x += o->topbar_mic_w;
-	}
-	o->topbar_bat_x = 0;
-	o->topbar_bat_w = 0;
-	if (batbuf[0] != '\0') {
-		bool had_prev = net[0] != '\0' || vol[0] != '\0' ||
-			mic[0] != '\0';
-		if (had_prev) {
-			/* separator between audio indicators and battery */
-			cairo_set_source_rgb(cr,
-				((server->color_border >> 16) & 0xFF) / 255.0,
-				((server->color_border >> 8) & 0xFF) / 255.0,
-				(server->color_border & 0xFF) / 255.0);
-			cairo_rectangle(cr, (int)((ind_x + 5) * scale) - (int)(scale),
-				cell_y * scale, 2 * scale, cell_h * scale);
-			cairo_fill(cr);
-			ind_x += 10;
-		}
-		o->topbar_bat_x = ind_x;
-		o->topbar_bat_w = guibux_text_width(server->launcher.face,
-			batbuf) / scale;
-		launcher_draw_text_on_surface(cs, server->launcher.face,
-			batbuf,
-			ind_x * scale, baseline, server->color_topbar_text);
-		ind_x += o->topbar_bat_w;
-	}
 
-	/* separator between battery and date */
-	if (bat[0] != '\0') {
-		cairo_set_source_rgb(cr,
-			((server->color_border >> 16) & 0xFF) / 255.0,
-			((server->color_border >> 8) & 0xFF) / 255.0,
-			(server->color_border & 0xFF) / 255.0);
-		cairo_rectangle(cr, (int)((ind_x + 4) * scale) - (int)(scale),
-			cell_y * scale, 2 * scale, cell_h * scale);
-		cairo_fill(cr);
-		ind_x += 8;
+	if (ctx.clock_enabled) {
+		launcher_draw_text_on_surface(cs, server->launcher.face, o->topbar_right,
+			date_x * scale,
+			baseline, server->color_topbar_text);
 	}
-
-	/* notification indicator: bell + pending count */
-	if (notif_count > 0) {
-		bool had_prev = net[0] != '\0' || vol[0] != '\0' ||
-			mic[0] != '\0' || bat[0] != '\0';
-		if (had_prev) {
-			cairo_set_source_rgb(cr,
-				((server->color_border >> 16) & 0xFF) / 255.0,
-				((server->color_border >> 8) & 0xFF) / 255.0,
-				(server->color_border & 0xFF) / 255.0);
-			cairo_rectangle(cr, (int)((ind_x + 4) * scale) - (int)(scale),
-				cell_y * scale, 2 * scale, cell_h * scale);
-			cairo_fill(cr);
-			ind_x += 8;
-		}
-		o->topbar_notif_x = ind_x;
-		o->topbar_notif_w = notif_w;
-		notify_draw_indicator(cs, cr, server->launcher.face,
-			ind_x, baseline, scale, notif_count,
-			server->color_topbar_text);
-	} else {
-		o->topbar_notif_x = 0;
-		o->topbar_notif_w = 0;
-	}
-
-	launcher_draw_text_on_surface(cs, server->launcher.face, o->topbar_right,
-		date_x * scale,
-		baseline, server->color_topbar_text);
 
 	cairo_destroy(cr);
 	cairo_surface_destroy(cs);
@@ -745,21 +877,27 @@ bool topbar_workspace_at(struct guibux_server *server, double lx,
 }
 
 bool topbar_network_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly) {
-	if (o == NULL || o->topbar_buffer == NULL || o->topbar_net_w <= 0) {
-		return false;
+	return topbar_network_index_at(server, o, lx, ly) >= 0;
+}
+
+int topbar_network_index_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly) {
+	if (o == NULL || o->topbar_buffer == NULL || o->topbar_net_count <= 0) {
+		return -1;
 	}
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
 	if (lx < box.x || lx >= box.x + box.width ||
 			ly < box.y || ly >= box.y + o->server->topbar_height) {
-		return false;
+		return -1;
 	}
 	double rel = lx - box.x;
-	if (rel >= o->topbar_net_x &&
-			rel < o->topbar_net_x + o->topbar_net_w) {
-		return true;
+	for (int i = 0; i < o->topbar_net_count; i++) {
+		if (rel >= o->topbar_net_x[i] &&
+				rel < o->topbar_net_x[i] + o->topbar_net_w[i]) {
+			return i;
+		}
 	}
-	return false;
+	return -1;
 }
 
 bool topbar_battery_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly) {
@@ -838,6 +976,8 @@ void topbar_win_remove(struct guibux_output *o,
 	if (o == NULL) {
 		return;
 	}
+	/* a preview of the unmapped window would dangle on a dead buffer */
+	preview_on_unmap(o->server, toplevel);
 	for (int i = 0; i < o->topbar_win_count; i++) {
 		if (o->topbar_wins[i] == toplevel) {
 			int n = o->topbar_win_count - i - 1;
@@ -909,17 +1049,33 @@ int topbar_tick(void *data) {
 	}
 	struct guibux_output *o;
 	wl_list_for_each(o, &server->outputs, link) {
-		if (o->topbar_minute != minute) {
+		if (o->topbar_minute != minute &&
+				topbar_item_enabled(server, TOPBAR_ITEM_CLOCK)) {
 			o->topbar_minute = minute;
 			o->topbar_dirty = true;
-		} else if (strcmp(o->topbar_network, snap.net) != 0 ||
-				strcmp(o->topbar_battery, snap.bat) != 0 ||
-				o->topbar_audio_avail != snap.audio_available ||
-				o->topbar_vol_pct != snap.volume ||
-				o->topbar_vol_muted != snap.muted ||
-				o->topbar_mic_pct != snap.mic_volume ||
-				o->topbar_mic_muted != snap.mic_muted) {
-			o->topbar_dirty = true;
+		} else {
+			bool changed = false;
+			if (topbar_item_enabled(server, TOPBAR_ITEM_NETWORK) &&
+					strcmp(o->topbar_network, snap.net) != 0) {
+				changed = true;
+			}
+			if (topbar_item_enabled(server, TOPBAR_ITEM_BATTERY) &&
+					strcmp(o->topbar_battery, snap.bat) != 0) {
+				changed = true;
+			}
+			if (topbar_item_enabled(server, TOPBAR_ITEM_VOLUME) ||
+					topbar_item_enabled(server, TOPBAR_ITEM_MIC)) {
+				if (o->topbar_audio_avail != snap.audio_available ||
+						o->topbar_vol_pct != snap.volume ||
+						o->topbar_vol_muted != snap.muted ||
+						o->topbar_mic_pct != snap.mic_volume ||
+						o->topbar_mic_muted != snap.mic_muted) {
+					changed = true;
+				}
+			}
+			if (changed) {
+				o->topbar_dirty = true;
+			}
 		}
 		if (o->topbar_dirty) {
 			topbar_render(o);
@@ -928,6 +1084,8 @@ int topbar_tick(void *data) {
 	/* the battery tooltip arms on pointer motion and shows once the
 	 * hover delay has elapsed; this tick is the delay checker */
 	tooltip_tick(server);
+	preview_tick(server);
+	osd_tick(server);
 	wl_event_source_timer_update(server->topbar_timer, 500);
 	return 0;
 }
@@ -952,6 +1110,56 @@ int topbar_test_run(void *data) {
 			wlr_log(WLR_ERROR, "topbar-test: FAIL time string '%s'",
 				o->topbar_right);
 			return 0;
+		}
+		/* test hook: GUIBUX_TEST_TOPBAR_DISABLED=volume,battery — the
+		 * listed items must not be rendered (hit rect zero) */
+		const char *disabled = getenv("GUIBUX_TEST_TOPBAR_DISABLED");
+		if (disabled != NULL) {
+			char *disabled_copy = strdup(disabled);
+			char *save = NULL;
+			for (char *tok = strtok_r(disabled_copy, ",", &save);
+					tok != NULL; tok = strtok_r(NULL, ",", &save)) {
+				int id = -1;
+				if (!strcmp(tok, "network")) id = TOPBAR_ITEM_NETWORK;
+				else if (!strcmp(tok, "volume")) id = TOPBAR_ITEM_VOLUME;
+				else if (!strcmp(tok, "mic")) id = TOPBAR_ITEM_MIC;
+				else if (!strcmp(tok, "battery")) id = TOPBAR_ITEM_BATTERY;
+				else if (!strcmp(tok, "notifications")) id = TOPBAR_ITEM_NOTIFICATIONS;
+				else if (!strcmp(tok, "clock")) id = TOPBAR_ITEM_CLOCK;
+				if (id < 0) {
+					continue;
+				}
+				bool enabled = false;
+				for (int i = 0; i < server->topbar_item_count; i++) {
+					if (server->topbar_items[i] == id) {
+						enabled = true;
+					}
+				}
+				if (enabled) {
+					wlr_log(WLR_ERROR,
+						"topbar-test: FAIL disabled item '%s' still enabled",
+						tok);
+					free(disabled_copy);
+					return 0;
+				}
+				int w = 0;
+				switch (id) {
+				case TOPBAR_ITEM_NETWORK: w = o->topbar_net_count; break;
+				case TOPBAR_ITEM_VOLUME: w = o->topbar_vol_w; break;
+				case TOPBAR_ITEM_MIC: w = o->topbar_mic_w; break;
+				case TOPBAR_ITEM_BATTERY: w = o->topbar_bat_w; break;
+				case TOPBAR_ITEM_NOTIFICATIONS: w = o->topbar_notif_w; break;
+				default: break;
+				}
+				if (w != 0) {
+					wlr_log(WLR_ERROR,
+						"topbar-test: FAIL disabled item '%s' rendered (w=%d)",
+						tok, w);
+					free(disabled_copy);
+					return 0;
+				}
+			}
+			free(disabled_copy);
 		}
 	}
 	wlr_log(WLR_INFO, "topbar-test: OK (%d outputs)", n);

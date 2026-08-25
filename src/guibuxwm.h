@@ -27,6 +27,7 @@
 #include <wlr/types/wlr_idle_inhibit_v1.h>
 #include <wlr/types/wlr_idle_notify_v1.h>
 #include <wlr/types/wlr_screencopy_v1.h>
+#include <wlr/types/wlr_xdg_activation_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/xwayland.h>
 #endif
@@ -44,6 +45,15 @@
 #define DEFAULT_TOPBAR_FONT_SIZE 16
 #define DEFAULT_TOPBAR_WIN_PAD 2
 #define TOPBAR_PAD 8
+#define TOPBAR_ITEMS_MAX 6
+enum topbar_item_id {
+	TOPBAR_ITEM_NETWORK = 0,
+	TOPBAR_ITEM_VOLUME,
+	TOPBAR_ITEM_MIC,
+	TOPBAR_ITEM_BATTERY,
+	TOPBAR_ITEM_NOTIFICATIONS,
+	TOPBAR_ITEM_CLOCK,
+};
 #define NUM_WORKSPACES 4
 #define OVERVIEW_WS_COL_W 72
 #define NUM_KEYBINDS 64
@@ -53,7 +63,7 @@
 #define DEFAULT_COLOR_HIGHLIGHT 0x3a3c55
 #define DEFAULT_COLOR_TEXT 0xffffff
 #define DEFAULT_COLOR_DIM 0x8888aa
-#define DEFAULT_COLOR_TOPBAR_BG 0x73ba25
+#define DEFAULT_COLOR_TOPBAR_BG 0x8839ef
 #define DEFAULT_COLOR_TOPBAR_TEXT 0x1e1e2e
 
 #define LAUNCHER_BOX_W 480
@@ -163,6 +173,9 @@ enum guibux_action {
 	GUIBUX_ACT_BRIGHTNESS_DOWN,
 	GUIBUX_ACT_OUTPUTS_APPLY,
 	GUIBUX_ACT_OUTPUTS_PANEL,
+	GUIBUX_ACT_POWER,
+	GUIBUX_ACT_RELOAD_CONFIG,
+	GUIBUX_ACT_TOPBAR_ITEMS,
 };
 
 struct guibux_keybind {
@@ -175,11 +188,25 @@ struct guibux_keybind {
 struct guibux_server;
 
 /* sysinfo.c */
+#define NET_IFACES_MAX 8
+#define NET_STR_MAX 128
+
+/* one connected network device: the label is exactly what the topbar
+ * renders ("SSID 85%" / "eth0"); ip/dns/gw are empty when unknown */
+struct guibux_net_iface {
+    char label[64];
+    char ip[NET_STR_MAX];
+    char dns[NET_STR_MAX];
+    char gw[NET_STR_MAX];
+};
+
 struct guibux_sysinfo {
     DBusConnection *system_bus;
     bool nm_available;
     bool upower_available;
     char network[64];
+    struct guibux_net_iface net_ifaces[NET_IFACES_MAX];
+    int net_iface_count;
     char battery[32];
     /* UPower State: 0=unknown 1=charging 2=discharging 3=empty 4=full */
     int bat_state;
@@ -192,6 +219,9 @@ struct guibux_sysinfo {
     bool muted;
     int mic_volume;
     bool mic_muted;
+    /* brightness (brightnessctl poll): -1 = unknown */
+    bool brightness_available;
+    int brightness;
     pthread_t worker;
     pthread_mutex_t lock;
     pthread_cond_t wake;
@@ -200,6 +230,8 @@ struct guibux_sysinfo {
 
 struct guibux_sysinfo_snapshot {
     char net[64];
+    struct guibux_net_iface net_ifaces[NET_IFACES_MAX];
+    int net_iface_count;
     char bat[32];
     int bat_state;
     int bat_eta_sec;
@@ -208,6 +240,8 @@ struct guibux_sysinfo_snapshot {
     bool muted;
     int mic_volume;
     bool mic_muted;
+    bool brightness_available;
+    int brightness;
 };
 
 void sysinfo_init(struct guibux_server *server);
@@ -215,6 +249,7 @@ void sysinfo_destroy(struct guibux_server *server);
 void sysinfo_get(struct guibux_sysinfo *si, struct guibux_sysinfo_snapshot *snap);
 void sysinfo_audio_adjust(struct guibux_sysinfo *si, bool mic, int delta);
 void sysinfo_audio_toggle_mute(struct guibux_sysinfo *si, bool mic);
+void sysinfo_brightness_adjust(struct guibux_sysinfo *si, int delta);
 
 /* notify.c - desktop notifications (org.freedesktop.Notifications) */
 #define NOTIF_MAX 32
@@ -260,22 +295,73 @@ struct guibux_notif_panel {
     int clear_x, clear_y, clear_w, clear_h;
 };
 
-/* tooltip.c - small floating text box; currently shown when hovering
- * the topbar battery indicator (remaining / charging time) */
-struct guibux_output;
+/* tooltip.c - small floating text box; shown when hovering the topbar
+ * battery indicator (time estimate) or a network interface segment
+ * (IP / gateway / DNS); multi-line, one line per field */
+enum guibux_tooltip_kind {
+    TOOLTIP_BATTERY,
+    TOOLTIP_NET,
+};
+
 struct guibux_tooltip {
     bool active;
+    enum guibux_tooltip_kind kind;
+    int net_idx;
     struct wlr_output *output;
     struct wlr_scene_buffer *scene_node;
     struct wlr_buffer *buffer;
     /* box position is logical px relative to the output origin */
     int box_x, box_y, box_w, box_h, box_scale;
     char text[128];
-    /* hover arming: the output whose battery indicator is under the
-     * pointer, and when it was entered (ms, compared against the
-     * monotonic clock by tooltip_tick) */
+    /* hover arming: the output whose indicator is under the pointer,
+     * which indicator, and when it was entered (ms, compared against
+     * the monotonic clock by tooltip_tick) */
     struct guibux_output *hover_output;
+    enum guibux_tooltip_kind hover_kind;
+    int hover_net_idx;
     uint32_t hover_since;
+};
+
+/* window-preview.c - thumbnail of a topbar window-list item; shown
+ * when hovering a window label so the content of a window on another
+ * workspace is visible without switching to it. The preview is a CPU
+ * snapshot of the window's buffer (avoids holding a lock on the live
+ * buffer that would block xwayland damage updates) */
+struct guibux_window_preview {
+    bool active;
+    struct wlr_output *output;
+    struct wlr_scene_buffer *scene_node;
+    struct wlr_buffer *buffer;
+    struct guibux_toplevel *toplevel;
+    /* box position is logical px relative to the output origin */
+    int box_x, box_y, box_w, box_h;
+    /* hover arming: the window under the pointer, the bar it was hovered
+     * on, and when it was entered (ms, compared against the monotonic
+     * clock by preview_tick) */
+    struct guibux_toplevel *hover_toplevel;
+    struct wlr_output *hover_output;
+    uint32_t hover_since;
+};
+
+/* osd.c - on-screen display for volume/mic/brightness changes: a
+ * centered box with label, value and a bar; auto-hides after a timeout */
+enum guibux_osd_kind {
+    OSD_VOLUME,
+    OSD_MIC,
+    OSD_BRIGHTNESS,
+};
+
+struct guibux_osd {
+    bool active;
+    struct wlr_output *output;
+    struct wlr_scene_buffer *scene_node;
+    struct wlr_buffer *buffer;
+    /* box position is logical px relative to the output origin */
+    int box_x, box_y, box_w, box_h, box_scale;
+    enum guibux_osd_kind kind;
+    int value;
+    bool muted;
+    uint32_t hide_at_ms;
 };
 
 /* window-restore.c: last known position per app, persisted across
@@ -339,8 +425,9 @@ struct guibux_output {
     bool topbar_vol_muted;
     int topbar_mic_pct;
     bool topbar_mic_muted;
-    int topbar_net_x;
-    int topbar_net_w;
+    int topbar_net_x[NET_IFACES_MAX];
+    int topbar_net_w[NET_IFACES_MAX];
+    int topbar_net_count;
     int topbar_vol_x;
     int topbar_vol_w;
     int topbar_mic_x;
@@ -495,6 +582,36 @@ struct guibux_outputs_panel {
 	char status[160];
 };
 
+/* power.c: system power menu (Mod+p). Lists suspend/hibernate/lock/
+ * logout/restart/shutdown; keyboard- and mouse-driven */
+enum guibux_power_action {
+	POWER_SUSPEND,
+	POWER_HIBERNATE,
+	POWER_LOCK,
+	POWER_LOGOUT,
+	POWER_RESTART,
+	POWER_SHUTDOWN,
+	POWER_COUNT,
+};
+
+struct guibux_power_panel {
+	bool active;
+	struct wlr_output *output;
+	struct wlr_scene_buffer *scene_node;
+	struct wlr_buffer *buffer;
+	int box_w, box_h, box_scale;
+	int selected;
+};
+
+struct guibux_topbar_items_panel {
+	bool active;
+	struct wlr_output *output;
+	struct wlr_scene_buffer *scene_node;
+	struct wlr_buffer *buffer;
+	int box_w, box_h, box_scale;
+	int selected;
+};
+
 struct guibux_launcher {
 	bool active;
 	char text[512];
@@ -539,6 +656,8 @@ struct guibux_server {
 	struct wl_listener new_xdg_toplevel;
 	struct wl_listener new_xdg_popup;
 	struct wlr_screencopy_manager_v1 *screencopy;
+	struct wlr_xdg_activation_v1 *xdg_activation;
+	struct wl_listener xdg_activation_request;
 	struct wlr_xdg_output_manager_v1 *xdg_output_manager;
 	struct wlr_xwayland *xwayland;
 	struct wl_listener new_xwayland_surface;
@@ -579,6 +698,8 @@ struct guibux_server {
 	int topbar_height;
 	int topbar_font_size;
 	int topbar_win_pad;
+	int topbar_items[TOPBAR_ITEMS_MAX];  /* enabled indicator ids, layout order */
+	int topbar_item_count;
 	char *background_path;
 	enum guibux_bg_scale background_scale;
 	char *bg_paths[NUM_WORKSPACES];
@@ -592,7 +713,9 @@ struct guibux_server {
 	char *outputs_spec;  /* config `outputs` key; NULL = GUIBUX_OUTPUTS env */
 	char *outputs_env_spec;  /* effective spec at start (config, else env) */
 	char *config_path;  /* resolved config file path; NULL = none */
+	char *renderer_name;  /* config `renderer`: auto|gles2|vulkan|pixman */
 	struct wl_event_source *outputs_signal_source;  /* SIGUSR1 = re-apply */
+	struct wl_event_source *config_signal_source;   /* SIGHUP = reload config */
 
 	struct wl_event_source *tile_test_timer;
 	struct wl_event_source *topbar_timer;
@@ -611,7 +734,11 @@ struct guibux_server {
 	struct wl_event_source *xmondrag_test_timer;
 	struct wl_event_source *notify_test_timer;
 	struct wl_event_source *tooltip_test_timer;
+	struct wl_event_source *osd_test_timer;
+	struct wl_event_source *power_test_timer;
+	struct wl_event_source *topbar_items_test_timer;
 	struct wl_event_source *quit_test_timer;
+	struct wl_event_source *global_topbar_test_timer;
 	bool psel_test_enter_sent;
 struct guibux_launcher launcher;
     struct guibux_sysinfo sysinfo;
@@ -619,10 +746,14 @@ struct guibux_launcher launcher;
 	struct guibux_overview overview;
 	struct guibux_help help;
 	struct guibux_outputs_panel outputs_panel;
-	struct guibux_notify notify;
-	struct guibux_notif_panel notify_panel;
-	struct guibux_tooltip tooltip;
-	/* auto-hide: a new notification pops the panel (like an indicator
+    struct guibux_notify notify;
+    struct guibux_notif_panel notify_panel;
+    struct guibux_tooltip tooltip;
+    struct guibux_window_preview window_preview;
+    struct guibux_osd osd;
+    struct guibux_power_panel power_panel;
+    struct guibux_topbar_items_panel topbar_items_panel;
+    /* auto-hide: a new notification pops the panel (like an indicator
 	 * click); it closes after a delay unless the user interacts with it.
 	 * The D-Bus worker thread writes to notify_pipe to wake the main loop */
 	struct wl_event_source *notify_autohide_timer;
@@ -650,6 +781,8 @@ struct guibux_launcher launcher;
     int effects_duration_ms;
     enum guibux_open_effect window_open_effect;
     bool notify_effect_slide;
+    bool osd_enabled;
+    int osd_timeout_ms;
     struct guibux_effects effects;
     struct wl_event_source *effects_test_timer;
 
@@ -690,12 +823,14 @@ void outputs_apply_init(struct guibux_server *server);
 
 struct guibux_toplevel *topbar_win_at(struct guibux_output *o, double lx, double ly);
 bool topbar_network_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
+int topbar_network_index_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
 bool topbar_battery_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
 /* 0 = none, 1 = volume, 2 = mic */
 int topbar_audio_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
 
 /* toplevel.c */
 void focus_toplevel(struct guibux_toplevel *toplevel, bool raise);
+void xdg_activation_handle_request(struct wl_listener *listener, void *data);
 void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen, struct wlr_output *output);
 void begin_interactive(struct guibux_toplevel *toplevel, enum guibux_cursor_mode mode, uint32_t edges);
 void server_new_xdg_toplevel(struct wl_listener *listener, void *data);
@@ -793,6 +928,26 @@ void tooltip_tick(struct guibux_server *server);
 void tooltip_destroy(struct guibux_server *server);
 int tooltip_test_run(void *data);
 
+/* window-preview.c */
+void preview_hide(struct guibux_server *server);
+bool preview_contains(struct guibux_server *server, double lx, double ly);
+/* arm/disarm the hover from pointer motion; called on every move */
+void preview_update_hover(struct guibux_server *server, uint32_t time);
+/* show the armed preview once the hover delay has elapsed; called
+ * from topbar_tick */
+void preview_tick(struct guibux_server *server);
+/* hide the preview if it shows the given window (window unmap) */
+void preview_on_unmap(struct guibux_server *server, struct guibux_toplevel *toplevel);
+void preview_destroy(struct guibux_server *server);
+
+/* osd.c */
+void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
+	int value, bool muted);
+void osd_hide(struct guibux_server *server);
+void osd_tick(struct guibux_server *server);
+void osd_destroy(struct guibux_server *server);
+int osd_test_run(void *data);
+
 /* notify.c */
 void notify_init(struct guibux_server *server);
 void notify_destroy(struct guibux_server *server);
@@ -874,6 +1029,28 @@ void outputs_panel_show(struct guibux_server *server);
 void outputs_panel_hide(struct guibux_server *server);
 bool outputs_panel_handle_key(struct guibux_server *server, xkb_keysym_t sym);
 
+/* power.c */
+void power_panel_show(struct guibux_server *server);
+void power_panel_hide(struct guibux_server *server);
+bool power_panel_handle_key(struct guibux_server *server, xkb_keysym_t sym);
+/* returns the action index under (lx, ly), -1 when outside the panel */
+int power_panel_action_at(struct guibux_server *server, double lx, double ly);
+/* run the action (hides the panel first) */
+void power_panel_select(struct guibux_server *server, int idx);
+void power_panel_destroy(struct guibux_server *server);
+int power_panel_test_run(void *data);
+
+/* topbar-items.c */
+void topbar_items_panel_show(struct guibux_server *server);
+void topbar_items_panel_hide(struct guibux_server *server);
+bool topbar_items_panel_handle_key(struct guibux_server *server, xkb_keysym_t sym);
+/* returns the item index under (lx, ly), -1 when outside the panel */
+int topbar_items_panel_row_at(struct guibux_server *server, double lx, double ly);
+/* toggle the item at idx (live: re-renders all topbars + the panel) */
+void topbar_items_panel_toggle(struct guibux_server *server, int idx);
+void topbar_items_panel_destroy(struct guibux_server *server);
+int topbar_items_panel_test_run(void *data);
+
 /* keyboard.c */
 void server_new_input(struct wl_listener *listener, void *data);
 void server_new_keyboard(struct guibux_server *server, struct wlr_input_device *device);
@@ -883,6 +1060,7 @@ void keyboard_handle_destroy(struct wl_listener *listener, void *data);
 bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym, uint32_t modifiers);
 void do_action(struct guibux_server *server, enum guibux_action action, int arg, struct guibux_toplevel *toplevel);
 void keybinds_defaults(struct guibux_server *server);
+void keybinds_reset(struct guibux_server *server);
 void keybind_add(struct guibux_server *server, uint32_t modifiers, xkb_keysym_t keysym, enum guibux_action action, int arg);
 void spawn_terminal(struct guibux_server *server);
 void spawn_network_info(struct guibux_server *server);
@@ -896,6 +1074,13 @@ void spawn_track(pid_t pid);
 
 /* config.c */
 void load_config(struct guibux_server *server, const char *path);
+/* re-read the config file live: keybinds are reset+re-added, colors and
+ * topbar settings apply on the next render, backgrounds are reloaded
+ * when changed, the outputs spec is re-applied. renderer and xkb_* are
+ * not reloadable (logged as a warning) */
+void config_reload(struct guibux_server *server);
+/* SIGHUP event source callback: re-reads the config file live */
+int config_signal_readable(int fd, uint32_t mask, void *data);
 bool parse_keybind(struct guibux_server *server, const char *value);
 bool parse_color(const char *value, uint32_t *out);
 /* spec: config `outputs` value or GUIBUX_OUTPUTS env; NULL/empty/"auto"
@@ -953,6 +1138,7 @@ int keybind_test_run(void *data);
 int psel_test_run(void *data);
 int effects_test_run(void *data);
 int quit_test_run(void *data);
+int global_topbar_test_run(void *data);
 
 /* screensaver.c */
 void screensaver_init(struct guibux_server *server);

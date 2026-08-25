@@ -1,5 +1,8 @@
 #include "guibuxwm.h"
 #include <strings.h>
+#include <signal.h>
+#include <sys/signalfd.h>
+#include <unistd.h>
 
 bool parse_color(const char *value, uint32_t *out) {
 	uint32_t c;
@@ -8,6 +11,72 @@ bool parse_color(const char *value, uint32_t *out) {
 	}
 	*out = c;
 	return true;
+}
+
+static int topbar_item_by_name(const char *name) {
+	if (!strcmp(name, "network")) return TOPBAR_ITEM_NETWORK;
+	if (!strcmp(name, "volume")) return TOPBAR_ITEM_VOLUME;
+	if (!strcmp(name, "mic")) return TOPBAR_ITEM_MIC;
+	if (!strcmp(name, "battery")) return TOPBAR_ITEM_BATTERY;
+	if (!strcmp(name, "notifications")) return TOPBAR_ITEM_NOTIFICATIONS;
+	if (!strcmp(name, "clock")) return TOPBAR_ITEM_CLOCK;
+	return -1;
+}
+
+static void parse_topbar_items(struct guibux_server *server,
+		const char *value, const char *path, int lineno) {
+	char *copy = strdup(value);
+	if (copy == NULL) {
+		return;
+	}
+	server->topbar_item_count = 0;
+	char *save = NULL;
+	for (char *tok = strtok_r(copy, ",", &save); tok != NULL;
+			tok = strtok_r(NULL, ",", &save)) {
+		while (*tok == ' ' || *tok == '\t') {
+			tok++;
+		}
+		char *end = tok + strlen(tok);
+		while (end > tok && (end[-1] == ' ' || end[-1] == '\t')) {
+			*--end = '\0';
+		}
+		if (*tok == '\0') {
+			continue;
+		}
+		int id = topbar_item_by_name(tok);
+		if (id < 0) {
+			wlr_log(WLR_ERROR, "config: %s:%d: unknown topbar item '%s'",
+				path, lineno, tok);
+			continue;
+		}
+		bool dup = false;
+		for (int i = 0; i < server->topbar_item_count; i++) {
+			if (server->topbar_items[i] == id) {
+				dup = true;
+				break;
+			}
+		}
+		if (dup) {
+			continue;
+		}
+		if (server->topbar_item_count >= TOPBAR_ITEMS_MAX) {
+			wlr_log(WLR_ERROR, "config: %s:%d: too many topbar items, '%s' dropped",
+				path, lineno, tok);
+			break;
+		}
+		server->topbar_items[server->topbar_item_count++] = id;
+	}
+	free(copy);
+	if (server->topbar_item_count == 0) {
+		/* empty or all-invalid list: fall back to the full default set */
+		server->topbar_items[0] = TOPBAR_ITEM_NETWORK;
+		server->topbar_items[1] = TOPBAR_ITEM_VOLUME;
+		server->topbar_items[2] = TOPBAR_ITEM_MIC;
+		server->topbar_items[3] = TOPBAR_ITEM_BATTERY;
+		server->topbar_items[4] = TOPBAR_ITEM_NOTIFICATIONS;
+		server->topbar_items[5] = TOPBAR_ITEM_CLOCK;
+		server->topbar_item_count = TOPBAR_ITEMS_MAX;
+	}
 }
 
 bool parse_keybind(struct guibux_server *server, const char *value) {
@@ -147,6 +216,12 @@ bool parse_keybind(struct guibux_server *server, const char *value) {
 		action = GUIBUX_ACT_OUTPUTS_APPLY;
 	} else if (!strcmp(action_str, "outputs-panel")) {
 		action = GUIBUX_ACT_OUTPUTS_PANEL;
+	} else if (!strcmp(action_str, "power")) {
+		action = GUIBUX_ACT_POWER;
+	} else if (!strcmp(action_str, "reload-config")) {
+		action = GUIBUX_ACT_RELOAD_CONFIG;
+	} else if (!strcmp(action_str, "topbar-items")) {
+		action = GUIBUX_ACT_TOPBAR_ITEMS;
 	} else {
 		wlr_log(WLR_ERROR, "config: bad keybind '%s' (unknown action '%s')",
 			value, action_str);
@@ -350,6 +425,9 @@ void load_config(struct guibux_server *server, const char *path) {
 				server->topbar_win_pad = DEFAULT_TOPBAR_WIN_PAD;
 			}
 			wlr_log(WLR_INFO, "config: topbar_win_pad = %d", server->topbar_win_pad);
+		} else if (!strcmp(key, "topbar_items")) {
+			parse_topbar_items(server, val, path, lineno);
+			wlr_log(WLR_INFO, "config: topbar_items = %s", val);
 		} else if (!strcmp(key, "background")) {
 			free(server->background_path);
 			server->background_path = strdup(val);
@@ -419,6 +497,27 @@ void load_config(struct guibux_server *server, const char *path) {
 				wlr_log(WLR_ERROR, "config: %s:%d: bad notify_effect '%s' (expected slide|none)", path, lineno, val);
 			}
 			wlr_log(WLR_INFO, "config: notify_effect = %s", val);
+		} else if (!strcmp(key, "osd")) {
+			server->osd_enabled = !strcmp(val, "true");
+			wlr_log(WLR_INFO, "config: osd = %s", val);
+		} else if (!strcmp(key, "osd_timeout_ms")) {
+			server->osd_timeout_ms = atoi(val);
+			if (server->osd_timeout_ms < 0 ||
+					server->osd_timeout_ms > 10000) {
+				wlr_log(WLR_ERROR, "config: %s:%d: osd_timeout_ms %d out of range 0..10000, using default",
+					path, lineno, server->osd_timeout_ms);
+				server->osd_timeout_ms = 1500;
+			}
+			wlr_log(WLR_INFO, "config: osd_timeout_ms = %d", server->osd_timeout_ms);
+		} else if (!strcmp(key, "renderer")) {
+			if (strcmp(val, "auto") != 0 && strcmp(val, "gles2") != 0 &&
+					strcmp(val, "vulkan") != 0 && strcmp(val, "pixman") != 0) {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad renderer '%s' (expected auto|gles2|vulkan|pixman), using auto", path, lineno, val);
+			} else {
+				free(server->renderer_name);
+				server->renderer_name = strdup(val);
+			}
+			wlr_log(WLR_INFO, "config: renderer = %s", server->renderer_name);
 		} else if (!strcmp(key, "overview_workspace_colors")) {
 			server->overview.ws_colors_enabled = !strcmp(val, "true");
 			wlr_log(WLR_INFO, "config: overview_workspace_colors = %s", val);
@@ -456,6 +555,94 @@ void load_config(struct guibux_server *server, const char *path) {
 		}
 	}
 	fclose(f);
+}
+
+void config_reload(struct guibux_server *server) {
+	if (server->config_path == NULL) {
+		wlr_log(WLR_ERROR, "config: no config file to reload");
+		return;
+	}
+	wlr_log(WLR_INFO, "config: reloading %s", server->config_path);
+
+	/* snapshot the values that need explicit re-application when they
+	 * change (string compare for paths, enum for scale) */
+	char old_bg[512] = "";
+	if (server->background_path != NULL) {
+		snprintf(old_bg, sizeof(old_bg), "%s", server->background_path);
+	}
+	char old_bg_ws[NUM_WORKSPACES][512];
+	for (int i = 0; i < NUM_WORKSPACES; i++) {
+		old_bg_ws[i][0] = '\0';
+		if (server->bg_paths[i] != NULL) {
+			snprintf(old_bg_ws[i], sizeof(old_bg_ws[i]), "%s",
+				server->bg_paths[i]);
+		}
+	}
+	enum guibux_bg_scale old_scale = server->background_scale;
+	int old_ss_timeout = server->screensaver.timeout;
+	char *old_outputs = server->outputs_spec;
+	bool old_outputs_present = old_outputs != NULL;
+
+	/* keybinds: reset, re-add defaults, then the file's keybinds
+	 * (a config keybind with the same mods+key replaces the default,
+	 * same as at startup) */
+	keybinds_reset(server);
+	keybinds_defaults(server);
+	load_config(server, server->config_path);
+
+	/* backgrounds: reload the images when any path or the scale
+	 * changed; the per-output bg nodes pick the new surfaces on their
+	 * next render */
+	bool bg_changed = strcmp(old_bg,
+			server->background_path != NULL ? server->background_path : "") != 0
+		|| server->background_scale != old_scale;
+	for (int i = 0; i < NUM_WORKSPACES; i++) {
+		const char *cur = server->bg_paths[i] != NULL
+			? server->bg_paths[i] : "";
+		if (strcmp(old_bg_ws[i], cur) != 0) {
+			bg_changed = true;
+		}
+	}
+	if (bg_changed) {
+		background_destroy_images(server);
+		background_load_images(server);
+	}
+
+	/* screensaver timeout: re-arm the timer when it changed */
+	if (server->screensaver.timeout != old_ss_timeout) {
+		screensaver_set_timeout(&server->screensaver,
+			server->screensaver.timeout);
+	}
+
+	/* outputs: re-apply when the file has an `outputs` line (the
+	 * outputs panel and the guibuxwm-output tool edit it live) */
+	if (old_outputs_present || server->outputs_spec != NULL) {
+		outputs_apply(server);
+	}
+
+	/* colors, topbar height/font/pad: picked up on the next render;
+	 * mark every bar dirty so the change shows without other activity */
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		o->topbar_dirty = true;
+	}
+
+	/* not reloadable: the renderer is already created and the
+	 * keyboards are already configured with the old xkb settings */
+	wlr_log(WLR_INFO,
+		"config: reload done (renderer and xkb_* require a restart)");
+}
+
+int config_signal_readable(int fd, uint32_t mask, void *data) {
+	struct guibux_server *server = data;
+	struct signalfd_siginfo info;
+	while (read(fd, &info, sizeof(info)) == (ssize_t)sizeof(info)) {
+		if (info.ssi_signo == SIGHUP) {
+			wlr_log(WLR_INFO, "config: SIGHUP, reloading config");
+			config_reload(server);
+		}
+	}
+	return 1;
 }
 
 /* Re-read just the `outputs` value from a config file (live re-apply:

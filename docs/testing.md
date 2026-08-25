@@ -21,6 +21,7 @@ tests/run-tile-test.sh <mode>    # tiling: 0=free, 1=split, 2=main+stack
 tests/run-topbar-test.sh         # per-output topbar (number + time)
 tests/run-audio-test.sh          # audio sysinfo poll + VOL/MIC indicators
 tests/run-battery-test.sh        # battery sysinfo poll (UPower) + topbar indicator
+tests/run-tooltip-test.sh        # topbar hover tooltips (battery time estimate, net IP/GW/DNS)
 tests/run-launcher-test.sh       # command box (show/type/enter/escape, preferred apps)
 tests/run-config-test.sh         # config file (term, keybind, colors)
 tests/run-outputs-test.sh        # monitor arrangement (auto, manual, @off, unplug, live re-apply)
@@ -125,6 +126,51 @@ non-zero (the topbar tooltip shows the remaining time). Logs
 
 ```sh
 GUIBUX_OUTPUTS= GUIBUX_TEST_BATTERY=1 GUIBUX_TERM=true \
+  WLR_RENDERER=gles2 ./build/guibuxwm
+```
+
+## GUIBUX_TEST_TOOLTIP
+
+`GUIBUX_TEST_TOOLTIP=1` (together with `GUIBUX_TEST_NET=<label>`)
+verifies the topbar hover tooltips ~2s after start. The sysinfo worker
+seeds a fake battery (85%, discharging, 1h 30m left) and one fake net
+iface (IP `10.0.0.5`, DNS `1.1.1.1`, GW `10.0.0.1`) so the test runs
+without UPower or NetworkManager. The hook hovers the battery indicator
+and the first net segment in turn, verifying:
+
+- the battery tooltip shows the percentage and time estimate
+- the net tooltip is multi-line (label + IP + GW + DNS) and the polled
+  per-device details match the seeded values
+- each tooltip hides when the pointer moves away
+
+Logs `tooltip-test: OK (battery + net)` on success. No client needed:
+
+```sh
+GUIBUX_OUTPUTS= GUIBUX_TEST_TOOLTIP=1 GUIBUX_TEST_NET=eth0 GUIBUX_TERM=true \
+  WLR_RENDERER=gles2 ./build/guibuxwm
+```
+
+## GUIBUX_TEST_OSD
+
+`GUIBUX_TEST_OSD=1` verifies the on-screen display ~2s after start: shows
+a fake volume OSD (65%), checks the box is on-screen and the state is
+stored, then forces the timeout and checks the OSD hides. Logs
+`osd-test: OK (volume 65%, box WxH at X,Y)` on success. No client needed:
+
+```sh
+GUIBUX_OUTPUTS= GUIBUX_TEST_OSD=1 GUIBUX_TERM=true \
+  WLR_RENDERER=gles2 ./build/guibuxwm
+```
+
+## GUIBUX_TEST_POWER
+
+`GUIBUX_TEST_POWER=1` verifies the power menu ~2s after start: shows the
+panel, checks the box height, hit-tests a row (must resolve to Suspend),
+checks an out-of-bounds point misses, and checks Esc closes the panel.
+Logs `power-test: OK (6 actions, box WxH)` on success. No client needed:
+
+```sh
+GUIBUX_OUTPUTS= GUIBUX_TEST_POWER=1 GUIBUX_TERM=true \
   WLR_RENDERER=gles2 ./build/guibuxwm
 ```
 
