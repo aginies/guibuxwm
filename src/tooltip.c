@@ -84,7 +84,7 @@ static int tooltip_build_lines(struct guibux_server *server,
 	 * uses the widths directly in logical px (no further division) */
 	struct wlr_box tbox;
 	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &tbox);
-	int tscale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+	int tscale = guibux_scale_round(o->wlr_output->scale);
 	int tfont_px = server->topbar_font_size * tscale;
 	FT_Set_Pixel_Sizes(server->launcher.face, 0, tfont_px);
 	for (int i = 0; i < n; i++) {
@@ -138,7 +138,7 @@ static void tooltip_show(struct guibux_server *server, struct guibux_output *o) 
 
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
-	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+	int scale = guibux_scale_round(o->wlr_output->scale);
 	int font_px = server->topbar_font_size * scale;
 	FT_Set_Pixel_Sizes(server->launcher.face, 0, font_px);
 

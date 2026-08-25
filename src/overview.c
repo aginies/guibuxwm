@@ -99,7 +99,7 @@ static void overview_render_ws_col(struct guibux_output *o, int hover_ws) {
 		return;
 	}
 
-	int sc = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+	int sc = guibux_scale_round(o->wlr_output->scale);
 	/* logical height fixed at creation: the buffer must not be drawn
 	 * beyond its size if the output is resized while the overview is up */
 	int area_h = o->overview_ws_col_h;
@@ -173,7 +173,7 @@ static void overview_create_ws_cols(struct guibux_server *server) {
 		if (area_h <= 0) {
 			continue;
 		}
-		int sc = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+		int sc = guibux_scale_round(o->wlr_output->scale);
 
 		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
 		struct wlr_drm_format fmt = {

@@ -102,7 +102,7 @@ static struct wlr_buffer *background_render_workspace(struct guibux_output *o,
 		int ws, struct wlr_box box) {
 	struct guibux_server *server = o->server;
 	cairo_surface_t *img = server->bg_surfaces[ws - 1];
-	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+	int scale = guibux_scale_round(o->wlr_output->scale);
 	int w = box.width * scale;
 	int h = box.height * scale;
 
@@ -229,7 +229,7 @@ void background_render(struct guibux_output *o) {
 	}
 
 	/* output resized or rescaled: all cached workspace buffers are stale */
-	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+	int scale = guibux_scale_round(o->wlr_output->scale);
 	if (o->bg_w != box.width || o->bg_h != box.height ||
 			o->bg_scale != scale) {
 		background_drop_ws_buffers(o);

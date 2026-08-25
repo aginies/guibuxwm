@@ -381,7 +381,7 @@ void topbar_render(struct guibux_output *o) {
 	/* buffer is in device pixels; the node stays at logical size via
 	 * the dest size, so the bar renders sharp on fractional/integer
 	 * scaled outputs */
-	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+	int scale = guibux_scale_round(o->wlr_output->scale);
 	int w = box.width * scale;
 	int h = o->server->topbar_height * scale;
 

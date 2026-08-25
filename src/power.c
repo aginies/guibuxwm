@@ -180,7 +180,7 @@ void power_panel_show(struct guibux_server *server) {
 	wlr_output_layout_get_box(server->output_layout, output, &box);
 	int ew, eh;
 	wlr_output_effective_resolution(output, &ew, &eh);
-	int scale = output->scale > 1 ? (int)output->scale : 1;
+	int scale = guibux_scale_round(output->scale);
 
 	/* start on the first available action */
 	p->selected = 0;

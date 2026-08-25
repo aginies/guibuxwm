@@ -62,7 +62,7 @@ void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
 
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, output, &box);
-	int scale = output->scale > 1 ? (int)output->scale : 1;
+	int scale = guibux_scale_round(output->scale);
 	int font_px = server->topbar_font_size * scale;
 	FT_Set_Pixel_Sizes(server->launcher.face, 0, font_px);
 

@@ -4,17 +4,10 @@
 #include <drm_fourcc.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #define SWITCHER_LINE_H 28
 #define SWITCHER_PAD 12
 #define SWITCHER_MAX_LINES 16
-
-static uint32_t now_msec(void) {
-	struct timespec ts;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
-}
 
 static void switcher_warp_to_selection(struct guibux_server *server) {
 	struct guibux_switcher *s = &server->switcher;
@@ -25,7 +18,7 @@ static void switcher_warp_to_selection(struct guibux_server *server) {
 	double cx = t->scene_tree->node.x + geo.width / 2.0;
 	double cy = t->scene_tree->node.y + geo.height / 2.0;
 	wlr_cursor_warp(server->cursor, NULL, cx, cy);
-	process_cursor_motion(server, now_msec());
+	process_cursor_motion(server, guibux_now_msec());
 }
 
 static void switcher_render(struct guibux_server *server) {
@@ -121,7 +114,7 @@ void switcher_show(struct guibux_server *server) {
 	wlr_output_layout_get_box(server->output_layout, output, &box);
 	int ew, eh;
 	wlr_output_effective_resolution(output, &ew, &eh);
-	int scale = output->scale > 1 ? (int)output->scale : 1;
+	int scale = guibux_scale_round(output->scale);
 
 	s->num_wins = 0;
 	struct guibux_toplevel *t;
@@ -157,6 +150,8 @@ void switcher_show(struct guibux_server *server) {
 	wlr_scene_buffer_set_dest_size(s->scene_node, bw, s->box_h);
 	wlr_scene_node_set_position(&s->scene_node->node,
 		box.x + (ew - bw) / 2, box.y + (eh - s->box_h) / 2);
+	wlr_scene_node_raise_to_top(&s->scene_node->node);
+	topbar_raise_all(server);
 
 	s->active = true;
 	switcher_render(server);
@@ -205,7 +200,7 @@ void switcher_hide(struct guibux_server *server) {
 		wlr_buffer_drop(s->buffer);
 		s->buffer = NULL;
 	}
-	process_cursor_motion(server, now_msec());
+	process_cursor_motion(server, guibux_now_msec());
 }
 
 static void switcher_select(struct guibux_server *server) {

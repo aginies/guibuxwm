@@ -279,7 +279,7 @@ void output_frame(struct wl_listener *listener, void *data) {
 	/* output resized or rescaled: the topbar buffer is stale */
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, output->wlr_output, &box);
-	int scale = output->wlr_output->scale > 1 ? (int)output->wlr_output->scale : 1;
+	int scale = guibux_scale_round(output->wlr_output->scale);
 	if (output->topbar_buffer != NULL &&
 			(output->topbar_buffer_w != box.width * scale ||
 			 output->topbar_buffer_h != server->topbar_height * scale)) {
@@ -647,7 +647,7 @@ static void output_sync_overlays(struct guibux_output *o) {
 			background_render(o);
 		}
 	}
-	int scale = o->wlr_output->scale > 1 ? (int)o->wlr_output->scale : 1;
+	int scale = guibux_scale_round(o->wlr_output->scale);
 	if (o->topbar_buffer != NULL &&
 			(o->topbar_buffer_w != box.width * scale ||
 			 o->topbar_buffer_h != server->topbar_height * scale)) {

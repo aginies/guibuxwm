@@ -2,7 +2,6 @@
 #include <wlr/types/wlr_scene.h>
 #include <string.h>
 #include <strings.h>
-#include <time.h>
 
 // ---------------------------------------------------------------------------
 // Focus
@@ -66,10 +65,13 @@ void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen,
 	if (fullscreen) {
 		toplevel->saved_x = toplevel->scene_tree->node.x;
 		toplevel->saved_y = toplevel->scene_tree->node.y;
-		if (toplevel->xsurface != NULL) {
-			toplevel->saved_w = toplevel->xsurface->width;
-			toplevel->saved_h = toplevel->xsurface->height;
-		}
+		/* save the windowed size for both protocols: an xdg window
+		 * un-fullscreened with set_size(0,0) would revert to the app's
+		 * preferred size and lose its pre-fullscreen dimensions */
+		struct wlr_box geo;
+		toplevel_get_geometry(toplevel, &geo);
+		toplevel->saved_w = geo.width;
+		toplevel->saved_h = geo.height;
 
 		/* the requested output is authoritative (it may differ from
 		 * the window's current position); fall back to the window's
@@ -93,7 +95,7 @@ void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen,
 	} else {
 		wlr_scene_node_set_position(&toplevel->scene_tree->node,
 			toplevel->saved_x, toplevel->saved_y);
-		if (toplevel->xsurface != NULL) {
+		if (toplevel->saved_w > 0 && toplevel->saved_h > 0) {
 			toplevel_set_size(toplevel, toplevel->saved_w, toplevel->saved_h);
 		} else {
 			wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, 0, 0);
@@ -861,16 +863,10 @@ void xdg_activation_handle_request(struct wl_listener *listener, void *data) {
 		switch_workspace(o, t->workspace);
 	}
 	focus_toplevel(t, true);
-	/* warp the cursor to the window center (like the switcher) */
-	struct wlr_box geo;
-	toplevel_get_geometry(t, &geo);
-	wlr_cursor_warp(server->cursor, NULL,
-		t->scene_tree->node.x + geo.width / 2.0,
-		t->scene_tree->node.y + geo.height / 2.0);
-	struct timespec ts;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	process_cursor_motion(server,
-		(uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000));
+	/* no cursor warp: the activation usually follows a click in another
+	 * app (e.g. a link opening the browser); warping moves pointer focus
+	 * onto the new window mid-click and the button release lands on it,
+	 * which the app reads as a click on its content */
 }
 
 static void xsurface_request_close(struct wl_listener *listener, void *data) {
