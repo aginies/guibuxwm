@@ -68,6 +68,11 @@ expect_grep "list names" "HEADLESS-1" "$out"
 expect_grep "list position" "1920x0" "$out"
 expect_grep "list modes" "1280x720@60" "$out"
 
+# listall: scans /sys/class/drm, should not crash and should print a header
+out=$(run listall 2>&1); rc=$?
+[ $rc -eq 0 ] || fail_msg "listall rc $rc != 0"
+expect_grep "listall header" "CONNECTED" "$out"
+
 # set: position + mode + transform
 run set HEADLESS-2 1920 0 --mode 1280x720 --transform 90 --no-apply >/dev/null
 expect_line "set" "HEADLESS-2@1920x0:1280x720:90"

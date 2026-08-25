@@ -13,6 +13,7 @@
 //
 // Usage:
 //   guibuxwm-output list
+//   guibuxwm-output listall
 //   guibuxwm-output set NAME X Y [--mode WxH] [--transform normal|90|180|270]
 //   guibuxwm-output enable NAME
 //   guibuxwm-output disable NAME
@@ -23,6 +24,7 @@
 //                ~/.config/guibuxwm/config)
 //   --no-apply   save to the config without signaling the compositor
 
+#include <dirent.h>
 #include <errno.h>
 #include <limits.h>
 #include <signal.h>
@@ -58,6 +60,7 @@ static void usage(void) {
 		"\n"
 		"Commands:\n"
 		"  list                  connected outputs: name, position, mode, state\n"
+		"  listall               all DRM connectors (connected + disconnected)\n"
 		"  set NAME X Y          place output NAME at XxY (keeps mode/transform)\n"
 		"  enable NAME           enable output NAME\n"
 		"  disable NAME          disable output NAME\n"
@@ -159,6 +162,73 @@ static struct state_output *state_find(const struct state_output *outs,
 		}
 	}
 	return NULL;
+}
+
+/* scan /sys/class/drm for all connectors (connected and disconnected),
+ * merge with live state data when available */
+static void listall(const struct state_output *outs, int nouts) {
+	DIR *d = opendir("/sys/class/drm");
+	if (d == NULL) {
+		die("cannot open /sys/class/drm");
+	}
+	struct dirent *ent;
+	int count = 0;
+	while ((ent = readdir(d)) != NULL) {
+		/* match cardN-CONNECTOR pattern, skip Writeback and card dirs */
+		if (strncmp(ent->d_name, "card", 4) != 0) {
+			continue;
+		}
+		char *dash = strchr(ent->d_name, '-');
+		if (dash == NULL) {
+			continue;
+		}
+		if (strstr(ent->d_name, "Writeback")) {
+			continue;
+		}
+		const char *conn = dash + 1;
+		char status_path[512];
+		snprintf(status_path, sizeof(status_path),
+			"/sys/class/drm/%s/status", ent->d_name);
+		FILE *sf = fopen(status_path, "r");
+		if (sf == NULL) {
+			continue;
+		}
+		char status[32] = "";
+		if (fgets(status, sizeof(status), sf) != NULL) {
+			status[strcspn(status, "\n")] = '\0';
+		}
+		fclose(sf);
+		bool connected = (strcmp(status, "connected") == 0);
+
+		/* look up live state for this connector */
+		struct state_output *so = state_find(outs, nouts, conn);
+
+		char pos[32] = "-", mode[32] = "-", rot[16] = "-";
+		const char *state_str = "-";
+		if (so != NULL) {
+			if (so->enabled) {
+				snprintf(pos, sizeof(pos), "%dx%d", so->x, so->y);
+				state_str = "on";
+			} else {
+				state_str = "off";
+			}
+			if (so->mode_w > 0) {
+				snprintf(mode, sizeof(mode), "%dx%d", so->mode_w, so->mode_h);
+			}
+			if (so->transform >= 0) {
+				snprintf(rot, sizeof(rot), "%s",
+					outputs_transform_name(so->transform));
+			}
+		}
+		printf("%-16s %-12s %-12s %-10s %-5s  %s\n",
+			conn, pos, mode, rot, state_str,
+			connected ? "yes" : "no");
+		count++;
+	}
+	closedir(d);
+	if (count == 0) {
+		fprintf(stderr, "guibuxwm-output: no DRM connectors found\n");
+	}
 }
 
 /* true when another enabled entry sits at the same position: two outputs
@@ -357,6 +427,13 @@ int main(int argc, char *argv[]) {
 			printf("  %-16s %s\n", outs[j].name,
 				outs[j].modes[0] != '\0' ? outs[j].modes : "(none)");
 		}
+		return 0;
+	}
+
+	if (!strcmp(cmd, "listall")) {
+		printf("%-16s %-12s %-12s %-10s %-5s  %-9s\n",
+			"NAME", "POSITION", "MODE", "TRANSFORM", "STATE", "CONNECTED");
+		listall(outs, nouts);
 		return 0;
 	}
 

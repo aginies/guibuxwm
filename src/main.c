@@ -396,6 +396,7 @@ int main(int argc, char *argv[]) {
 				server.placements[i].name);
 		}
 	}
+	outputs_state_write(&server);
 
 	const char *launcher_test_cmd = getenv("GUIBUX_TEST_LAUNCHER_CMD");
 	if (launcher_test_cmd != NULL) {

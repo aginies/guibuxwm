@@ -95,6 +95,7 @@ modes) are read from the state file the compositor maintains at
 
 ```sh
 guibuxwm-output list                          # connected outputs + modes
+guibuxwm-output listall                       # all DRM connectors (incl. disconnected)
 guibuxwm-output set HDMI-A-1 1920 0           # move (keeps mode/rotation)
 guibuxwm-output set HDMI-A-1 0 0 --mode 1920x1080 --transform 90
 guibuxwm-output disable HDMI-A-1              # NAME@off
@@ -108,8 +109,10 @@ Options: `-c FILE` (config file, default `GUIBUX_CONFIG` or
 ## Finding your output names
 
 `guibuxwm-output list` shows the connected outputs and their available
-modes. Alternatively, run the compositor once and read the output names
-from the log, or use:
+modes. `guibuxwm-output listall` shows all DRM connectors on the system
+(connected and disconnected), which is useful for finding the name of a
+port you are about to plug in. Alternatively, run the compositor once and
+read the output names from the log, or use:
 
 - `xrandr --query | grep connected` (X11/XWayland)
 - `wlr-randr` (under a wlroots compositor)
