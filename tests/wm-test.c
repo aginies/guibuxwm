@@ -257,6 +257,30 @@ int global_topbar_test_run(void *data) {
 			ti0 >= 0 ? o2->topbar_win_titles[ti0] : "?");
 		return 0;
 	}
+	/* focused window must stay at the front of its own group, not jump
+	 * across the group separator: focus the other-monitor window (ts[1])
+	 * and verify o1's bar still lists the own window (ts[0]) before it.
+	 * Mark dirty: focus_toplevel only sets topbar_focus_dirty, which the
+	 * fast path serves from the cached layout */
+	test_seat_add_keyboard(server);
+	focus_toplevel(ts[1], true);
+	o1->topbar_dirty = true;
+	o2->topbar_dirty = true;
+	topbar_render(o1);
+	topbar_render(o2);
+	{
+		int own_idx = -1, foc_idx = -1;
+		for (int i = 0; i < o1->topbar_win_count; i++) {
+			if (o1->topbar_wins[i] == ts[0]) own_idx = i;
+			if (o1->topbar_wins[i] == ts[1]) foc_idx = i;
+		}
+		if (own_idx < 0 || foc_idx < 0 || own_idx >= foc_idx) {
+			wlr_log(WLR_ERROR,
+				"global-topbar-test: FAIL focused other-monitor window left own group (o1 own idx %d, focused idx %d, count %d)",
+				own_idx, foc_idx, o1->topbar_win_count);
+			return 0;
+		}
+	}
 	wlr_log(WLR_INFO, "global-topbar-test: OK (%d outputs, %d toplevels, both bars list both, own first)",
 		n_outputs, n_t);
 	return 0;

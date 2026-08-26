@@ -515,6 +515,34 @@ static int topbar_item_render(struct topbar_items *ctx, int id) {
 	return ctx->ind_x;
 }
 
+/* move the focused window to the front of its own group: index 0 when it
+ * belongs to this monitor, index own_count when it belongs to another.
+ * Moving it unconditionally to index 0 would place a cross-monitor window
+ * in the own-monitor section (before the group separator) */
+static void topbar_focus_first(struct guibux_toplevel *wins[], int nwins,
+		int own_count, struct guibux_toplevel *kb_focus_t) {
+	if (kb_focus_t == NULL) {
+		return;
+	}
+	for (int i = 0; i < nwins; i++) {
+		if (wins[i] == kb_focus_t) {
+			int target = (i < own_count) ? 0 : own_count;
+			if (target != i) {
+				struct guibux_toplevel *f = wins[i];
+				if (target < i) {
+					memmove(&wins[target + 1], &wins[target],
+						(i - target) * sizeof(*wins));
+				} else {
+					memmove(&wins[target], &wins[target + 1],
+						(i - target) * sizeof(*wins));
+				}
+				wins[target] = f;
+			}
+			break;
+		}
+	}
+}
+
 /* focus-only fast path: the window list and kb focus are the only
  * things that changed, so recompute them and redraw just the
  * window-pill region (occupancy dots never change on a focus event).
@@ -595,14 +623,7 @@ static void topbar_render_focus(struct guibux_output *o) {
 		if (toplevel_output_for(t) == o->wlr_output)
 			own_count++;
 	}
-	for (int i = 0; i < nwins; i++) {
-		if (wins[i] == kb_focus_t) {
-			struct guibux_toplevel *f = wins[i];
-			memmove(&wins + 1, wins, i * sizeof(*wins));
-			wins[0] = f;
-			break;
-		}
-	}
+	topbar_focus_first(wins, nwins, own_count, kb_focus_t);
 
 	/* repaint the window-pill region with the topbar background */
 	int rx = o->topbar_win_region_x * scale;
@@ -970,15 +991,7 @@ void topbar_render(struct guibux_output *o) {
 			own_count++;
 	}
 
-	/* put focused first */
-	for (int i = 0; i < nwins; i++) {
-		if (wins[i] == kb_focus_t) {
-			struct guibux_toplevel *f = wins[i];
-			memmove(&wins[1], &wins[0], i * sizeof(*wins));
-			wins[0] = f;
-			break;
-		}
-	}
+	topbar_focus_first(wins, nwins, own_count, kb_focus_t);
 
 	time_t now = time(NULL);
 	struct tm tm;
