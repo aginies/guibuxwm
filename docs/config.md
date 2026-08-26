@@ -23,7 +23,7 @@ Reloaded live: colors, `topbar_height`/`topbar_font_size`/`topbar_win_pad`/`topb
 keybinds, `term`/`term_app_id`, backgrounds (`background`, `background1..4`,
 `background_scale`), `screensaver_timeout`, `lock_on_idle`, `focus_follow_mouse`, `effects*`,
 `osd*`, `restore_positions`, `outputs`, overview colors, `icon_theme`,
-`preferred_app1..5`.
+`preferred_app1..6`.
 
 Not reloadable (a restart is required, a warning is logged): `renderer`,
 `xkb_layout`/`xkb_variant`/`xkb_options`.
@@ -62,9 +62,9 @@ term_app_id = org.gnome.Terminal
 
 ---
 
-### `preferred_app1..5`
+### `preferred_app1..6`
 
-Preferred apps shown above the command box (`Mod+e`) prompt, up to 5.
+Preferred apps shown above the command box (`Mod+e`) prompt, up to 6.
 Format: `Name;command[;icon]`.
 
 The optional third field is an icon: a theme icon name (e.g. `firefox`)

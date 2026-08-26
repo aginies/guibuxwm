@@ -130,7 +130,7 @@ Opens an input box centered on the monitor under the cursor. Type a command and 
 
 As you type, matching commands from `$PATH` are listed below the input line (up to 8, exact matches first). Navigate with Up/Down; Enter runs the selected command, with any arguments you typed after the first word appended (e.g. type `alac -w`, select `alacritty`, Enter runs `alacritty -w`). With no match, Enter runs exactly what you typed.
 
-Preferred apps configured with `preferred_app1..5` (see [Config](config.md#preferred-apps)) are always listed above the input line, up to 5. Each preferred app can optionally include an icon (`Name;command;icon-name`). Icons are resolved from the configured `icon_theme` (or the system GTK icon theme, falling back to Adwaita) and drawn to the left of the app name. Matches from `$PATH` and `.desktop` files also show their icons when available.
+Preferred apps configured with `preferred_app1..6` (see [Config](config.md#preferred-apps)) are always listed above the input line, up to 6. Each preferred app can optionally include an icon (`Name;command;icon-name`). Icons are resolved from the configured `icon_theme` (or the system GTK icon theme, falling back to Adwaita) and drawn to the left of the app name. Matches from `$PATH` and `.desktop` files also show their icons when available.
 
 With nothing selected, the first Up selects the preferred app closest to the input line; further Up/Down moves through the preferred apps and the matches. Enter on a selected preferred app runs its command (typed arguments after the first word are appended, same as for matches).
 

@@ -26,7 +26,7 @@
 
 ## Command Box
 
-- **Command box** (`Mod+e`) with icon support: launch programs by typing, with `$PATH` suggestions, up to 5 configurable preferred apps (each with optional icons), and `.desktop` file icon resolution through the configured icon theme
+- **Command box** (`Mod+e`) with icon support: launch programs by typing, with `$PATH` suggestions, up to 6 configurable preferred apps (each with optional icons), and `.desktop` file icon resolution through the configured icon theme
 
 ## Topbar
 

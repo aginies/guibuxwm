@@ -7,7 +7,7 @@
 # terminal command started by Mod+Return
 term = gnome-terminal
 
-# preferred apps shown above the command box (Mod+e) prompt, up to 5.
+# preferred apps shown above the command box (Mod+e) prompt, up to 6.
 # Format: Name;command[;icon] — icon is a theme icon name or an
 # absolute path; without it the command name is used. A missing
 # theme or icon is skipped silently (no icon, no error). Up/Down
