@@ -1376,62 +1376,77 @@ class InstallVMModal(BaseModal[str | None]):
             downloaded_iso_path = None  # Track downloaded file for cleanup
 
             if custom_path:
-                # Check if it's an HTTP/HTTPS URL
-                if custom_path.startswith(("http://", "https://")):
-                    # Download ISO from URL
-                    progress_cb(StaticText.DOWNLOADING_ISO, 0)
-
-                    def download_progress(percent, speed):
-                        progress_cb(
-                            StaticText.DOWNLOADING_ISO_PROGRESS.format(
-                                progress=percent, speed=speed
-                            ),
-                            int(percent * 0.3),  # Use first 30% for download
-                        )
-
-                    try:
-                        downloaded_iso_path = self.provisioner.download_iso(
-                            custom_path, progress_callback=download_progress
-                        )
-                        custom_path = (
-                            downloaded_iso_path  # Use downloaded file for subsequent operations
-                        )
-                    except Exception as e:
-                        raise Exception(str(e))
-
-                else:
-                    # Validate local path exists
-                    if not os.path.exists(custom_path):
-                        raise Exception(
-                            ErrorMessages.CUSTOM_ISO_PATH_NOT_EXIST_TEMPLATE.format(
-                                path=custom_path
-                            )
-                        )
-                    if not os.path.isfile(custom_path):
-                        raise Exception(
-                            ErrorMessages.CUSTOM_ISO_NOT_FILE_TEMPLATE.format(path=custom_path)
-                        )
-
-                # 1. Validate Checksum
-                if validate:
-                    if not checksum:
-                        raise Exception(ErrorMessages.CHECKSUM_MISSING)
-                    progress_cb(StaticText.VALIDATING_CHECKSUM, 30)
-                    if not self.provisioner.validate_iso(custom_path, checksum):
-                        raise Exception(ErrorMessages.CHECKSUM_VALIDATION_FAILED)
-                    progress_cb(StaticText.CHECKSUM_VALIDATED, 40)
-
-                # 2. Upload
-                progress_cb(StaticText.UPLOADING_ISO, 40)
-
-                def upload_progress(p):
+                # Check if ISO already exists in pool before downloading
+                iso_name = os.path.basename(custom_path.split("?")[0])
+                existing_path = self.provisioner.check_pool_volume(iso_name, pool_name)
+                if existing_path:
                     progress_cb(
-                        StaticText.UPLOADING_PROGRESS_TEMPLATE.format(progress=p), 40 + int(p * 0.4)
+                        StaticText.ISO_ALREADY_IN_POOL.format(
+                            name=iso_name, pool_name=pool_name
+                        ),
+                        80,
                     )
+                    final_iso_url = existing_path
+                else:
+                    # Check if it's an HTTP/HTTPS URL
+                    if custom_path.startswith(("http://", "https://")):
+                        # Download ISO from URL
+                        progress_cb(StaticText.DOWNLOADING_ISO, 0)
 
-                final_iso_url = self.provisioner.upload_iso(custom_path, pool_name, upload_progress)
-                if not final_iso_url:
-                    raise Exception(ErrorMessages.NO_ISO_URL_SPECIFIED)
+                        def download_progress(percent, speed):
+                            progress_cb(
+                                StaticText.DOWNLOADING_ISO_PROGRESS.format(
+                                    progress=percent, speed=speed
+                                ),
+                                int(percent * 0.3),  # Use first 30% for download
+                            )
+
+                        try:
+                            downloaded_iso_path = self.provisioner.download_iso(
+                                custom_path, progress_callback=download_progress
+                            )
+                            custom_path = (
+                                downloaded_iso_path  # Use downloaded file for subsequent operations
+                            )
+                        except Exception as e:
+                            raise Exception(str(e))
+
+                    else:
+                        # Validate local path exists
+                        if not os.path.exists(custom_path):
+                            raise Exception(
+                                ErrorMessages.CUSTOM_ISO_PATH_NOT_EXIST_TEMPLATE.format(
+                                    path=custom_path
+                                )
+                            )
+                        if not os.path.isfile(custom_path):
+                            raise Exception(
+                                ErrorMessages.CUSTOM_ISO_NOT_FILE_TEMPLATE.format(path=custom_path)
+                            )
+
+                    # 1. Validate Checksum
+                    if validate:
+                        if not checksum:
+                            raise Exception(ErrorMessages.CHECKSUM_MISSING)
+                        progress_cb(StaticText.VALIDATING_CHECKSUM, 30)
+                        if not self.provisioner.validate_iso(custom_path, checksum):
+                            raise Exception(ErrorMessages.CHECKSUM_VALIDATION_FAILED)
+                        progress_cb(StaticText.CHECKSUM_VALIDATED, 40)
+
+                    # 2. Upload
+                    progress_cb(StaticText.UPLOADING_ISO, 40)
+
+                    def upload_progress(p):
+                        progress_cb(
+                            StaticText.UPLOADING_PROGRESS_TEMPLATE.format(progress=p),
+                            40 + int(p * 0.4),
+                        )
+
+                    final_iso_url = self.provisioner.upload_iso(
+                        custom_path, pool_name, upload_progress
+                    )
+                    if not final_iso_url:
+                        raise Exception(ErrorMessages.NO_ISO_URL_SPECIFIED)
 
             # 3. Provision
             # Suspend global updates to prevent UI freeze during heavy provisioning ops
