@@ -439,6 +439,16 @@ void load_config(struct guibux_server *server, const char *path) {
 		} else if (!strcmp(key, "topbar_items")) {
 			parse_topbar_items(server, val, path, lineno);
 			wlr_log(WLR_INFO, "config: topbar_items = %s", val);
+		} else if (!strcmp(key, "topbar_items_output")) {
+			if (!strcasecmp(val, "all")) {
+				server->topbar_items_output = 0;
+			} else if (val[0] >= 'A' && val[0] <= 'Z' && val[1] == '\0') {
+				server->topbar_items_output = val[0] - 'A' + 1;
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad topbar_items_output '%s' (expected all or A-Z)", path, lineno, val);
+				server->topbar_items_output = 0;
+			}
+			wlr_log(WLR_INFO, "config: topbar_items_output = %s", val);
 		} else if (!strcmp(key, "background")) {
 			free(server->background_path);
 			server->background_path = strdup(val);

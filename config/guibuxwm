@@ -90,9 +90,9 @@ color_border = #45475a
 color_highlight = #3a3c55
 color_text = #ffffff
 color_dim = #8888aa
-# topbar (openSUSE green)
-topbar_bg = #8839ef
-topbar_text = #1e1e2e
+# topbar (dark blue)
+topbar_bg = #0f1b3d
+topbar_text = #ffffff
 # topbar gradient (left to right): end color + enable flag
 #topbar_bg2 = #6a2fd8
 #topbar_gradient = 1
@@ -111,6 +111,9 @@ topbar_win_pad = 2
 # available: network, volume, mic, battery, notifications, clock
 # (default: network, volume, mic, battery, notifications, clock)
 #topbar_items = network, volume, mic, battery, notifications, clock
+
+# which monitor shows the indicators + clock (default: all)
+#topbar_items_output = all
 
 # desktop background image (PNG or JPEG), used for workspaces
 # without their own image

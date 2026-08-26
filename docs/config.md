@@ -362,6 +362,24 @@ topbar_items = network, battery, clock
 
 ---
 
+### `topbar_items_output`
+
+Which monitor shows the right-side indicators and clock. `all`
+(default) shows them on every monitor. A single letter (`A`, `B`, ...)
+restricts indicators + clock to that monitor only; other monitors show
+no indicators and no clock (the window pill list extends to the full
+right side instead).
+
+**Default:** `all`
+
+**Example:**
+
+```
+topbar_items_output = A
+```
+
+---
+
 ### `background`
 
 Desktop background image path (PNG or JPEG), used for workspaces
