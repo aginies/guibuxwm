@@ -51,6 +51,14 @@ void focus_toplevel(struct guibux_toplevel *toplevel, bool raise) {
 		/* only the active pill moved: the fast path redraws just the
 		 * window-pill region, no full-bar repaint */
 		fo->topbar_focus_dirty = true;
+		/* the pill list is global: a window mapping on one monitor
+		 * must appear on every bar, not just its own */
+		struct guibux_output *bo;
+		wl_list_for_each(bo, &server->outputs, link) {
+			if (bo != fo) {
+				topbar_mark_dirty(bo);
+			}
+		}
 	}
 }
 
@@ -283,6 +291,14 @@ void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 		effects_window_closed(toplevel, o);
 	}
 	topbar_mark_dirty(o);
+	/* the pill list is global: the removed window must vanish from
+	 * every bar, not just its own */
+	struct guibux_output *bo;
+	wl_list_for_each(bo, &server->outputs, link) {
+		if (bo != o) {
+			topbar_mark_dirty(bo);
+		}
+	}
 
 	focus_after_unmap(server);
 }
@@ -692,6 +708,14 @@ static void xsurface_unmap(struct wl_listener *listener, void *data) {
 		effects_window_closed(toplevel, o);
 	}
 	topbar_mark_dirty(o);
+	/* the pill list is global: the removed window must vanish from
+	 * every bar, not just its own */
+	struct guibux_output *bo;
+	wl_list_for_each(bo, &server->outputs, link) {
+		if (bo != o) {
+			topbar_mark_dirty(bo);
+		}
+	}
 
 	focus_after_unmap(server);
 }

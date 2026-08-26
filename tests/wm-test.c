@@ -210,9 +210,14 @@ int global_topbar_test_run(void *data) {
 		move_toplevel_to_output(ts[1], alt->wlr_output);
 		o2 = alt;
 	}
-	/* render both bars and verify the global list */
-	o1->topbar_dirty = true;
-	o2->topbar_dirty = true;
+	/* render both bars and verify the global list. The map handler must
+	 * have already marked both bars dirty (the pill list is global); the
+	 * explicit set here would mask a regression, so verify the flag first */
+	if (!o1->topbar_dirty || !o2->topbar_dirty) {
+		wlr_log(WLR_ERROR, "global-topbar-test: FAIL bars not marked dirty on map (o1=%d o2=%d)",
+			o1->topbar_dirty, o2->topbar_dirty);
+		return 0;
+	}
 	topbar_render(o1);
 	topbar_render(o2);
 	/* o1's bar: ts[0] (own) must come before ts[1] (other) */
@@ -279,6 +284,25 @@ int global_topbar_test_run(void *data) {
 				"global-topbar-test: FAIL focused other-monitor window left own group (o1 own idx %d, focused idx %d, count %d)",
 				own_idx, foc_idx, o1->topbar_win_count);
 			return 0;
+		}
+	}
+	/* regression: closing a window must mark every bar dirty, not just
+	 * the window's own (the pill list is global). Unmap ts[0] and
+	 * require o2 (the other monitor) to be dirty and ts[0] gone from
+	 * its list after render */
+	xdg_toplevel_unmap(&ts[0]->unmap, NULL);
+	if (!o2->topbar_dirty) {
+		wlr_log(WLR_ERROR, "global-topbar-test: FAIL other-monitor bar not marked dirty on unmap");
+		return 0;
+	}
+	topbar_render(o2);
+	{
+		for (int i = 0; i < o2->topbar_win_count; i++) {
+			if (o2->topbar_wins[i] == ts[0]) {
+				wlr_log(WLR_ERROR, "global-topbar-test: FAIL other-monitor bar still lists unmapped window (count %d)",
+					o2->topbar_win_count);
+				return 0;
+			}
 		}
 	}
 	wlr_log(WLR_INFO, "global-topbar-test: OK (%d outputs, %d toplevels, both bars list both, own first)",
