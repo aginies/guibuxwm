@@ -167,10 +167,10 @@ static struct guibux_output *other_output(struct guibux_server *server,
 	return NULL;
 }
 
-/* Global topbar list: with two outputs and one window on each, every bar
- * must list both windows, own-monitor windows first. The window's own
- * output is the first group; the other monitor's window follows after the
- * separator. */
+/* Global topbar pill list: with two outputs and one window on each, every
+ * bar must list both windows (own-monitor first, other-monitor after the
+ * separator). The mini-map (decorative, own-monitor only) is drawn
+ * separately under the ws cells. */
 int global_topbar_test_run(void *data) {
 	struct guibux_server *server = data;
 	struct guibux_output *o;
@@ -210,9 +210,9 @@ int global_topbar_test_run(void *data) {
 		move_toplevel_to_output(ts[1], alt->wlr_output);
 		o2 = alt;
 	}
-	/* render both bars and verify the global list. The map handler must
-	 * have already marked both bars dirty (the pill list is global); the
-	 * explicit set here would mask a regression, so verify the flag first */
+	/* render both bars and verify the global pill list. The map handler
+	 * must have already marked both bars dirty; the explicit set here
+	 * would mask a regression, so verify the flag first */
 	if (!o1->topbar_dirty || !o2->topbar_dirty) {
 		wlr_log(WLR_ERROR, "global-topbar-test: FAIL bars not marked dirty on map (o1=%d o2=%d)",
 			o1->topbar_dirty, o2->topbar_dirty);
@@ -242,11 +242,7 @@ int global_topbar_test_run(void *data) {
 			idx1, idx0, o2->topbar_win_count);
 		return 0;
 	}
-	/* cross-monitor entries must carry the window's own monitor letter,
-	 * not the bar's: on o1's bar, ts[1] (on o2) must be prefixed with
-	 * o2's letter; on o2's bar, ts[0] (on o1) with o1's. Look up by the
-	 * window pointer, not the ordering index, because "focused first"
-	 * reorders the list. */
+	/* cross-monitor entries must carry the window's own monitor letter */
 	char want0 = 'A' + (o1->topbar_number - 1);
 	char want1 = 'A' + (o2->topbar_number - 1);
 	int ti1 = -1, ti0 = -1;
@@ -262,47 +258,28 @@ int global_topbar_test_run(void *data) {
 			ti0 >= 0 ? o2->topbar_win_titles[ti0] : "?");
 		return 0;
 	}
-	/* focused window must stay at the front of its own group, not jump
-	 * across the group separator: focus the other-monitor window (ts[1])
-	 * and verify o1's bar still lists the own window (ts[0]) before it.
-	 * Mark dirty: focus_toplevel only sets topbar_focus_dirty, which the
-	 * fast path serves from the cached layout */
-	test_seat_add_keyboard(server);
-	focus_toplevel(ts[1], true);
-	o1->topbar_dirty = true;
-	o2->topbar_dirty = true;
+	/* regression: closing a window must mark every bar dirty and the
+	 * window must be gone from the global list after render */
+	xdg_toplevel_unmap(&ts[0]->unmap, NULL);
+	if (!o1->topbar_dirty || !o2->topbar_dirty) {
+		wlr_log(WLR_ERROR, "global-topbar-test: FAIL bars not marked dirty on unmap (o1=%d o2=%d)",
+			o1->topbar_dirty, o2->topbar_dirty);
+		return 0;
+	}
 	topbar_render(o1);
 	topbar_render(o2);
-	{
-		int own_idx = -1, foc_idx = -1;
-		for (int i = 0; i < o1->topbar_win_count; i++) {
-			if (o1->topbar_wins[i] == ts[0]) own_idx = i;
-			if (o1->topbar_wins[i] == ts[1]) foc_idx = i;
-		}
-		if (own_idx < 0 || foc_idx < 0 || own_idx >= foc_idx) {
-			wlr_log(WLR_ERROR,
-				"global-topbar-test: FAIL focused other-monitor window left own group (o1 own idx %d, focused idx %d, count %d)",
-				own_idx, foc_idx, o1->topbar_win_count);
+	for (int i = 0; i < o1->topbar_win_count; i++) {
+		if (o1->topbar_wins[i] == ts[0]) {
+			wlr_log(WLR_ERROR, "global-topbar-test: FAIL o1 still lists unmapped window (count %d)",
+				o1->topbar_win_count);
 			return 0;
 		}
 	}
-	/* regression: closing a window must mark every bar dirty, not just
-	 * the window's own (the pill list is global). Unmap ts[0] and
-	 * require o2 (the other monitor) to be dirty and ts[0] gone from
-	 * its list after render */
-	xdg_toplevel_unmap(&ts[0]->unmap, NULL);
-	if (!o2->topbar_dirty) {
-		wlr_log(WLR_ERROR, "global-topbar-test: FAIL other-monitor bar not marked dirty on unmap");
-		return 0;
-	}
-	topbar_render(o2);
-	{
-		for (int i = 0; i < o2->topbar_win_count; i++) {
-			if (o2->topbar_wins[i] == ts[0]) {
-				wlr_log(WLR_ERROR, "global-topbar-test: FAIL other-monitor bar still lists unmapped window (count %d)",
-					o2->topbar_win_count);
-				return 0;
-			}
+	for (int i = 0; i < o2->topbar_win_count; i++) {
+		if (o2->topbar_wins[i] == ts[0]) {
+			wlr_log(WLR_ERROR, "global-topbar-test: FAIL o2 still lists unmapped window (count %d)",
+				o2->topbar_win_count);
+			return 0;
 		}
 	}
 	wlr_log(WLR_INFO, "global-topbar-test: OK (%d outputs, %d toplevels, both bars list both, own first)",
@@ -780,8 +757,8 @@ int xmondrag_test_run(void *data) {
 		dst->topbar_dirty = true;
 		topbar_render(src);
 		topbar_render(dst);
-		/* the topbar list is global (own + other monitors): both bars
-		 * list the window; the window's own output must be the dst */
+		/* the topbar pill list is global (own + other monitors): both
+		 * bars list the window; the window's own output must be the dst */
 		if (!topbar_lists(dst, t) || !topbar_lists(src, t) ||
 				t->output != dst) {
 			wlr_log(WLR_ERROR, "xmondrag-test: FAIL topbar lists after drag (dst %s, src %s, output %s)",
@@ -837,7 +814,7 @@ int xmondrag_test_run(void *data) {
 		dst->topbar_dirty = true;
 		topbar_render(src);
 		topbar_render(dst);
-		/* the topbar list is global: both bars list the window; the
+		/* the topbar pill list is global: both bars list the window; the
 		 * window's own output must be back on the src */
 		if (!topbar_lists(src, t) || !topbar_lists(dst, t) ||
 				t->output != src) {

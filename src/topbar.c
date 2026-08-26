@@ -540,87 +540,115 @@ static int topbar_item_render(struct topbar_items *ctx, int id) {
  * belongs to this monitor, index own_count when it belongs to another.
  * Moving it unconditionally to index 0 would place a cross-monitor window
  * in the own-monitor section (before the group separator) */
-static void topbar_focus_first(struct guibux_toplevel *wins[], int nwins,
-		int own_count, struct guibux_toplevel *kb_focus_t) {
-	if (kb_focus_t == NULL) {
-		return;
-	}
-	for (int i = 0; i < nwins; i++) {
-		if (wins[i] == kb_focus_t) {
-			int target = (i < own_count) ? 0 : own_count;
-			if (target != i) {
-				struct guibux_toplevel *f = wins[i];
-				if (target < i) {
-					memmove(&wins[target + 1], &wins[target],
-						(i - target) * sizeof(*wins));
-				} else {
-					memmove(&wins[target], &wins[target + 1],
-						(i - target) * sizeof(*wins));
-				}
-				wins[target] = f;
+/* draw the per-workspace window mini-map: one area per workspace cell,
+ * each own-monitor window drawn as a small rect positioned proportionally
+ * to the window's real on-screen x and y (left/right and over/below).
+ * Fullscreen fills the whole area. Decorative only — the clickable
+ * window pills (which cache topbar_win_* for hit-testing) are drawn
+ * separately in the window region */
+static void topbar_minimap_draw(struct guibux_output *o, cairo_t *cr,
+		int scale, int cell_y, int cell_h, int cell_w,
+		struct guibux_toplevel *kb_focus_t) {
+	struct guibux_server *server = o->server;
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+	int out_w = box.width > 0 ? box.width : 1;
+	int out_h = box.height > 0 ? box.height : 1;
+	int pad = 2;
+	int span_w = cell_w - 2 * pad;
+	int span_h = cell_h - 2 * pad;
+	if (span_w < 4)
+		span_w = 4;
+	if (span_h < 4)
+		span_h = 4;
+	for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {
+		struct guibux_toplevel *t;
+		wl_list_for_each(t, &server->toplevels, link) {
+			if (t->scene_tree == NULL)
+				continue;
+			if (t->workspace != ws ||
+					toplevel_output_for(t) != o->wlr_output)
+				continue;
+			int rx, ry, rw, rh;
+			if (t->is_fullscreen) {
+				rx = o->topbar_ws_x[ws] + pad;
+				ry = cell_y + pad;
+				rw = span_w;
+				rh = span_h;
+			} else if (t->xdg_toplevel == NULL && t->xsurface == NULL) {
+				/* fake toplevel (test seed): no real geometry, use a
+				 * small default rect at the cell's left edge */
+				rx = o->topbar_ws_x[ws] + pad;
+				ry = cell_y + pad;
+				rw = 4;
+				rh = 4;
+			} else {
+				struct wlr_box geo;
+				toplevel_get_geometry(t, &geo);
+				double lx = t->scene_tree->node.x + geo.x - box.x;
+				double ly = t->scene_tree->node.y + geo.y - box.y;
+				double lw = geo.width;
+				double lh = geo.height;
+				if (lx < 0)
+					lx = 0;
+				if (ly < 0)
+					ly = 0;
+				if (lx + lw > out_w)
+					lw = out_w - lx;
+				if (ly + lh > out_h)
+					lh = out_h - ly;
+				if (lw < 1)
+					lw = 1;
+				if (lh < 1)
+					lh = 1;
+				rx = o->topbar_ws_x[ws] + pad +
+					(int)(lx / out_w * span_w);
+				ry = cell_y + pad +
+					(int)(ly / out_h * span_h);
+				rw = (int)(lw / out_w * span_w);
+				rh = (int)(lh / out_h * span_h);
+				if (rw < 2)
+					rw = 2;
+				if (rh < 2)
+					rh = 2;
+				if (rx + rw > o->topbar_ws_x[ws] + cell_w - pad)
+					rw = o->topbar_ws_x[ws] + cell_w - pad - rx;
+				if (ry + rh > cell_y + cell_h - pad)
+					rh = cell_y + cell_h - pad - ry;
+				if (rw < 1)
+					rw = 1;
+				if (rh < 1)
+					rh = 1;
 			}
-			break;
+			if (t == kb_focus_t) {
+				set_color(cr, server->color_highlight);
+			} else {
+				set_color_alpha(cr, server->color_topbar_text, 0.7);
+			}
+			topbar_rounded_rect(cr, rx * scale, ry * scale,
+				rw * scale, rh * scale, 1 * scale);
+			cairo_fill(cr);
 		}
+	}
+	/* faint 1px vertical separator between workspace cells */
+	set_color_alpha(cr, server->color_border, 0.25);
+	for (int ws = 1; ws < NUM_WORKSPACES; ws++) {
+		int sx = o->topbar_ws_x[ws] + cell_w;
+		cairo_rectangle(cr, sx * scale, cell_y * scale,
+			1 * scale, cell_h * scale);
+		cairo_fill(cr);
 	}
 }
 
-/* focus-only fast path: the window list and kb focus are the only
- * things that changed, so recompute them and redraw just the
- * window-pill region (occupancy dots never change on a focus event).
- * The indicator/clock layout is reused from the last full render */
-static void topbar_render_focus(struct guibux_output *o) {
+/* draw the window pill list: global (own-monitor first, then other
+ * monitors), clickable — caches topbar_win_* for hit-testing. The pill
+ * region is [win_x0, win_x1] in logical px */
+static void topbar_pills_draw(struct guibux_output *o, cairo_t *cr,
+		cairo_surface_t *cs, int scale, int baseline,
+		int cell_y, int cell_h, int win_x0, int win_x1,
+		struct guibux_toplevel *kb_focus_t) {
 	struct guibux_server *server = o->server;
-	if (!o->topbar_focus_dirty || o->topbar_buffer == NULL) {
-		return;
-	}
-	if (o->topbar_win_region_x <= 0) {
-		/* no full render yet: the cached layout does not exist */
-		o->topbar_focus_dirty = false;
-		return;
-	}
-	o->topbar_focus_dirty = false;
-
-	int scale = guibux_scale_round(o->wlr_output->scale);
-	int w = o->topbar_buffer_w;
-	int h = o->topbar_buffer_h;
-
-	void *data;
-	uint32_t format;
-	size_t stride;
-	if (!wlr_buffer_begin_data_ptr_access(o->topbar_buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) {
-		return;
-	}
-	if (format != DRM_FORMAT_XRGB8888) {
-		wlr_buffer_end_data_ptr_access(o->topbar_buffer);
-		return;
-	}
-	cairo_surface_t *cs = cairo_image_surface_create_for_data(
-		data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
-	cairo_t *cr = cairo_create(cs);
-
-	int font_px = server->topbar_font_size * scale;
-	FT_Set_Pixel_Sizes(server->launcher.face, 0, font_px);
-	int baseline = o->server->topbar_height / 2 * scale + font_px * 35 / 100;
-
-	/* recompute the window list (same passes as the full render) */
 	struct guibux_toplevel *t;
-	struct wlr_seat *seat = server->seat;
-	struct wlr_surface *kb_focus = seat->keyboard_state.focused_surface;
-	struct guibux_toplevel *kb_focus_t = NULL;
-	if (kb_focus) {
-		struct wlr_xdg_toplevel *kb_xdg =
-			wlr_xdg_toplevel_try_from_wlr_surface(kb_focus);
-		struct wlr_xwayland_surface *kb_xs =
-			wlr_xwayland_surface_try_from_wlr_surface(kb_focus);
-		wl_list_for_each(t, &server->toplevels, link) {
-			if ((kb_xdg && t->xdg_toplevel == kb_xdg) ||
-					(kb_xs && t->xsurface == kb_xs)) {
-				kb_focus_t = t;
-				break;
-			}
-		}
-	}
 	struct guibux_toplevel *wins[TOPBAR_WIN_MAX];
 	int nwins = 0;
 	wl_list_for_each(t, &server->toplevels, link) {
@@ -644,18 +672,31 @@ static void topbar_render_focus(struct guibux_output *o) {
 		if (toplevel_output_for(t) == o->wlr_output)
 			own_count++;
 	}
-	topbar_focus_first(wins, nwins, own_count, kb_focus_t);
+	/* focused window first within its group */
+	if (kb_focus_t != NULL) {
+		for (int i = 0; i < nwins; i++) {
+			if (wins[i] == kb_focus_t) {
+				int target = (i < own_count) ? 0 : own_count;
+				if (target != i) {
+					struct guibux_toplevel *f = wins[i];
+					if (target < i) {
+						memmove(&wins[target + 1], &wins[target],
+							(i - target) * sizeof(*wins));
+					} else {
+						memmove(&wins[target], &wins[target + 1],
+							(i - target) * sizeof(*wins));
+					}
+					wins[target] = f;
+				}
+				break;
+			}
+		}
+	}
 
-	/* repaint the window-pill region with the topbar background */
-	int rx = o->topbar_win_region_x * scale;
-	int rw = (o->topbar_win_region_end - o->topbar_win_region_x) * scale;
-	topbar_bg_fill(cr, server, rx, 0, rw, h);
-
-	int win_x = o->topbar_win_region_x;
-	int win_end = o->topbar_win_region_end;
-	int cell_y = o->topbar_cell_y;
-	int cell_h = o->topbar_cell_h;
-
+	int win_x = win_x0;
+	int win_end = win_x1;
+	if (win_end < win_x)
+		win_end = win_x;
 	int avail = win_end - win_x;
 	int max_w = 30;
 	if (nwins > 0) {
@@ -664,7 +705,6 @@ static void topbar_render_focus(struct guibux_output *o) {
 			per = 30;
 		max_w = per;
 	}
-
 	int rendered = 0;
 	for (int i = 0; i < nwins && win_x < win_end; i++) {
 		const char *title = toplevel_get_title(wins[i]) ?
@@ -692,9 +732,8 @@ static void topbar_render_focus(struct guibux_output *o) {
 				size_t n = strlen(tbuf);
 				snprintf(tbuf + n, sizeof(tbuf) - n, "...");
 				tw = guibux_text_width(server->launcher.face, tbuf);
-				if (tw <= budget) {
+				if (tw <= budget)
 					break;
-				}
 			}
 			if (tw > budget) {
 				utf8_truncate(title, tbuf, sizeof(tbuf), 1);
@@ -707,19 +746,20 @@ static void topbar_render_focus(struct guibux_output *o) {
 		char buf[72];
 		snprintf(buf, sizeof(buf), "%s%s", prefix, tbuf);
 		tw = guibux_text_width(server->launcher.face, buf);
-		int cell_w = tw + 16;
-		if (cell_w > max_w)
-			cell_w = max_w;
+		int pill_w = tw + 16;
+		if (pill_w > max_w)
+			pill_w = max_w;
 		o->topbar_wins[rendered] = wins[i];
-		snprintf(o->topbar_win_titles[rendered], sizeof(o->topbar_win_titles[rendered]), "%s", buf);
+		snprintf(o->topbar_win_titles[rendered],
+			sizeof(o->topbar_win_titles[rendered]), "%s", buf);
 		o->topbar_win_x[rendered] = win_x;
-		o->topbar_win_w[rendered] = cell_w;
+		o->topbar_win_w[rendered] = pill_w;
 
 		if (wins[i] == kb_focus_t) {
 			set_color(cr, server->color_highlight);
 			topbar_rounded_rect(cr, win_x * scale,
 				cell_y * scale,
-				cell_w * scale,
+				pill_w * scale,
 				cell_h * scale,
 				6 * scale);
 			cairo_fill_preserve(cr);
@@ -734,7 +774,7 @@ static void topbar_render_focus(struct guibux_output *o) {
 			set_color_alpha(cr, server->color_topbar_text, 0.22);
 			topbar_rounded_rect(cr, win_x * scale,
 				cell_y * scale,
-				cell_w * scale,
+				pill_w * scale,
 				cell_h * scale,
 				6 * scale);
 			cairo_fill_preserve(cr);
@@ -746,7 +786,7 @@ static void topbar_render_focus(struct guibux_output *o) {
 				(win_x + 8) * scale, baseline,
 				server->color_topbar_text);
 		}
-		win_x += cell_w + TOPBAR_WIN_GAP;
+		win_x += pill_w + TOPBAR_WIN_GAP;
 		rendered++;
 		if (rendered == own_count && own_count < nwins &&
 				win_x < win_end) {
@@ -757,6 +797,79 @@ static void topbar_render_focus(struct guibux_output *o) {
 		}
 	}
 	o->topbar_win_count = rendered;
+	/* cache the pill region for the focus-only fast path */
+	o->topbar_win_region_x = win_x;
+	o->topbar_win_region_end = win_end;
+}
+
+/* focus-only fast path: the window list and kb focus are the only
+ * things that changed, so recompute them and redraw just the
+ * workspace-cells + pill region. The indicator/clock layout is reused
+ * from the last full render */
+static void topbar_render_focus(struct guibux_output *o) {
+	struct guibux_server *server = o->server;
+	if (!o->topbar_focus_dirty || o->topbar_buffer == NULL) {
+		return;
+	}
+	o->topbar_focus_dirty = false;
+
+	int scale = guibux_scale_round(o->wlr_output->scale);
+	int w = o->topbar_buffer_w;
+	int h = o->topbar_buffer_h;
+
+	void *data;
+	uint32_t format;
+	size_t stride;
+	if (!wlr_buffer_begin_data_ptr_access(o->topbar_buffer,
+			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) {
+		return;
+	}
+	if (format != DRM_FORMAT_XRGB8888) {
+		wlr_buffer_end_data_ptr_access(o->topbar_buffer);
+		return;
+	}
+	cairo_surface_t *cs = cairo_image_surface_create_for_data(
+		data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
+	cairo_t *cr = cairo_create(cs);
+
+	/* recompute the window list (same passes as the full render) */
+	struct guibux_toplevel *t;
+	struct wlr_seat *seat = server->seat;
+	struct wlr_surface *kb_focus = seat->keyboard_state.focused_surface;
+	struct guibux_toplevel *kb_focus_t = NULL;
+	if (kb_focus) {
+		struct wlr_xdg_toplevel *kb_xdg =
+			wlr_xdg_toplevel_try_from_wlr_surface(kb_focus);
+		struct wlr_xwayland_surface *kb_xs =
+			wlr_xwayland_surface_try_from_wlr_surface(kb_focus);
+		wl_list_for_each(t, &server->toplevels, link) {
+			if ((kb_xdg && t->xdg_toplevel == kb_xdg) ||
+					(kb_xs && t->xsurface == kb_xs)) {
+				kb_focus_t = t;
+				break;
+			}
+		}
+	}
+	int cell_y = o->topbar_cell_y;
+	int cell_h = o->topbar_cell_h;
+	/* repaint the workspace-cells region with the topbar background so
+	 * stale mini-map rects do not linger, then redraw the mini-map */
+	int ws_x0 = o->topbar_ws_x[1];
+	int ws_x1 = o->topbar_ws_x[NUM_WORKSPACES] + o->topbar_ws_cell_w;
+	topbar_bg_fill(cr, server, ws_x0 * scale, 0,
+		(ws_x1 - ws_x0) * scale, h);
+	topbar_minimap_draw(o, cr, scale, cell_y, cell_h,
+		o->topbar_ws_cell_w, kb_focus_t);
+	/* repaint the pill region and redraw the pills */
+	if (o->topbar_win_region_x > 0) {
+		int rx = o->topbar_win_region_x * scale;
+		int rw = (o->topbar_win_region_end - o->topbar_win_region_x) * scale;
+		topbar_bg_fill(cr, server, rx, 0, rw, h);
+		int font_px = server->topbar_font_size * scale;
+		int baseline = o->server->topbar_height / 2 * scale + font_px * 35 / 100;
+		topbar_pills_draw(o, cr, cs, scale, baseline, cell_y, cell_h,
+			o->topbar_win_region_x, o->topbar_win_region_end, kb_focus_t);
+	}
 
 	cairo_destroy(cr);
 	cairo_surface_destroy(cs);
@@ -773,11 +886,9 @@ void topbar_render(struct guibux_output *o) {
 		return;
 	}
 	if (!o->topbar_dirty) {
-		/* focus-only change: only the active pill moved, redraw just
-		 * the window-pill region (the cached layout must exist from a
-		 * previous full render) */
-		if (o->topbar_focus_dirty && o->topbar_buffer != NULL &&
-				o->topbar_win_region_x > 0) {
+		/* focus-only change: redraw the workspace-cells region (the
+		 * cached cell layout must exist from a previous full render) */
+		if (o->topbar_focus_dirty && o->topbar_buffer != NULL) {
 			topbar_render_focus(o);
 		}
 		return;
@@ -897,13 +1008,14 @@ void topbar_render(struct guibux_output *o) {
 		(TOPBAR_PAD + badge_pad) * scale, baseline,
 		server->color_topbar_text);
 
-	int cell_w = guibux_text_width(server->launcher.face, "9") / scale + 16;
+	/* workspace mini-map cells: no numbers, the mini-map rects carry the
+	 * information; a wider cell gives each window rect room to show its
+	 * on-screen position (left/right and over/below) */
+	int cell_w = 40;
 	o->topbar_ws_cell_w = cell_w;
 	int x = TOPBAR_PAD + badge_w + 12;
 	for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {
 		o->topbar_ws_x[ws] = x;
-		char num[8];
-		snprintf(num, sizeof(num), "%d", ws);
 		bool drag_target = server->ws_drag.active &&
 			server->ws_drag.target_output == o &&
 			server->ws_drag.target_ws == ws;
@@ -912,120 +1024,14 @@ void topbar_render(struct guibux_output *o) {
 			topbar_rounded_rect(cr, x * scale, cell_y * scale,
 				cell_w * scale, cell_h * scale, 4 * scale);
 			cairo_fill(cr);
-			launcher_draw_text_on_surface(cs, server->launcher.face, num,
-				(x + 8) * scale, baseline, server->color_text);
-		} else {
-			launcher_draw_text_on_surface(cs, server->launcher.face, num,
-				(x + 8) * scale, baseline, server->color_topbar_text);
 		}
 		x += cell_w;
-	}
-
-	/* occupancy dots: one small marker per window on the workspace
-	 * (this monitor), up to 4, under the workspace number; circle for
-	 * normal windows, square for fullscreen */
-	{
-		int dot_r = 3;
-		int dot_gap = 2;
-		struct guibux_toplevel *dt;
-		for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {
-			int n = 0;
-			int fs[4] = {0};
-			int nfs = 0;
-			wl_list_for_each(dt, &server->toplevels, link) {
-				if (dt->workspace == ws &&
-						toplevel_output_for(dt) == o->wlr_output) {
-					n++;
-					if (dt->is_fullscreen && nfs < 4)
-						fs[nfs++] = 1;
-					else if (nfs < 4)
-						fs[nfs++] = 0;
-				}
-			}
-			o->topbar_ws_dots[ws] = n;
-			if (n == 0)
-				continue;
-			int shown = n > 4 ? 4 : n;
-			int total = shown * (2 * dot_r) + (shown - 1) * dot_gap;
-			int dx0 = o->topbar_ws_x[ws] + cell_w / 2 - total / 2;
-			int dy = cell_y + cell_h - dot_r - 2;
-			if (ws == o->current_workspace) {
-				set_color(cr, server->color_text);
-			} else {
-				set_color_alpha(cr, server->color_topbar_text, 0.5);
-			}
-			for (int d = 0; d < shown; d++) {
-				if (fs[d]) {
-					cairo_rectangle(cr,
-						(dx0 + d * (2 * dot_r + dot_gap)) * scale,
-						(dy + 1) * scale,
-						(2 * dot_r - 2) * scale, (2 * dot_r - 2) * scale);
-				} else {
-					cairo_arc(cr, (dx0 + d * (2 * dot_r + dot_gap) + dot_r) * scale,
-						(dy + dot_r) * scale, dot_r * scale, 0, 2 * M_PI);
-				}
-				cairo_fill(cr);
-			}
-		}
 	}
 
 	/* vertical separator after workspaces */
 	int sep_gap = 12;
 	topbar_draw_separator(cr, x + sep_gap / 2, cell_y, cell_h, scale,
 		server->color_border);
-
-	/* render window titles between workspaces and date */
-	int win_x = x + sep_gap;
-	o->topbar_win_count = 0;
-	struct guibux_toplevel *t;
-	struct wlr_seat *seat = server->seat;
-	struct wlr_surface *kb_focus = seat->keyboard_state.focused_surface;
-	struct guibux_toplevel *kb_focus_t = NULL;
-	if (kb_focus) {
-		struct wlr_xdg_toplevel *kb_xdg =
-			wlr_xdg_toplevel_try_from_wlr_surface(kb_focus);
-		struct wlr_xwayland_surface *kb_xs =
-			wlr_xwayland_surface_try_from_wlr_surface(kb_focus);
-		wl_list_for_each(t, &server->toplevels, link) {
-			if ((kb_xdg && t->xdg_toplevel == kb_xdg) ||
-					(kb_xs && t->xsurface == kb_xs)) {
-				kb_focus_t = t;
-				break;
-			}
-		}
-	}
-
-	struct guibux_toplevel *wins[TOPBAR_WIN_MAX];
-	int nwins = 0;
-	/* global list: own-monitor windows first, then the windows of the
-	 * other monitors (a vertical separator is drawn between the two
-	 * groups). The prefix "A2: " (monitor letter + workspace number)
-	 * disambiguates cross-monitor entries */
-	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->xdg_toplevel == NULL && t->xsurface == NULL)
-			continue;
-		if (toplevel_output_for(t) == o->wlr_output &&
-				nwins < TOPBAR_WIN_MAX)
-			wins[nwins++] = t;
-	}
-	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->xdg_toplevel == NULL && t->xsurface == NULL)
-			continue;
-		if (toplevel_output_for(t) != o->wlr_output &&
-				nwins < TOPBAR_WIN_MAX)
-			wins[nwins++] = t;
-	}
-	/* number of own-monitor windows: the separator is drawn after this
-	 * many cells (only when there are windows on both sides) */
-	int own_count = 0;
-	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->xdg_toplevel == NULL && t->xsurface == NULL)
-			continue;
-		if (toplevel_output_for(t) == o->wlr_output)
-			own_count++;
-	}
-
-	topbar_focus_first(wins, nwins, own_count, kb_focus_t);
 
 	time_t now = time(NULL);
 	struct tm tm;
@@ -1125,130 +1131,47 @@ void topbar_render(struct guibux_output *o) {
 
 	int date_w = ctx.clock_enabled ?
 		guibux_text_width(server->launcher.face, o->topbar_right) / scale : 0;
+	/* topbar_items_output restricts indicators + clock to one monitor */
+	if (server->topbar_items_output != 0 &&
+			server->topbar_items_output != o->topbar_number) {
+		ind_w = 0;
+		date_w = 0;
+	}
 	int date_x = w / scale - TOPBAR_PAD - date_w;
 	/* the gap before the clock holds the separator + a clear margin on
 	 * both sides (8px + 3px line + 9px) */
 	int date_gap = (ind_w > 0 && ctx.clock_enabled) ? 20 : 0;
 	int ind_start = date_x - date_gap - ind_w;
-	int win_end = ind_start - sep_gap;
-	if (win_end < win_x)
-		win_end = win_x;
 
-	/* cache the window-pill region for the focus-only fast path */
-	o->topbar_win_region_x = win_x;
-	o->topbar_win_region_end = win_end;
-	o->topbar_sep_gap = sep_gap;
+	/* cache the cell geometry for the focus-only fast path */
 	o->topbar_cell_y = cell_y;
 	o->topbar_cell_h = cell_h;
 
-	/* calculate max width per window to fit all in available space */
-	int avail = win_end - win_x;
-	int max_w = 30;
-	if (nwins > 0) {
-		int per = (avail - (nwins - 1) * TOPBAR_WIN_GAP) / nwins;
-		if (per < 30)
-			per = 30;
-		max_w = per;
-	}
-
-	int rendered = 0;
-	for (int i = 0; i < nwins && win_x < win_end; i++) {
-		const char *title = toplevel_get_title(wins[i]) ?
-			toplevel_get_title(wins[i]) : "(untitled)";
-		/* the prefix letter is the window's own monitor, not this bar's:
-		 * the list is global, so cross-monitor entries need their real
-		 * monitor letter to be unambiguous */
-		struct guibux_output *wo = guibux_output_for(o->server,
-			toplevel_output_for(wins[i]));
-		char mon = wo != NULL ? 'A' + (wo->topbar_number - 1) : 'A';
-		char prefix[8];
-		snprintf(prefix, sizeof(prefix), "%c%d: ", mon, wins[i]->workspace);
-		int pw = guibux_text_width(server->launcher.face, prefix);
-		int budget = max_w - 16 - pw;
-		if (budget < 0)
-			budget = 0;
-		char tbuf[64];
-		int tw = guibux_text_width(server->launcher.face, title);
-		if (tw > budget) {
-			int cps = 0;
-			const char *p = title;
-			while (*p) {
-				utf8_next(&p);
-				cps++;
+	/* resolve the keyboard-focused toplevel (for highlight + focus-first) */
+	struct guibux_toplevel *t;
+	struct wlr_seat *seat = server->seat;
+	struct wlr_surface *kb_focus = seat->keyboard_state.focused_surface;
+	struct guibux_toplevel *kb_focus_t = NULL;
+	if (kb_focus) {
+		struct wlr_xdg_toplevel *kb_xdg =
+			wlr_xdg_toplevel_try_from_wlr_surface(kb_focus);
+		struct wlr_xwayland_surface *kb_xs =
+			wlr_xwayland_surface_try_from_wlr_surface(kb_focus);
+		wl_list_for_each(t, &server->toplevels, link) {
+			if ((kb_xdg && t->xdg_toplevel == kb_xdg) ||
+					(kb_xs && t->xsurface == kb_xs)) {
+				kb_focus_t = t;
+				break;
 			}
-			for (int trunc = cps; trunc >= 1; trunc--) {
-				utf8_truncate(title, tbuf, sizeof(tbuf), trunc);
-				size_t n = strlen(tbuf);
-				snprintf(tbuf + n, sizeof(tbuf) - n, "...");
-				tw = guibux_text_width(server->launcher.face, tbuf);
-				if (tw <= budget) {
-					break;
-				}
-			}
-			if (tw > budget) {
-				utf8_truncate(title, tbuf, sizeof(tbuf), 1);
-				size_t n = strlen(tbuf);
-				snprintf(tbuf + n, sizeof(tbuf) - n, "...");
-			}
-		} else {
-			snprintf(tbuf, sizeof(tbuf), "%s", title);
-		}
-		char buf[72];
-		snprintf(buf, sizeof(buf), "%s%s", prefix, tbuf);
-		tw = guibux_text_width(server->launcher.face, buf);
-		int cell_w = tw + 16;
-		if (cell_w > max_w)
-			cell_w = max_w;
-		o->topbar_wins[rendered] = wins[i];
-		snprintf(o->topbar_win_titles[rendered], sizeof(o->topbar_win_titles[rendered]), "%s", buf);
-		o->topbar_win_x[rendered] = win_x;
-		o->topbar_win_w[rendered] = cell_w;
-
-		if (wins[i] == kb_focus_t) {
-			set_color(cr, server->color_highlight);
-			topbar_rounded_rect(cr, win_x * scale,
-				cell_y * scale,
-				cell_w * scale,
-				cell_h * scale,
-				6 * scale);
-			cairo_fill_preserve(cr);
-			set_color(cr, server->color_text);
-			cairo_set_line_width(cr, 1.0 * scale);
-			cairo_stroke(cr);
-			launcher_draw_text_on_surface(cs,
-				server->launcher.face, buf,
-				(win_x + 8) * scale, baseline,
-				server->color_text);
-		} else {
-			set_color_alpha(cr, server->color_topbar_text, 0.22);
-			topbar_rounded_rect(cr, win_x * scale,
-				cell_y * scale,
-				cell_w * scale,
-				cell_h * scale,
-				6 * scale);
-			cairo_fill_preserve(cr);
-			set_color_alpha(cr, server->color_topbar_text, 0.50);
-			cairo_set_line_width(cr, 1.0 * scale);
-			cairo_stroke(cr);
-			launcher_draw_text_on_surface(cs,
-				server->launcher.face, buf,
-				(win_x + 8) * scale, baseline,
-				server->color_topbar_text);
-		}
-		win_x += cell_w + TOPBAR_WIN_GAP;
-		rendered++;
-		/* separator between the own-monitor group and the
-		 * other-monitor group: drawn inside a widened gap so the
-		 * neighbouring pills keep a clear margin from the line */
-		if (rendered == own_count && own_count < nwins &&
-				win_x < win_end) {
-			int cx = win_x + 7;
-			topbar_draw_separator(cr, cx, cell_y, cell_h, scale,
-				server->color_border);
-			win_x += 14;
 		}
 	}
-	o->topbar_win_count = rendered;
+
+	topbar_minimap_draw(o, cr, scale, cell_y, cell_h, cell_w, kb_focus_t);
+
+	/* window pill list: global (own-monitor first, then other monitors),
+	 * clickable — caches topbar_win_* for hit-testing */
+	topbar_pills_draw(o, cr, cs, scale, baseline, cell_y, cell_h,
+		x + sep_gap, ind_start - sep_gap, kb_focus_t);
 
 	/* render the enabled indicator items in config order */
 	ctx.ind_x = date_x - date_gap - ind_w;
@@ -1450,7 +1373,6 @@ void topbar_create(struct guibux_output *o) {
 	}
 	/* the buffer is created lazily by topbar_render: the output may
 	 * not have a mode yet (0x0 box) and get one later */
-	o->topbar_win_region_x = 0;
 	o->topbar_dirty = true;
 	topbar_render(o);
 }
@@ -1682,6 +1604,12 @@ int topbar_tick(void *data) {
 	}
 	struct guibux_output *o;
 	wl_list_for_each(o, &server->outputs, link) {
+		/* topbar_items_output: non-target monitors show no indicators
+		 * or clock, so skip the per-second poll for them */
+		if (server->topbar_items_output != 0 &&
+				server->topbar_items_output != o->topbar_number) {
+			continue;
+		}
 		if (o->topbar_minute != minute &&
 				topbar_item_enabled(server, TOPBAR_ITEM_CLOCK)) {
 			o->topbar_minute = minute;
@@ -1724,13 +1652,13 @@ int topbar_tick(void *data) {
 }
 
 /* test hook: seed N fake toplevels on the first output's workspace <ws>
- * so the occupancy-dot count can be verified without a Wayland client.
+ * so the mini-map rect count can be verified without a Wayland client.
  * The fakes have no xdg/xwayland surface (only a scene tree), so the
- * title/pill/switcher paths that dereference those are skipped for them;
- * the dot count and the pill list (which only reads workspace + output)
- * work. GUIBUX_TEST_WS_DOTS_SEED=<ws>:<n>. */
+ * title/switcher paths that dereference those are skipped for them; the
+ * rect count (which only reads workspace + output) works.
+ * GUIBUX_TEST_WS_RECTS_SEED=<ws>:<n>. */
 void topbar_seed_fake_toplevels(struct guibux_server *server) {
-	const char *spec = getenv("GUIBUX_TEST_WS_DOTS_SEED");
+	const char *spec = getenv("GUIBUX_TEST_WS_RECTS_SEED");
 	if (spec == NULL) {
 		return;
 	}
@@ -1788,22 +1716,30 @@ int topbar_test_run(void *data) {
 				o->topbar_right);
 			return 0;
 		}
-		/* test hook: GUIBUX_TEST_WS_DOTS=<ws>:<n> — the occupancy dot
-		 * count for workspace <ws> must equal <n> (the test client
-		 * maps that many toplevels there) */
-		const char *dots = getenv("GUIBUX_TEST_WS_DOTS");
-		if (dots != NULL) {
-			int dws = 0, dn = 0;
-			if (sscanf(dots, "%d:%d", &dws, &dn) == 2 &&
-					dws >= 1 && dws <= NUM_WORKSPACES) {
-				if (o->topbar_ws_dots[dws] != dn) {
-					wlr_log(WLR_ERROR,
-						"topbar-test: FAIL ws%d dots (got %d, want %d)",
-						dws, o->topbar_ws_dots[dws], dn);
-					return 0;
-				}
+	/* test hook: GUIBUX_TEST_WS_RECTS=<ws>:<n> — the number of
+	 * own-monitor toplevels on workspace <ws> must equal <n> (the
+	 * mini-map draws one rect per such toplevel) */
+	const char *rects = getenv("GUIBUX_TEST_WS_RECTS");
+	if (rects != NULL) {
+		int rws = 0, rn = 0;
+		if (sscanf(rects, "%d:%d", &rws, &rn) == 2 &&
+				rws >= 1 && rws <= NUM_WORKSPACES) {
+			int nrects = 0;
+			struct guibux_toplevel *dt;
+			wl_list_for_each(dt, &server->toplevels, link) {
+				if (dt->scene_tree != NULL &&
+						dt->workspace == rws &&
+						toplevel_output_for(dt) == o->wlr_output)
+					nrects++;
+			}
+			if (nrects != rn) {
+				wlr_log(WLR_ERROR,
+					"topbar-test: FAIL ws%d rects (got %d, want %d)",
+					rws, nrects, rn);
+				return 0;
 			}
 		}
+	}
 		/* test hook: GUIBUX_TEST_GRADIENT=1 — the bar must show a
 		 * left-to-right color change (left edge = topbar_bg, right edge
 		 * = topbar_bg2, both sampled at the top row where only the

@@ -453,21 +453,17 @@ struct guibux_output {
     /* last rendered battery values: pct (-1 = none), UPower state */
     int topbar_bat_pct;
     int topbar_bat_state;
-    /* occupancy dots: number of (non-fullscreen) windows per workspace,
-     * rendered as small dots under the workspace number */
-    int topbar_ws_dots[NUM_WORKSPACES + 1];
     int topbar_notif_x;
     int topbar_notif_w;
     int topbar_ws_x[NUM_WORKSPACES + 1];
     int topbar_ws_cell_w;
-    /* last full render's window-region geometry (logical px): the
-     * focus-only fast path redraws just this region and needs the
-     * indicator/clock layout without recomputing it */
-    int topbar_win_region_x;
-    int topbar_win_region_end;
-    int topbar_sep_gap;
+    /* last full render's geometry (logical px): the focus-only fast
+     * path redraws the workspace-cells + pill region without recomputing
+     * the indicator/clock layout */
     int topbar_cell_y;
     int topbar_cell_h;
+    int topbar_win_region_x;
+    int topbar_win_region_end;
     struct wlr_scene_buffer *bg_node;
     struct wlr_buffer *bg_ws_buffers[NUM_WORKSPACES];
     int bg_w, bg_h, bg_scale;
@@ -778,6 +774,7 @@ struct guibux_server {
 	int topbar_win_pad;
 	int topbar_items[TOPBAR_ITEMS_MAX];  /* enabled indicator ids, layout order */
 	int topbar_item_count;
+	int topbar_items_output;  /* 0 = all monitors, 1..26 = single monitor letter */
 	char *background_path;
 	enum guibux_bg_scale background_scale;
 	char *bg_paths[NUM_WORKSPACES];
