@@ -1236,12 +1236,12 @@ int outputs_test_run(void *data) {
 	int n = outputs_sorted_by_x(server, outs, boxes, 16);
 
 	if (!strcmp(mode, "bogus")) {
-		/* a name that matches nothing must not kill the session: both
-		 * headless outputs stay alive, auto-arranged */
-		if (server->num_placements != 1 || server->placements[0].used) {
-			wlr_log(WLR_ERROR, "outputs-test: FAIL bogus: placement "
-				"not parsed or unexpectedly matched (n=%d)",
-				server->num_placements);
+		/* a name that matches nothing must not kill the session: the
+		 * placements are dropped and both headless outputs stay alive,
+		 * auto-arranged */
+		if (server->num_placements != 0) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL bogus: placements "
+				"not cleared (n=%d)", server->num_placements);
 			return 0;
 		}
 		if (n != 2) {
@@ -1332,6 +1332,28 @@ int outputs_test_run(void *data) {
 			return 0;
 		}
 		wlr_log(WLR_INFO, "outputs-test: OK unplug (window rehomed, focus kept)");
+		return 0;
+	}
+
+	if (!strcmp(mode, "autofallback")) {
+		/* the config named no connected output: the placements must be
+		 * dropped and both outputs auto-arranged */
+		if (server->num_placements != 0) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL autofallback: placements "
+				"not cleared (n=%d)", server->num_placements);
+			return 0;
+		}
+		if (n != 2) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL autofallback: expected 2 "
+				"live outputs, got %d", n);
+			return 0;
+		}
+		if (boxes[0].x == boxes[1].x && boxes[0].y == boxes[1].y) {
+			wlr_log(WLR_ERROR, "outputs-test: FAIL autofallback: outputs not "
+				"arranged (both at %d,%d)", boxes[0].x, boxes[0].y);
+			return 0;
+		}
+		wlr_log(WLR_INFO, "outputs-test: OK autofallback (%d outputs auto-arranged)", n);
 		return 0;
 	}
 

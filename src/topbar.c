@@ -904,7 +904,10 @@ void topbar_render(struct guibux_output *o) {
 		o->topbar_ws_x[ws] = x;
 		char num[8];
 		snprintf(num, sizeof(num), "%d", ws);
-		if (ws == o->current_workspace) {
+		bool drag_target = server->ws_drag.active &&
+			server->ws_drag.target_output == o &&
+			server->ws_drag.target_ws == ws;
+		if (ws == o->current_workspace || drag_target) {
 			set_color(cr, server->color_highlight);
 			topbar_rounded_rect(cr, x * scale, cell_y * scale,
 				cell_w * scale, cell_h * scale, 4 * scale);
@@ -1474,6 +1477,155 @@ void topbar_win_remove(struct guibux_output *o,
 			return;
 		}
 	}
+}
+
+/* find the window pill under (lx, ly) on output o; returns the pill
+ * index or -1 */
+static int topbar_pill_index_at(struct guibux_output *o, double lx, double ly) {
+	struct wlr_box box;
+	wlr_output_layout_get_box(o->server->output_layout, o->wlr_output, &box);
+	if (lx < box.x || lx >= box.x + box.width ||
+			ly < box.y || ly >= box.y + o->server->topbar_height) {
+		return -1;
+	}
+	double rel = lx - box.x;
+	for (int i = 0; i < o->topbar_win_count; i++) {
+		if (rel >= o->topbar_win_x[i] &&
+				rel < o->topbar_win_x[i] + o->topbar_win_w[i]) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+/* find the workspace cell under (lx, ly); returns the ws number or 0 */
+static int topbar_ws_cell_at(struct guibux_output *o, double lx, double ly) {
+	struct wlr_box box;
+	wlr_output_layout_get_box(o->server->output_layout, o->wlr_output, &box);
+	if (lx < box.x || lx >= box.x + box.width ||
+			ly < box.y || ly >= box.y + o->server->topbar_height) {
+		return 0;
+	}
+	double rel = lx - box.x;
+	for (int i = 1; i <= NUM_WORKSPACES; i++) {
+		if (rel >= o->topbar_ws_x[i] &&
+				rel < o->topbar_ws_x[i] + o->topbar_ws_cell_w) {
+			return i;
+		}
+	}
+	return 0;
+}
+
+/* resolve the drag target: the workspace cell under the cursor on the
+ * bar the drag started from; the window always moves to that workspace
+ * (the target output is the window's own output, not the bar's) */
+static bool topbar_ws_drag_resolve(struct guibux_server *server,
+		double lx, double ly, struct guibux_output **out_o, int *out_ws) {
+	struct guibux_ws_drag *d = &server->ws_drag;
+	struct guibux_output *o = d->bar_output;
+	if (o == NULL) {
+		return false;
+	}
+	int ws = topbar_ws_cell_at(o, lx, ly);
+	if (ws == 0) {
+		return false;
+	}
+	*out_o = o;
+	*out_ws = ws;
+	return true;
+}
+
+/* drag threshold before a pill press becomes a workspace drag */
+#define TOPBAR_WS_DRAG_THRESHOLD 5
+
+bool topbar_ws_drag_start(struct guibux_server *server, struct guibux_output *o,
+		int ws, double lx, double ly) {
+	struct guibux_ws_drag *d = &server->ws_drag;
+	if (o == NULL) {
+		return false;
+	}
+	int idx = topbar_pill_index_at(o, lx, ly);
+	if (idx < 0) {
+		return false;
+	}
+	struct guibux_toplevel *t = o->topbar_wins[idx];
+	if (t == NULL || t->scene_tree == NULL) {
+		return false;
+	}
+	d->pending = true;
+	d->active = false;
+	d->bar_output = o;
+	d->toplevel = t;
+	d->press_x = lx;
+	d->press_y = ly;
+	d->last_x = lx;
+	d->last_y = ly;
+	d->target_output = NULL;
+	d->target_ws = 0;
+	return true;
+}
+
+bool topbar_ws_drag_update(struct guibux_server *server, double lx, double ly) {
+	struct guibux_ws_drag *d = &server->ws_drag;
+	if (!d->pending && !d->active) {
+		return false;
+	}
+	d->last_x = lx;
+	d->last_y = ly;
+	if (d->pending) {
+		double dx = lx - d->press_x;
+		double dy = ly - d->press_y;
+		if (dx * dx + dy * dy <
+				TOPBAR_WS_DRAG_THRESHOLD * TOPBAR_WS_DRAG_THRESHOLD) {
+			return false;
+		}
+		d->pending = false;
+		d->active = true;
+	}
+	struct guibux_output *o;
+	int ws;
+	if (topbar_ws_drag_resolve(server, lx, ly, &o, &ws)) {
+		if (d->target_output != o || d->target_ws != ws) {
+			d->target_output = o;
+			d->target_ws = ws;
+			topbar_mark_dirty(o);
+			wlr_output_schedule_frame(o->wlr_output);
+			return true;
+		}
+	} else {
+		if (d->target_ws != 0) {
+			d->target_output = NULL;
+			d->target_ws = 0;
+			if (d->bar_output != NULL) {
+				topbar_mark_dirty(d->bar_output);
+				wlr_output_schedule_frame(d->bar_output->wlr_output);
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
+void topbar_ws_drag_end(struct guibux_server *server) {
+	struct guibux_ws_drag *d = &server->ws_drag;
+	if (!d->pending && !d->active) {
+		return;
+	}
+	struct guibux_toplevel *t = d->toplevel;
+	int target_ws = d->target_ws;
+	d->pending = false;
+	d->active = false;
+	d->bar_output = NULL;
+	d->toplevel = NULL;
+	d->target_output = NULL;
+	d->target_ws = 0;
+	if (t == NULL || target_ws == 0) {
+		return;
+	}
+	if (t->workspace == target_ws) {
+		return;
+	}
+	move_toplevel_to_workspace(t, target_ws);
 }
 
 void topbar_destroy(struct guibux_output *o) {

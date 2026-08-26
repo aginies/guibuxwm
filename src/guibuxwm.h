@@ -705,6 +705,17 @@ struct guibux_launcher {
 	int selection;
 };
 
+struct guibux_ws_drag {
+	bool active;
+	bool pending;
+	struct guibux_output *bar_output;
+	struct guibux_toplevel *toplevel;
+	struct guibux_output *target_output;
+	int target_ws;
+	double press_x, press_y;
+	double last_x, last_y;
+};
+
 struct guibux_server {
 	struct wl_display *wl_display;
 	struct wlr_backend *backend;
@@ -820,6 +831,7 @@ struct guibux_launcher launcher;
     struct guibux_notif_panel notify_panel;
     struct guibux_tooltip tooltip;
     struct guibux_window_preview window_preview;
+    struct guibux_ws_drag ws_drag;
     struct guibux_osd osd;
     struct guibux_power_panel power_panel;
     struct guibux_topbar_items_panel topbar_items_panel;
@@ -902,6 +914,9 @@ int outputs_sorted_by_x(struct guibux_server *server, struct wlr_output **sorted
 /* re-read the config `outputs` spec (else the startup spec) and apply it
  * to the connected outputs live: position, mode, transform, enable/off */
 void outputs_apply(struct guibux_server *server);
+/* the config named no connected output: drop the placements and
+ * re-arrange every output automatically */
+void outputs_reset_auto(struct guibux_server *server);
 /* publish the current outputs (name, box, mode, transform, enabled,
  * available modes) to the state file for the guibuxwm-output tool */
 void outputs_state_write(struct guibux_server *server);
@@ -985,6 +1000,15 @@ bool effects_notify_hide(struct guibux_server *server);
 void topbar_render(struct guibux_output *o);
 void topbar_mark_dirty(struct guibux_output *o);
 void topbar_win_remove(struct guibux_output *o, struct guibux_toplevel *toplevel);
+/* drag from a workspace cell to a window pill: the window moves to the
+ * workspace under the cursor; returns true when the press started a drag */
+bool topbar_ws_drag_start(struct guibux_server *server, struct guibux_output *o,
+	int ws, double lx, double ly);
+/* move the drag target while the pointer moves; returns true when the
+ * target changed (caller marks bars dirty) */
+bool topbar_ws_drag_update(struct guibux_server *server, double lx, double ly);
+/* finish the drag: drop the window on the target workspace, or cancel */
+void topbar_ws_drag_end(struct guibux_server *server);
 bool topbar_workspace_at(struct guibux_server *server, double lx, double ly, struct guibux_output **output, int *ws);
 int topbar_tick(void *data);
 int topbar_test_run(void *data);

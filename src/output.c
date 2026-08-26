@@ -702,6 +702,42 @@ void outputs_apply(struct guibux_server *server) {
 	outputs_state_write(server);
 }
 
+void outputs_reset_auto(struct guibux_server *server) {
+	/* the config named no connected output: drop the placements and
+	 * re-arrange everything automatically. The outputs were already
+	 * enabled and auto-placed at connect time, so only the layout and
+	 * the remembered spec change */
+	server->num_placements = 0;
+	free(server->outputs_env_spec);
+	server->outputs_env_spec = NULL;
+	wlr_log(WLR_INFO, "outputs: no configured output connected, using auto arrangement");
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->disabled) {
+			continue;
+		}
+		wlr_output_layout_remove(server->output_layout, o->wlr_output);
+		struct wlr_output_layout_output *l_output =
+			wlr_output_layout_add_auto(server->output_layout, o->wlr_output);
+		if (l_output == NULL) {
+			wlr_log(WLR_ERROR, "%s: failed to add output to layout",
+				o->wlr_output->name);
+		} else if (o->scene_output != NULL) {
+			wlr_scene_output_layout_add_output(server->scene_layout,
+				l_output, o->scene_output);
+		}
+	}
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->disabled) {
+			continue;
+		}
+		retile_output(o);
+		output_sync_overlays(o);
+	}
+	topbar_renumber(server);
+	outputs_state_write(server);
+}
+
 void outputs_state_write(struct guibux_server *server) {
 	char path[PATH_MAX];
 	guibux_state_path(path, sizeof(path), "outputs");

@@ -78,6 +78,9 @@ GUIBUX_OUTPUTS="DP-1@0x0,HDMI-A-1@off" ./build/guibuxwm
 - Outputs listed in the spec are placed in the order given.
 - Outputs **not** listed are still auto-arranged (left to right, in the order
   wlroots reports them).
+- If the spec names **no** connected output (typo'd name, monitor not
+  connected at start), the whole spec is ignored at startup and every
+  connected output is auto-arranged.
 - Malformed entries are logged and ignored.
 - Up to 8 outputs can be placed manually.
 - `NAME@off` keeps the output object alive but out of the layout; its

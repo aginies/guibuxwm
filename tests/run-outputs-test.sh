@@ -73,6 +73,12 @@ case_run "manual placement" "HEADLESS-1@0x0,HEADLESS-2@1280x0" placement 0
 case_run "@off disables monitor" "HEADLESS-2@off" off 0
 case_run "unplug rehomes windows" "-" unplug 1
 
+# config names no connected output: the placements are dropped and
+# everything is auto-arranged (checked via the config file, not the env)
+cfg=$(mktemp)
+echo "outputs = NOPE-1@0x0,NOPE-2@1280x0" >"$cfg"
+case_run "config names no connected output -> auto" "-" autofallback 0 "$cfg"
+
 # live re-apply: the compositor re-reads the config file it was started
 # with (GUIBUX_CONFIG) and applies disable / re-enable / move without a
 # restart

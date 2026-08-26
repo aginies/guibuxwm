@@ -401,14 +401,18 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
-	/* a configured output that never showed up (typo'd name, monitor not
-	 * connected at start) must not disable the real ones: those were
-	 * auto-arranged, so this is a warning, not a failure */
+	/* a config that names no connected output (typo'd name, monitor not
+	 * connected at start) must not black out the session: drop the
+	 * placements and auto-arrange everything */
+	bool any_placed = false;
 	for (int i = 0; i < server.num_placements; i++) {
-		if (!server.placements[i].used && !server.placements[i].disabled) {
-			wlr_log(WLR_ERROR, "outputs: '%s' not connected, ignoring",
-				server.placements[i].name);
+		if (server.placements[i].used) {
+			any_placed = true;
+			break;
 		}
+	}
+	if (server.num_placements > 0 && !any_placed) {
+		outputs_reset_auto(&server);
 	}
 	outputs_state_write(&server);
 

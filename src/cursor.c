@@ -157,6 +157,13 @@ static void process_cursor_resize(struct guibux_server *server) {
 		 * would be dropped on (no-op when not dragging) */
 		overview_update_hover(server);
 	}
+	if (server->ws_drag.pending || server->ws_drag.active) {
+		topbar_ws_drag_update(server, server->cursor->x, server->cursor->y);
+		if (server->ws_drag.active) {
+			wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
+		}
+		return;
+	}
 	if (server->cursor_mode == GUIBUX_CURSOR_MOVE) {
 		process_cursor_move(server);
 		return;
@@ -372,11 +379,29 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 		server->button_consumed = event->button;
 		return;
 	}
+	/* workspace-cell drag: press on a window pill arms a pending drag;
+	 * the window moves to the ws cell under the cursor on release if the
+	 * pointer moved past the threshold, otherwise it is a plain click */
+	if (event->state == WL_POINTER_BUTTON_STATE_RELEASED &&
+			(server->ws_drag.active || server->ws_drag.pending)) {
+		topbar_ws_drag_end(server);
+		server->button_consumed = event->button;
+		return;
+	}
 	if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
 		struct guibux_output *o = server->cursor_topbar_output;
 		int ws = 0;
 		if (o && topbar_workspace_at(server, server->cursor->x,
 				server->cursor->y, NULL, &ws)) {
+			/* check window labels: a left press on a pill arms a
+			 * pending drag; if the pointer does not move past the
+			 * threshold it is a plain click (focus/switch below) */
+			struct guibux_toplevel *win = topbar_win_at(o,
+				server->cursor->x, server->cursor->y);
+			if (win && event->button == 272) {
+				topbar_ws_drag_start(server, o, ws,
+					server->cursor->x, server->cursor->y);
+			}
 			/* check audio indicators first: left click toggles the
 			 * mute, right click opens the mixer (pavucontrol) */
 			int audio = topbar_audio_at(server, o, server->cursor->x,
@@ -408,11 +433,6 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 				notify_panel_show(server, o->wlr_output);
 				return;
 			}
-			/* check window labels */
-			struct guibux_toplevel *win = NULL;
-			win = topbar_win_at(o,
-				server->cursor->x,
-				server->cursor->y);
 			if (win) {
 				/* the list is global (own + other monitors): switch to
 				 * the window's own monitor's workspace when it differs
