@@ -42,17 +42,35 @@ void preview_hide(struct guibux_server *server) {
 		wlr_scene_node_destroy(&pv->scene_node->node);
 		pv->scene_node = NULL;
 	}
-	if (pv->buffer != NULL) {
-		wlr_buffer_drop(pv->buffer);
-		pv->buffer = NULL;
+	/* the buffer is persistent: it is reused by the next show so a
+	 * hover only repositions the node; dropped in preview_destroy */
+}
+
+/* nearest-neighbor downscale of an XRGB8888 image into dst
+ * (dstride bytes per row); used to fit the readback into the fixed
+ * preview buffer without a second full-size allocation */
+static void downscale_xrgb(const uint8_t *src, uint32_t sw, uint32_t sh,
+		uint32_t sstride, uint8_t *dst, uint32_t dw, uint32_t dh,
+		uint32_t dstride) {
+	for (uint32_t y = 0; y < dh; y++) {
+		uint32_t sy = y * sh / dh;
+		const uint8_t *srow = src + (size_t)sy * sstride;
+		uint8_t *drow = dst + (size_t)y * dstride;
+		for (uint32_t x = 0; x < dw; x++) {
+			uint32_t sx = x * sw / dw;
+			memcpy(drow + x * 4, srow + (size_t)sx * 4, 4);
+		}
 	}
 }
 
-/* read the window's current buffer into a CPU snapshot. wrapping the
- * live buffer directly would hold a lock that blocks xwayland client
- * buffer damage updates, so copy the pixels into an shm buffer instead */
+/* read the window's current buffer into the persistent preview buffer.
+ * wrapping the live buffer directly would hold a lock that blocks
+ * xwayland client buffer damage updates, so copy the pixels into the
+ * shm buffer instead; the copy is downscaled to the buffer size so a
+ * 1080p window does not read back 8MB */
 static bool preview_snapshot(struct guibux_server *server,
-		struct wlr_scene_buffer *sb, struct wlr_buffer **out_buf) {
+		struct wlr_scene_buffer *sb) {
+	struct guibux_window_preview *pv = &server->window_preview;
 	struct wlr_texture *tex = wlr_texture_from_buffer(server->renderer,
 		sb->buffer);
 	if (tex == NULL) {
@@ -81,33 +99,55 @@ static bool preview_snapshot(struct guibux_server *server,
 		return false;
 	}
 
-	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-	struct wlr_drm_format drm_fmt = {
-		.format = DRM_FORMAT_XRGB8888,
-		.len = 1,
-		.modifiers = mods,
-	};
-	struct wlr_buffer *buf = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-		(int)w, (int)h, &drm_fmt);
-	if (buf == NULL) {
-		free(data);
-		return false;
+	if (pv->buffer == NULL || pv->buffer_w < PREVIEW_W ||
+			pv->buffer_h < PREVIEW_H) {
+		if (pv->buffer != NULL) {
+			wlr_buffer_drop(pv->buffer);
+			pv->buffer = NULL;
+			pv->buffer_w = 0;
+			pv->buffer_h = 0;
+		}
+		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
+		struct wlr_drm_format drm_fmt = {
+			.format = DRM_FORMAT_XRGB8888,
+			.len = 1,
+			.modifiers = mods,
+		};
+		pv->buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
+			PREVIEW_W, PREVIEW_H, &drm_fmt);
+		if (pv->buffer == NULL) {
+			free(data);
+			return false;
+		}
+		pv->buffer_w = PREVIEW_W;
+		pv->buffer_h = PREVIEW_H;
 	}
+
 	void *bdata;
 	uint32_t bfmt;
 	size_t bstride;
-	if (!wlr_buffer_begin_data_ptr_access(buf,
+	if (!wlr_buffer_begin_data_ptr_access(pv->buffer,
 			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &bdata, &bfmt, &bstride)) {
-		wlr_buffer_drop(buf);
 		free(data);
 		return false;
 	}
 	if (bfmt == DRM_FORMAT_XRGB8888) {
-		memcpy(bdata, data, (size_t)bstride * h);
+		if (w <= PREVIEW_W && h <= PREVIEW_H) {
+			/* center the smaller window in the buffer */
+			uint32_t ox = (PREVIEW_W - w) / 2;
+			uint32_t oy = (PREVIEW_H - h) / 2;
+			for (uint32_t y = 0; y < h; y++) {
+				memcpy((uint8_t *)bdata + (size_t)(oy + y) * bstride +
+					(size_t)ox * 4,
+					data + (size_t)y * stride, (size_t)w * 4);
+			}
+		} else {
+			downscale_xrgb(data, w, h, stride, bdata,
+				PREVIEW_W, PREVIEW_H, (uint32_t)bstride);
+		}
 	}
-	wlr_buffer_end_data_ptr_access(buf);
+	wlr_buffer_end_data_ptr_access(pv->buffer);
 	free(data);
-	*out_buf = buf;
 	return true;
 }
 
@@ -121,8 +161,7 @@ static void preview_show(struct guibux_server *server,
 	if (sb == NULL || sb->buffer == NULL) {
 		return;
 	}
-	struct wlr_buffer *buf;
-	if (!preview_snapshot(server, sb, &buf)) {
+	if (!preview_snapshot(server, sb)) {
 		return;
 	}
 	/* find the hovered cell to anchor the preview under it */
@@ -135,7 +174,6 @@ static void preview_show(struct guibux_server *server,
 		}
 	}
 	if (aw <= 0) {
-		wlr_buffer_drop(buf);
 		return;
 	}
 	struct wlr_box box;
@@ -150,12 +188,15 @@ static void preview_show(struct guibux_server *server,
 		bx = 4;
 	int by = server->topbar_height + 4;
 
-	pv->scene_node = wlr_scene_buffer_create(&server->scene->tree, buf);
 	if (pv->scene_node == NULL) {
-		wlr_buffer_drop(buf);
-		return;
+		pv->scene_node = wlr_scene_buffer_create(&server->scene->tree,
+			pv->buffer);
+		if (pv->scene_node == NULL) {
+			return;
+		}
+	} else {
+		wlr_scene_buffer_set_buffer(pv->scene_node, pv->buffer);
 	}
-	pv->buffer = buf;
 	pv->toplevel = t;
 	pv->output = o->wlr_output;
 	pv->box_w = bw;
@@ -247,5 +288,12 @@ void preview_on_unmap(struct guibux_server *server,
 }
 
 void preview_destroy(struct guibux_server *server) {
+	struct guibux_window_preview *pv = &server->window_preview;
 	preview_hide(server);
+	if (pv->buffer != NULL) {
+		wlr_buffer_drop(pv->buffer);
+		pv->buffer = NULL;
+		pv->buffer_w = 0;
+		pv->buffer_h = 0;
+	}
 }

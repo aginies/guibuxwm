@@ -333,7 +333,11 @@ struct guibux_window_preview {
     bool active;
     struct wlr_output *output;
     struct wlr_scene_buffer *scene_node;
+    /* persistent shm buffer: created once, reused across shows so a
+     * hover only repositions the node (the readback happens per show,
+     * downscaled to fit the buffer) */
     struct wlr_buffer *buffer;
+    int buffer_w, buffer_h;
     struct guibux_toplevel *toplevel;
     /* box position is logical px relative to the output origin */
     int box_x, box_y, box_w, box_h;
