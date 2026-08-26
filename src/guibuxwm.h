@@ -446,6 +446,14 @@ struct guibux_output {
     int topbar_notif_w;
     int topbar_ws_x[NUM_WORKSPACES + 1];
     int topbar_ws_cell_w;
+    /* last full render's window-region geometry (logical px): the
+     * focus-only fast path redraws just this region and needs the
+     * indicator/clock layout without recomputing it */
+    int topbar_win_region_x;
+    int topbar_win_region_end;
+    int topbar_sep_gap;
+    int topbar_cell_y;
+    int topbar_cell_h;
     struct wlr_scene_buffer *bg_node;
     struct wlr_buffer *bg_ws_buffers[NUM_WORKSPACES];
     int bg_w, bg_h, bg_scale;
@@ -462,6 +470,10 @@ struct guibux_output {
     int topbar_win_count;
     struct guibux_toplevel *topbar_wins[TOPBAR_WIN_MAX];
     bool topbar_dirty;
+    /* focus-only change: only the active-window pill moved, the rest of
+     * the bar is unchanged; topbar_render redraws just the window-pill
+     * region instead of the whole surface */
+    bool topbar_focus_dirty;
     time_t topbar_minute;
 	struct wl_listener frame;
 	struct wl_listener request_state;

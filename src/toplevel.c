@@ -47,8 +47,11 @@ void focus_toplevel(struct guibux_toplevel *toplevel, bool raise) {
 	}
 	struct guibux_output *fo = guibux_output_for(server,
 		toplevel_output_for(toplevel));
-	if (fo)
-		topbar_mark_dirty(fo);
+	if (fo) {
+		/* only the active pill moved: the fast path redraws just the
+		 * window-pill region, no full-bar repaint */
+		fo->topbar_focus_dirty = true;
+	}
 }
 
 // ---------------------------------------------------------------------------

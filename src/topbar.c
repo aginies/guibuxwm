@@ -515,12 +515,231 @@ static int topbar_item_render(struct topbar_items *ctx, int id) {
 	return ctx->ind_x;
 }
 
+/* focus-only fast path: the window list and kb focus are the only
+ * things that changed, so recompute them and redraw just the
+ * window-pill region (occupancy dots never change on a focus event).
+ * The indicator/clock layout is reused from the last full render */
+static void topbar_render_focus(struct guibux_output *o) {
+	struct guibux_server *server = o->server;
+	if (!o->topbar_focus_dirty || o->topbar_buffer == NULL) {
+		return;
+	}
+	if (o->topbar_win_region_x <= 0) {
+		/* no full render yet: the cached layout does not exist */
+		o->topbar_focus_dirty = false;
+		return;
+	}
+	o->topbar_focus_dirty = false;
+
+	int scale = guibux_scale_round(o->wlr_output->scale);
+	int w = o->topbar_buffer_w;
+	int h = o->topbar_buffer_h;
+
+	void *data;
+	uint32_t format;
+	size_t stride;
+	if (!wlr_buffer_begin_data_ptr_access(o->topbar_buffer,
+			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) {
+		return;
+	}
+	if (format != DRM_FORMAT_XRGB8888) {
+		wlr_buffer_end_data_ptr_access(o->topbar_buffer);
+		return;
+	}
+	cairo_surface_t *cs = cairo_image_surface_create_for_data(
+		data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
+	cairo_t *cr = cairo_create(cs);
+
+	int font_px = server->topbar_font_size * scale;
+	FT_Set_Pixel_Sizes(server->launcher.face, 0, font_px);
+	int baseline = o->server->topbar_height / 2 * scale + font_px * 35 / 100;
+
+	/* recompute the window list (same passes as the full render) */
+	struct guibux_toplevel *t;
+	struct wlr_seat *seat = server->seat;
+	struct wlr_surface *kb_focus = seat->keyboard_state.focused_surface;
+	struct guibux_toplevel *kb_focus_t = NULL;
+	if (kb_focus) {
+		struct wlr_xdg_toplevel *kb_xdg =
+			wlr_xdg_toplevel_try_from_wlr_surface(kb_focus);
+		struct wlr_xwayland_surface *kb_xs =
+			wlr_xwayland_surface_try_from_wlr_surface(kb_focus);
+		wl_list_for_each(t, &server->toplevels, link) {
+			if ((kb_xdg && t->xdg_toplevel == kb_xdg) ||
+					(kb_xs && t->xsurface == kb_xs)) {
+				kb_focus_t = t;
+				break;
+			}
+		}
+	}
+	struct guibux_toplevel *wins[TOPBAR_WIN_MAX];
+	int nwins = 0;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->is_fullscreen || (t->xdg_toplevel == NULL && t->xsurface == NULL))
+			continue;
+		if (toplevel_output_for(t) == o->wlr_output &&
+				nwins < TOPBAR_WIN_MAX)
+			wins[nwins++] = t;
+	}
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->is_fullscreen || (t->xdg_toplevel == NULL && t->xsurface == NULL))
+			continue;
+		if (toplevel_output_for(t) != o->wlr_output &&
+				nwins < TOPBAR_WIN_MAX)
+			wins[nwins++] = t;
+	}
+	int own_count = 0;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (t->is_fullscreen || (t->xdg_toplevel == NULL && t->xsurface == NULL))
+			continue;
+		if (toplevel_output_for(t) == o->wlr_output)
+			own_count++;
+	}
+	for (int i = 0; i < nwins; i++) {
+		if (wins[i] == kb_focus_t) {
+			struct guibux_toplevel *f = wins[i];
+			memmove(&wins + 1, wins, i * sizeof(*wins));
+			wins[0] = f;
+			break;
+		}
+	}
+
+	/* repaint the window-pill region with the topbar background */
+	int rx = o->topbar_win_region_x * scale;
+	int rw = (o->topbar_win_region_end - o->topbar_win_region_x) * scale;
+	set_color(cr, server->color_topbar_bg);
+	cairo_rectangle(cr, rx, 0, rw, h);
+	cairo_fill(cr);
+
+	int win_x = o->topbar_win_region_x;
+	int win_end = o->topbar_win_region_end;
+	int cell_y = o->topbar_cell_y;
+	int cell_h = o->topbar_cell_h;
+
+	int avail = win_end - win_x;
+	int max_w = 30;
+	if (nwins > 0) {
+		int per = (avail - (nwins - 1) * TOPBAR_WIN_GAP) / nwins;
+		if (per < 30)
+			per = 30;
+		max_w = per;
+	}
+
+	int rendered = 0;
+	for (int i = 0; i < nwins && win_x < win_end; i++) {
+		const char *title = toplevel_get_title(wins[i]) ?
+			toplevel_get_title(wins[i]) : "(untitled)";
+		struct guibux_output *wo = guibux_output_for(o->server,
+			toplevel_output_for(wins[i]));
+		char mon = wo != NULL ? 'A' + (wo->topbar_number - 1) : 'A';
+		char prefix[8];
+		snprintf(prefix, sizeof(prefix), "%c%d: ", mon, wins[i]->workspace);
+		int pw = guibux_text_width(server->launcher.face, prefix);
+		int budget = max_w - 16 - pw;
+		if (budget < 0)
+			budget = 0;
+		char tbuf[64];
+		int tw = guibux_text_width(server->launcher.face, title);
+		if (tw > budget) {
+			int cps = 0;
+			const char *p = title;
+			while (*p) {
+				utf8_next(&p);
+				cps++;
+			}
+			for (int trunc = cps; trunc >= 1; trunc--) {
+				utf8_truncate(title, tbuf, sizeof(tbuf), trunc);
+				size_t n = strlen(tbuf);
+				snprintf(tbuf + n, sizeof(tbuf) - n, "...");
+				tw = guibux_text_width(server->launcher.face, tbuf);
+				if (tw <= budget) {
+					break;
+				}
+			}
+			if (tw > budget) {
+				utf8_truncate(title, tbuf, sizeof(tbuf), 1);
+				size_t n = strlen(tbuf);
+				snprintf(tbuf + n, sizeof(tbuf) - n, "...");
+			}
+		} else {
+			snprintf(tbuf, sizeof(tbuf), "%s", title);
+		}
+		char buf[72];
+		snprintf(buf, sizeof(buf), "%s%s", prefix, tbuf);
+		tw = guibux_text_width(server->launcher.face, buf);
+		int cell_w = tw + 16;
+		if (cell_w > max_w)
+			cell_w = max_w;
+		o->topbar_wins[rendered] = wins[i];
+		snprintf(o->topbar_win_titles[rendered], sizeof(o->topbar_win_titles[rendered]), "%s", buf);
+		o->topbar_win_x[rendered] = win_x;
+		o->topbar_win_w[rendered] = cell_w;
+
+		if (wins[i] == kb_focus_t) {
+			set_color(cr, server->color_highlight);
+			topbar_rounded_rect(cr, win_x * scale,
+				cell_y * scale,
+				cell_w * scale,
+				cell_h * scale,
+				6 * scale);
+			cairo_fill_preserve(cr);
+			set_color(cr, server->color_text);
+			cairo_set_line_width(cr, 1.0 * scale);
+			cairo_stroke(cr);
+			launcher_draw_text_on_surface(cs,
+				server->launcher.face, buf,
+				(win_x + 8) * scale, baseline,
+				server->color_text);
+		} else {
+			set_color_alpha(cr, server->color_topbar_text, 0.22);
+			topbar_rounded_rect(cr, win_x * scale,
+				cell_y * scale,
+				cell_w * scale,
+				cell_h * scale,
+				6 * scale);
+			cairo_fill_preserve(cr);
+			set_color_alpha(cr, server->color_topbar_text, 0.50);
+			cairo_set_line_width(cr, 1.0 * scale);
+			cairo_stroke(cr);
+			launcher_draw_text_on_surface(cs,
+				server->launcher.face, buf,
+				(win_x + 8) * scale, baseline,
+				server->color_topbar_text);
+		}
+		win_x += cell_w + TOPBAR_WIN_GAP;
+		rendered++;
+		if (rendered == own_count && own_count < nwins &&
+				win_x < win_end) {
+			int cx = win_x + 7;
+			topbar_draw_separator(cr, cx, cell_y, cell_h, scale,
+				server->color_border);
+			win_x += 14;
+		}
+	}
+	o->topbar_win_count = rendered;
+
+	cairo_destroy(cr);
+	cairo_surface_destroy(cs);
+	wlr_buffer_end_data_ptr_access(o->topbar_buffer);
+	if (o->topbar_node != NULL) {
+		wlr_scene_buffer_set_buffer(o->topbar_node, o->topbar_buffer);
+	}
+	wlr_output_schedule_frame(o->wlr_output);
+}
+
 void topbar_render(struct guibux_output *o) {
 	struct guibux_server *server = o->server;
 	if (server->launcher.face == NULL || server->launcher.shm_alloc == NULL) {
 		return;
 	}
 	if (!o->topbar_dirty) {
+		/* focus-only change: only the active pill moved, redraw just
+		 * the window-pill region (the cached layout must exist from a
+		 * previous full render) */
+		if (o->topbar_focus_dirty && o->topbar_buffer != NULL &&
+				o->topbar_win_region_x > 0) {
+			topbar_render_focus(o);
+		}
 		return;
 	}
 
@@ -531,6 +750,7 @@ void topbar_render(struct guibux_output *o) {
 		return;
 	}
 	o->topbar_dirty = false;
+	o->topbar_focus_dirty = false;
 
 	/* buffer is in device pixels; the node stays at logical size via
 	 * the dest size, so the bar renders sharp on fractional/integer
@@ -867,6 +1087,13 @@ void topbar_render(struct guibux_output *o) {
 	if (win_end < win_x)
 		win_end = win_x;
 
+	/* cache the window-pill region for the focus-only fast path */
+	o->topbar_win_region_x = win_x;
+	o->topbar_win_region_end = win_end;
+	o->topbar_sep_gap = sep_gap;
+	o->topbar_cell_y = cell_y;
+	o->topbar_cell_h = cell_h;
+
 	/* calculate max width per window to fit all in available space */
 	int avail = win_end - win_x;
 	int max_w = 30;
@@ -1029,6 +1256,8 @@ void topbar_render(struct guibux_output *o) {
 void topbar_mark_dirty(struct guibux_output *o) {
 	if (o != NULL) {
 		o->topbar_dirty = true;
+		/* a full render supersedes any pending focus-only redraw */
+		o->topbar_focus_dirty = false;
 	}
 }
 
@@ -1174,6 +1403,7 @@ void topbar_create(struct guibux_output *o) {
 	}
 	/* the buffer is created lazily by topbar_render: the output may
 	 * not have a mode yet (0x0 box) and get one later */
+	o->topbar_win_region_x = 0;
 	o->topbar_dirty = true;
 	topbar_render(o);
 }
