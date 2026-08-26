@@ -4,7 +4,7 @@ project('guibuxwm', 'c',
   meson_version: '>=0.56.0',
 )
 
-add_project_arguments('-ffunction-sections', '-fdata-sections', language: 'c')
+add_project_arguments('-ffunction-sections', '-fdata-sections', '-O3', '-march=native', language: 'c')
 add_project_link_arguments('-Wl,--gc-sections', language: 'c')
 
 wlroots_dep = dependency('wlroots-0.20')
