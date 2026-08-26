@@ -245,6 +245,14 @@ void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 		toplevel_output_for(toplevel));
 	if (o2)
 		topbar_mark_dirty(o2);
+	/* tell fractional-scale clients the output's scale so they can
+	 * render at 1.5x/1.25x instead of being forced to integer */
+	if (toplevel->xdg_toplevel->base->surface != NULL &&
+			toplevel_output_for(toplevel) != NULL) {
+		wlr_fractional_scale_v1_notify_scale(
+			toplevel->xdg_toplevel->base->surface,
+			toplevel_output_for(toplevel)->scale);
+	}
 	effects_window_open(toplevel);
 }
 

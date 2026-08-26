@@ -248,14 +248,12 @@ keybind = Mod+Shift+Right: move-monitor-right
 # Snap focused window to half of its monitor
 keybind = Mod+Left: snap-left
 keybind = Mod+Right: snap-right
-keybind = Mod+Shift+Up: snap-top
-keybind = Mod+Shift+Down: snap-bottom
 keybind = Mod+Ctrl+Shift+Up: snap-top
 keybind = Mod+Ctrl+Shift+Down: snap-bottom
 
-# Switch workspaces with Ctrl+Alt+Left/Right
-keybind = Ctrl+Alt+Left: switch-ws-left
-keybind = Ctrl+Alt+Right: switch-ws-right
+# Switch workspaces with Mod+Ctrl+Left/Right
+keybind = Mod+Ctrl+Left: switch-ws-left
+keybind = Mod+Ctrl+Right: switch-ws-right
 
 # Show the keybinding help overlay with Mod+h
 keybind = Mod+h: show-help

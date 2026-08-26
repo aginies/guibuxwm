@@ -593,13 +593,21 @@ bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
 // Keyboard input
 // ---------------------------------------------------------------------------
 
+/* set the seat's active keyboard and notify the client of the current
+ * modifier state; called before every key/modifier event so the client
+ * sees the right keymap */
+static void keyboard_notify_modifiers(struct guibux_server *server,
+		struct guibux_keyboard *keyboard) {
+	wlr_seat_set_keyboard(server->seat, keyboard->wlr_keyboard);
+	wlr_seat_keyboard_notify_modifiers(server->seat,
+		&keyboard->wlr_keyboard->modifiers);
+}
+
 void keyboard_handle_modifiers(struct wl_listener *listener, void *data) {
 	struct guibux_keyboard *keyboard =
 		wl_container_of(listener, keyboard, modifiers);
 	struct guibux_server *server = keyboard->server;
-	wlr_seat_set_keyboard(server->seat, keyboard->wlr_keyboard);
-	wlr_seat_keyboard_notify_modifiers(server->seat,
-		&keyboard->wlr_keyboard->modifiers);
+	keyboard_notify_modifiers(server, keyboard);
 	/* fires after wlroots cleared the released key from the modifier
 	 * state; the key event itself still carries the stale mask */
 	if (server->switcher.active) {
@@ -736,7 +744,7 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 	}
 
 	if (!handled) {
-		wlr_seat_set_keyboard(seat, keyboard->wlr_keyboard);
+		keyboard_notify_modifiers(server, keyboard);
 		wlr_seat_keyboard_notify_key(seat, event->time_msec,
 			event->keycode, event->state);
 	}
@@ -798,7 +806,7 @@ void server_new_keyboard(struct guibux_server *server,
 	keyboard->destroy.notify = keyboard_handle_destroy;
 	wl_signal_add(&device->events.destroy, &keyboard->destroy);
 
-	wlr_seat_set_keyboard(server->seat, keyboard->wlr_keyboard);
+	keyboard_notify_modifiers(server, keyboard);
 	wl_list_insert(&server->keyboards, &keyboard->link);
 }
 
@@ -821,4 +829,62 @@ void server_new_input(struct wl_listener *listener, void *data) {
 		caps |= WL_SEAT_CAPABILITY_KEYBOARD;
 	}
 	wlr_seat_set_capabilities(server->seat, caps);
+}
+
+// ---------------------------------------------------------------------------
+// text_input_v3 (IME): the compositor relays enter/leave to the focused
+// surface. The IME client (fcitx, ibus) grabs the keyboard itself and
+// commits the resulting strings back via the protocol; wlroots forwards
+// them to the focused surface. The compositor never interprets the keys.
+// ---------------------------------------------------------------------------
+
+void text_input_handle_new(struct wl_listener *listener, void *data) {
+	struct guibux_server *server =
+		wl_container_of(listener, server, text_input_new);
+	/* re-focus the IME on the currently focused surface: a client that
+	 * creates its text input after mapping (or after a focus change)
+	 * would otherwise stay silent */
+	if (server->seat->pointer_state.focused_surface != NULL) {
+		text_input_set_focus(server,
+			server->seat->pointer_state.focused_surface);
+	}
+}
+
+/* route the active text inputs to the surface under pointer focus; called
+ * on every pointer enter/clear so the IME follows the focused window */
+void text_input_set_focus(struct guibux_server *server,
+		struct wlr_surface *surface) {
+	struct wlr_text_input_v3 *text_input;
+	wl_list_for_each(text_input, &server->text_input_manager->text_inputs,
+			link) {
+		if (surface != NULL && text_input->current_enabled &&
+				text_input->focused_surface != surface) {
+			if (text_input->focused_surface != NULL) {
+				wlr_text_input_v3_send_leave(text_input);
+			}
+			wlr_text_input_v3_send_enter(text_input, surface);
+		} else if (surface == NULL && text_input->focused_surface != NULL) {
+			wlr_text_input_v3_send_leave(text_input);
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// relative_pointer_v1: raw, unaccelerated pointer deltas for FPS games.
+// The manager emits events to every client that requested a relative
+// pointer on the seat; the compositor keeps moving the regular cursor in
+// parallel (the game locks the cursor via its own grab, not ours).
+// ---------------------------------------------------------------------------
+
+void relative_pointer_handle_new(struct wl_listener *listener, void *data) {
+	/* nothing to do: wlroots tracks the relative pointers and the
+	 * manager emits to all of them on send_relative_motion */
+}
+
+void relative_pointer_send_motion(struct guibux_server *server,
+		struct wlr_seat *seat, uint32_t time_msec, double delta_x,
+		double delta_y, double delta_unaccel_x, double delta_unaccel_y) {
+	wlr_relative_pointer_manager_v1_send_relative_motion(
+		server->relative_pointer_manager, seat, time_msec, delta_x,
+		delta_y, delta_unaccel_x, delta_unaccel_y);
 }
