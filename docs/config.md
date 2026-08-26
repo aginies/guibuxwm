@@ -380,6 +380,23 @@ topbar_items_output = A
 
 ---
 
+### `touchpad_tap`
+
+Touchpad tap-to-click. `auto` (default) keeps the libinput default;
+`true` enables tap-to-click; `false` disables it. Applied to every
+libinput pointer device that supports tapping. Requires a restart
+(input devices are configured at connect time).
+
+**Default:** `auto`
+
+**Example:**
+
+```
+touchpad_tap = true
+```
+
+---
+
 ### `background`
 
 Desktop background image path (PNG or JPEG), used for workspaces

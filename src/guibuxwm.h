@@ -775,6 +775,7 @@ struct guibux_server {
 	int topbar_items[TOPBAR_ITEMS_MAX];  /* enabled indicator ids, layout order */
 	int topbar_item_count;
 	int topbar_items_output;  /* 0 = all monitors, 1..26 = single monitor letter */
+	int touchpad_tap;  /* 0 = libinput default, 1 = enabled, -1 = disabled */
 	char *background_path;
 	enum guibux_bg_scale background_scale;
 	char *bg_paths[NUM_WORKSPACES];

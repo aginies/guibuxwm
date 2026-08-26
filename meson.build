@@ -14,6 +14,7 @@ freetype_dep = dependency('freetype2')
 cairo_dep = dependency('cairo')
 dbus_dep = dependency('dbus-1')
 threads_dep = dependency('threads')
+libinput_dep = dependency('libinput')
 
 # optional: PAM auth for the lock screen; without it the lock falls back
 # to `loginctl lock-session`
@@ -42,7 +43,7 @@ executable('guibuxwm',
     'src/outputs-config.c', 'src/outputs-config.h'],
   c_args: ['-DWLR_USE_UNSTABLE', '-Wno-unused-parameter'] + effect_c_args + vulkan_c_args + rsvg_c_args + pam_c_args,
   include_directories: include_directories('src'),
-  dependencies: [wlroots_dep, wayland_dep, xkbcommon_dep, freetype_dep, cairo_dep, dbus_dep, threads_dep, vulkan_dep, rsvg_dep, pam_dep],
+  dependencies: [wlroots_dep, wayland_dep, xkbcommon_dep, freetype_dep, cairo_dep, dbus_dep, threads_dep, libinput_dep, vulkan_dep, rsvg_dep, pam_dep],
   install: true,
 )
 

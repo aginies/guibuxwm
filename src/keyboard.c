@@ -1,5 +1,6 @@
 #include "guibuxwm.h"
 #include <wlr/util/log.h>
+#include <wlr/backend/libinput.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -820,6 +821,24 @@ void server_new_input(struct wl_listener *listener, void *data) {
 		break;
 	case WLR_INPUT_DEVICE_POINTER:
 		wlr_cursor_attach_input_device(server->cursor, device);
+		/* touchpad_tap: apply the config's tap-to-click setting to
+		 * libinput pointer devices that support it */
+		if (server->touchpad_tap != 0 &&
+				wlr_input_device_is_libinput(device)) {
+			struct libinput_device *li =
+				wlr_libinput_get_device_handle(device);
+			if (li != NULL &&
+					libinput_device_has_capability(li,
+						LIBINPUT_DEVICE_CAP_POINTER)) {
+				libinput_device_config_tap_set_enabled(li,
+					server->touchpad_tap == 1 ?
+						LIBINPUT_CONFIG_TAP_ENABLED :
+						LIBINPUT_CONFIG_TAP_DISABLED);
+				wlr_log(WLR_INFO, "input: touchpad_tap %s on %s",
+					server->touchpad_tap == 1 ? "enabled" : "disabled",
+					device->name ? device->name : "(unknown)");
+			}
+		}
 		break;
 	default:
 		break;

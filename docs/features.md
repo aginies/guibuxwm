@@ -53,7 +53,8 @@
 ## Configuration
 
 - **Config file** (`~/.config/guibuxwm/config` or `-c`): keybinds, terminal, keyboard layout, colors, backgrounds, icon theme, topbar, effects, monitor layout, position restore, and more
-- **Config reload:** `SIGHUP` or the `reload-config` keybind action re-reads the config file live (colors, keybinds, topbar, backgrounds, outputs, screensaver, icon theme, preferred apps); `renderer` and `xkb_*` require a restart
+- **Config reload:** `SIGHUP` or the `reload-config` keybind action re-reads the config file live (colors, keybinds, topbar, backgrounds, outputs, screensaver, icon theme, preferred apps); `renderer`, `xkb_*` and `touchpad_tap` require a restart
+- **Touchpad tap-to-click** (`touchpad_tap`): enable or disable tap-to-click on libinput touchpads (`auto` = libinput default, `true` = enabled, `false` = disabled); applied at device connect, requires a restart
 - **Terminal** command configurable (default: `gnome-terminal`), started by `Mod+Return`
 - **Keyboard layout** configurable (xkb layout, variant, options)
 - **Keybinding help overlay** (`Mod+h`): lists all active keybinds on the monitor under the cursor

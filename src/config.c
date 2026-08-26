@@ -449,6 +449,18 @@ void load_config(struct guibux_server *server, const char *path) {
 				server->topbar_items_output = 0;
 			}
 			wlr_log(WLR_INFO, "config: topbar_items_output = %s", val);
+		} else if (!strcmp(key, "touchpad_tap")) {
+			if (!strcasecmp(val, "true") || !strcmp(val, "1")) {
+				server->touchpad_tap = 1;
+			} else if (!strcasecmp(val, "false") || !strcmp(val, "0")) {
+				server->touchpad_tap = -1;
+			} else if (!strcasecmp(val, "auto")) {
+				server->touchpad_tap = 0;
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad touchpad_tap '%s' (expected true|false|auto)", path, lineno, val);
+				server->touchpad_tap = 0;
+			}
+			wlr_log(WLR_INFO, "config: touchpad_tap = %s", val);
 		} else if (!strcmp(key, "background")) {
 			free(server->background_path);
 			server->background_path = strdup(val);
