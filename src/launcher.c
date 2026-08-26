@@ -24,6 +24,24 @@ static char icon_dirs[ICON_MAX_DIRS][PATH_MAX];
 static int num_icon_dirs;
 static char icon_dirs_current_theme[64];  /* theme the dirs were built for */
 
+/* name -> resolved path cache: the icon set is tiny (a few dozen names)
+ * and resolve_icon used to cost up to ~150 access() syscalls per call,
+ * 3-4x per icon per topbar render. Paths live in this static table so
+ * callers get a const pointer with no malloc. Cleared when the theme
+ * dirs are rebuilt (icon_theme config reload) */
+#define ICON_RESOLVE_CACHE_SIZE 128
+struct icon_resolve_entry {
+	char name[64];
+	char path[PATH_MAX + 64];
+	bool miss;
+};
+static struct icon_resolve_entry icon_resolve_cache[ICON_RESOLVE_CACHE_SIZE];
+static int icon_resolve_cache_count;
+
+static void icon_resolve_cache_clear(void) {
+	icon_resolve_cache_count = 0;
+}
+
 static const char *icon_sizes[] = {
 	"24x24",
 	"16x16",
@@ -117,6 +135,7 @@ static void icon_build_dirs(struct guibux_launcher *l) {
 	snprintf(icon_dirs_current_theme, sizeof(icon_dirs_current_theme),
 		"%s", theme);
 	num_icon_dirs = 0;
+	icon_resolve_cache_clear();
 	char dir[PATH_MAX];
 	const char *home = getenv("HOME");
 	if (home) {
@@ -142,11 +161,19 @@ static void icon_build_dirs(struct guibux_launcher *l) {
 		theme, num_icon_dirs);
 }
 
-char *resolve_icon(const char *icon_name) {
+const char *resolve_icon(const char *icon_name) {
 	if (!icon_name || icon_name[0] == '\0')
 		return NULL;
 
+	for (int i = 0; i < icon_resolve_cache_count; i++) {
+		if (strcmp(icon_resolve_cache[i].name, icon_name) == 0) {
+			return icon_resolve_cache[i].miss ? NULL :
+				icon_resolve_cache[i].path;
+		}
+	}
+
 	char path[PATH_MAX + 64];
+	const char *found = NULL;
 	for (int t = 0; t < num_icon_dirs; t++) {
 		for (size_t s = 0; s < ICON_ARRAY_LEN(icon_sizes); s++) {
 			for (size_t c = 0; c < ICON_ARRAY_LEN(icon_contexts); c++) {
@@ -154,23 +181,47 @@ char *resolve_icon(const char *icon_name) {
 					icon_dirs[t], icon_sizes[s],
 					icon_contexts[c], icon_name);
 				if (access(path, F_OK) == 0) {
-					wlr_log(WLR_INFO, "launcher: icon '%s' -> %s",
-						icon_name, path);
-					return strdup(path);
+					found = path;
+					break;
 				}
 			}
+			if (found)
+				break;
 		}
+		if (found)
+			break;
 		/* symbolic SVG icons (Adwaita status/device indicators) */
 		for (size_t s = 0; s < ICON_ARRAY_LEN(icon_symbolic_dirs); s++) {
 			snprintf(path, sizeof(path), "%s/%s/%s-symbolic.svg",
 				icon_dirs[t], icon_symbolic_dirs[s], icon_name);
 			if (access(path, F_OK) == 0) {
-				wlr_log(WLR_INFO, "launcher: icon '%s' -> %s",
-					icon_name, path);
-				return strdup(path);
+				found = path;
+				break;
 			}
 		}
+		if (found)
+			break;
 	}
+
+	/* always cache the result: the returned pointer must stay valid
+	 * (callers hold it across the render); evict the oldest entry when
+	 * the table is full */
+	struct icon_resolve_entry *e;
+	if (icon_resolve_cache_count < ICON_RESOLVE_CACHE_SIZE) {
+		e = &icon_resolve_cache[icon_resolve_cache_count++];
+	} else {
+		e = &icon_resolve_cache[0];
+		memmove(&icon_resolve_cache[0], &icon_resolve_cache[1],
+			(ICON_RESOLVE_CACHE_SIZE - 1) * sizeof(icon_resolve_cache[0]));
+	}
+	snprintf(e->name, sizeof(e->name), "%s", icon_name);
+	if (found) {
+		snprintf(e->path, sizeof(e->path), "%s", found);
+		wlr_log(WLR_INFO, "launcher: icon '%s' -> %s",
+			icon_name, found);
+		return e->path;
+	}
+	e->miss = true;
 	wlr_log(WLR_DEBUG, "launcher: icon '%s' not found", icon_name);
 	return NULL;
 }
@@ -306,7 +357,7 @@ static void launcher_draw_icon(cairo_t *cr, struct guibux_launcher *l,
 int topbar_icon_draw(cairo_t *cr, struct guibux_launcher *l,
 		const char *name, int cx, int cy, int size, int scale,
 		uint32_t color) {
-	char *path = resolve_icon(name);
+	const char *path = resolve_icon(name);
 	if (path == NULL) {
 		return 0;
 	}
@@ -322,14 +373,12 @@ int topbar_icon_draw(cairo_t *cr, struct guibux_launcher *l,
 			if (err) {
 				g_error_free(err);
 			}
-			free(path);
 			return 0;
 		}
 		gdouble dw = 0, dh = 0;
 		rsvg_handle_get_intrinsic_size_in_pixels(handle, &dw, &dh);
 		if (dw <= 0 || dh <= 0) {
 			g_object_unref(handle);
-			free(path);
 			return 0;
 		}
 		int th = (int)(dh * tw / dw + 0.5);
@@ -376,14 +425,12 @@ int topbar_icon_draw(cairo_t *cr, struct guibux_launcher *l,
 		cairo_restore(cr);
 		cairo_pattern_destroy(pat);
 		cairo_surface_destroy(surf);
-		free(path);
 		return size;
 	}
 #endif
 
 	int iw, ih;
 	uint8_t *img = get_cached_icon(l, path, &iw, &ih);
-	free(path);
 	if (!img || iw <= 0 || ih <= 0) {
 		return 0;
 	}
@@ -620,15 +667,13 @@ static void launcher_parse_desktop(const char *filepath, struct guibux_launcher 
 		size_t n = strlen(flatpak_id);
 		char *cmd = malloc(n + 16);
 		snprintf(cmd, n + 16, "flatpak run %s", flatpak_id);
-		char *ic = icon ? resolve_icon(icon) : NULL;
+		const char *ic = icon ? resolve_icon(icon) : NULL;
 		launcher_add_entry(l, name, cmd, ic);
-		free(ic);
 		free(cmd);
 	} else if (name && exec) {
 		char *cmd = desktop_exec_to_cmd(exec);
-		char *ic = icon ? resolve_icon(icon) : NULL;
+		const char *ic = icon ? resolve_icon(icon) : NULL;
 		launcher_add_entry(l, name, cmd, ic);
-		free(ic);
 		free(cmd);
 	}
 	free(name);
@@ -717,11 +762,10 @@ void launcher_rebuild_preferred(struct guibux_launcher *l) {
 				l->preferred[i].icon_path[0] == '\0') {
 			continue;
 		}
-		char *resolved = resolve_icon(l->preferred[i].icon_path);
+		const char *resolved = resolve_icon(l->preferred[i].icon_path);
 		if (resolved) {
 			snprintf(l->preferred[i].icon_path,
 				sizeof(l->preferred[i].icon_path), "%s", resolved);
-			free(resolved);
 		} else {
 			wlr_log(WLR_INFO, "launcher: preferred app '%s': icon '%s' not found",
 				l->preferred[i].name, l->preferred[i].icon_path);
@@ -745,12 +789,11 @@ void launcher_rebuild_preferred(struct guibux_launcher *l) {
 			}
 		}
 		for (size_t t = 0; t < ICON_ARRAY_LEN(topbar_icons) && !used; t++) {
-			char *resolved = resolve_icon(topbar_icons[t]);
+			const char *resolved = resolve_icon(topbar_icons[t]);
 			if (resolved != NULL) {
 				if (strcmp(l->icon_cache[i].path, resolved) == 0) {
 					used = true;
 				}
-				free(resolved);
 			}
 		}
 		if (!used) {
@@ -1076,11 +1119,10 @@ void launcher_init(struct guibux_server *server) {
 		if (l->preferred[i].icon_path[0] == '\0' ||
 				l->preferred[i].icon_path[0] == '/')
 			continue;
-		char *resolved = resolve_icon(l->preferred[i].icon_path);
+		const char *resolved = resolve_icon(l->preferred[i].icon_path);
 		if (resolved) {
 			snprintf(l->preferred[i].icon_path,
 				sizeof(l->preferred[i].icon_path), "%s", resolved);
-			free(resolved);
 		} else {
 			wlr_log(WLR_INFO, "launcher: preferred app '%s': icon '%s' not found",
 				l->preferred[i].name, l->preferred[i].icon_path);

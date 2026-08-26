@@ -1027,7 +1027,7 @@ void launcher_rebuild_preferred(struct guibux_launcher *l);
  * did not change); used by config reload for icon_theme */
 void launcher_rebuild_icon_dirs(struct guibux_launcher *l);
 void launcher_filter(struct guibux_launcher *l);
-char *resolve_icon(const char *icon_name);
+const char *resolve_icon(const char *icon_name);
 /* draw a theme icon centered at (cx, cy) logical, size logical px,
  * scaled by scale; returns drawn width in logical px (0 = missing).
  * color is the fill for symbolic SVG icons (0 = use the file's own) */

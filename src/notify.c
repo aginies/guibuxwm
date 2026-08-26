@@ -464,13 +464,12 @@ void notify_draw_indicator(cairo_surface_t *cs, cairo_t *cr, FT_Face face,
 	double cy = baseline - font_px * 35 / 100.0;
 	/* use the theme's bookmark icon (looks like a notification tag);
 	 * falls back to the drawn bell when the icon is missing */
-	char *ipath = resolve_icon("user-bookmarks");
+	const char *ipath = resolve_icon("user-bookmarks");
 	if (ipath != NULL) {
 		topbar_icon_draw(cr, launcher,
 			"user-bookmarks",
 			x + NOTIF_IND_PAD + NOTIF_IND_BELL / 2,
 			(int)(cy / scale), NOTIF_IND_BELL, scale, color);
-		free(ipath);
 	} else {
 		draw_bell(cr, (x + NOTIF_IND_PAD + NOTIF_IND_BELL / 2) * scale,
 			cy, NOTIF_IND_BELL * scale, color);

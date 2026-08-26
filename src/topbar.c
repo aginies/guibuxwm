@@ -273,14 +273,13 @@ static void topbar_items_prepare(struct topbar_items *ctx) {
 	 * "VOL MUTE" / "MIC MUTE" text when the icon is missing from the
 	 * theme; empty when no audio (hidden) */
 	if (ctx->snap.audio_available) {
-		char *vp = resolve_icon(topbar_volume_icon(ctx->snap.volume, ctx->snap.muted));
+		const char *vp = resolve_icon(topbar_volume_icon(ctx->snap.volume, ctx->snap.muted));
 		if (vp != NULL) {
 			if (ctx->snap.muted) {
 				snprintf(ctx->vol, sizeof(ctx->vol), " ");
 			} else {
 				snprintf(ctx->vol, sizeof(ctx->vol), "%d%%", ctx->snap.volume);
 			}
-			free(vp);
 		} else {
 			if (ctx->snap.muted) {
 				snprintf(ctx->vol, sizeof(ctx->vol), "VOL MUTE");
@@ -288,14 +287,13 @@ static void topbar_items_prepare(struct topbar_items *ctx) {
 				snprintf(ctx->vol, sizeof(ctx->vol), "VOL %d%%", ctx->snap.volume);
 			}
 		}
-		char *mp = resolve_icon(topbar_mic_icon(ctx->snap.mic_volume, ctx->snap.mic_muted));
+		const char *mp = resolve_icon(topbar_mic_icon(ctx->snap.mic_volume, ctx->snap.mic_muted));
 		if (mp != NULL) {
 			if (ctx->snap.mic_muted) {
 				snprintf(ctx->mic, sizeof(ctx->mic), " ");
 			} else {
 				snprintf(ctx->mic, sizeof(ctx->mic), "%d%%", ctx->snap.mic_volume);
 			}
-			free(mp);
 		} else {
 			if (ctx->snap.mic_muted) {
 				snprintf(ctx->mic, sizeof(ctx->mic), "MIC MUTE");
@@ -377,9 +375,7 @@ static int topbar_item_width(struct topbar_items *ctx, const char *icon,
 		const char *text) {
 	int w = guibux_text_width(ctx->server->launcher.face, text) / ctx->scale;
 	if (icon != NULL) {
-		char *path = resolve_icon(icon);
-		if (path != NULL) {
-			free(path);
+		if (resolve_icon(icon) != NULL) {
 			w += ctx->icon_size + TOPBAR_ICON_GAP;
 		}
 	}
