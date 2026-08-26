@@ -11,6 +11,9 @@
 #include <wlr/render/allocator.h>
 #include <drm_fourcc.h>
 #include "stb_image.h"
+#ifdef GUIBUX_HAS_RSVG
+#include <librsvg-2.0/librsvg/rsvg.h>
+#endif
 
 #define LAUNCHER_ICON_SIZE 24
 #define LAUNCHER_ICON_PAD 8
@@ -30,6 +33,13 @@ static const char *icon_sizes[] = {
 static const char *icon_contexts[] = {
 	"apps",
 	"mimetypes",
+};
+
+/* symbolic icon subdirectories (Adwaita ships status/device icons
+ * as SVG only, no PNG variants) */
+static const char *icon_symbolic_dirs[] = {
+	"symbolic/status",
+	"symbolic/devices",
 };
 
 static void icon_add_dir(const char *dir) {
@@ -150,6 +160,16 @@ char *resolve_icon(const char *icon_name) {
 				}
 			}
 		}
+		/* symbolic SVG icons (Adwaita status/device indicators) */
+		for (size_t s = 0; s < ICON_ARRAY_LEN(icon_symbolic_dirs); s++) {
+			snprintf(path, sizeof(path), "%s/%s/%s-symbolic.svg",
+				icon_dirs[t], icon_symbolic_dirs[s], icon_name);
+			if (access(path, F_OK) == 0) {
+				wlr_log(WLR_INFO, "launcher: icon '%s' -> %s",
+					icon_name, path);
+				return strdup(path);
+			}
+		}
 	}
 	wlr_log(WLR_DEBUG, "launcher: icon '%s' not found", icon_name);
 	return NULL;
@@ -161,13 +181,15 @@ static uint8_t *load_icon(const char *path, int *out_w, int *out_h) {
 	uint8_t *data = stbi_load(path, out_w, out_h, NULL, 4);
 	if (!data)
 		return NULL;
-	/* cairo ARGB32 expects premultiplied alpha; stb returns straight */
+	/* cairo ARGB32 is premultiplied BGRA in memory on little-endian;
+	 * stb returns straight RGBA: swap R/B and premultiply */
 	int n = *out_w * *out_h;
 	for (int i = 0; i < n; i++) {
 		uint8_t a = data[i * 4 + 3];
-		data[i * 4 + 0] = (uint8_t)((data[i * 4 + 0] * a + 127) / 255);
+		uint8_t r = data[i * 4 + 0], b = data[i * 4 + 2];
+		data[i * 4 + 0] = (uint8_t)((b * a + 127) / 255);
 		data[i * 4 + 1] = (uint8_t)((data[i * 4 + 1] * a + 127) / 255);
-		data[i * 4 + 2] = (uint8_t)((data[i * 4 + 2] * a + 127) / 255);
+		data[i * 4 + 2] = (uint8_t)((r * a + 127) / 255);
 	}
 	return data;
 }
@@ -204,16 +226,63 @@ static uint8_t *get_cached_icon(struct guibux_launcher *l,
 
 /* draw a cached icon at (pad, vertically centered in the line),
  * scaled to LAUNCHER_ICON_SIZE * box_scale; advance *tx past the
- * icon plus padding when drawn */
+ * icon plus padding when drawn. PNG goes through the stb cache;
+ * SVG is rendered with librsvg (no recolor: app icons are full-color) */
 static void launcher_draw_icon(cairo_t *cr, struct guibux_launcher *l,
 		const char *path, int ly, int lh, int pad, int *tx) {
 	if (path[0] == '\0')
 		return;
+	int target = LAUNCHER_ICON_SIZE * l->box_scale;
+
+#ifdef GUIBUX_HAS_RSVG
+	if (strstr(path, ".svg") != NULL) {
+		GError *err = NULL;
+		RsvgHandle *handle = rsvg_handle_new_from_file(path, &err);
+		if (handle == NULL) {
+			if (err) {
+				g_error_free(err);
+			}
+			return;
+		}
+		gdouble dw = 0, dh = 0;
+		rsvg_handle_get_intrinsic_size_in_pixels(handle, &dw, &dh);
+		int iw = (int)(dw + 0.5);
+		int ih = (int)(dh + 0.5);
+		if (iw <= 0 || ih <= 0) {
+			g_object_unref(handle);
+			return;
+		}
+		double s = (double)target / iw;
+		int th = (int)(ih * s + 0.5);
+		int iy = ly + (lh - th) / 2;
+		cairo_surface_t *surf = cairo_image_surface_create(
+			CAIRO_FORMAT_ARGB32, iw, ih);
+		cairo_t *sfc = cairo_create(surf);
+		{
+			RsvgRectangle r = {0, 0, dw, dh};
+			rsvg_handle_render_document(handle, sfc, &r, NULL);
+		}
+		cairo_destroy(sfc);
+		g_object_unref(handle);
+		cairo_pattern_t *pat = cairo_pattern_create_for_surface(surf);
+		cairo_pattern_set_filter(pat, CAIRO_FILTER_BILINEAR);
+		cairo_save(cr);
+		cairo_translate(cr, pad, iy);
+		cairo_scale(cr, s, s);
+		cairo_set_source(cr, pat);
+		cairo_paint(cr);
+		cairo_restore(cr);
+		cairo_pattern_destroy(pat);
+		cairo_surface_destroy(surf);
+		*tx += target + LAUNCHER_ICON_PAD * l->box_scale;
+		return;
+	}
+#endif
+
 	int iw, ih;
 	uint8_t *img = get_cached_icon(l, path, &iw, &ih);
 	if (!img || iw <= 0 || ih <= 0)
 		return;
-	int target = LAUNCHER_ICON_SIZE * l->box_scale;
 	double s = (double)target / iw;
 	int th = (int)(ih * s + 0.5);
 	int iy = ly + (lh - th) / 2;
@@ -230,6 +299,117 @@ static void launcher_draw_icon(cairo_t *cr, struct guibux_launcher *l,
 	cairo_pattern_destroy(pat);
 	cairo_surface_destroy(surf);
 	*tx += target + LAUNCHER_ICON_PAD * l->box_scale;
+}
+
+/* draw a theme icon centered at (cx, cy) logical, size logical px,
+ * scaled by scale; returns the drawn width in logical px (0 = missing,
+ * caller falls back to text-only). PNG icons go through the stb cache;
+ * SVG symbolic icons are rendered with librsvg and recolored to `color`
+ * (the topbar text color) so they match the theme */
+int topbar_icon_draw(cairo_t *cr, struct guibux_launcher *l,
+		const char *name, int cx, int cy, int size, int scale,
+		uint32_t color) {
+	char *path = resolve_icon(name);
+	if (path == NULL) {
+		return 0;
+	}
+	int tw = size * scale;
+	int ix = cx * scale - tw / 2;
+	int iy = cy * scale - tw / 2;
+
+#ifdef GUIBUX_HAS_RSVG
+	if (strstr(path, ".svg") != NULL) {
+		GError *err = NULL;
+		RsvgHandle *handle = rsvg_handle_new_from_file(path, &err);
+		if (handle == NULL) {
+			if (err) {
+				g_error_free(err);
+			}
+			free(path);
+			return 0;
+		}
+		gdouble dw = 0, dh = 0;
+		rsvg_handle_get_intrinsic_size_in_pixels(handle, &dw, &dh);
+		int iw = (int)(dw + 0.5);
+		int ih = (int)(dh + 0.5);
+		double s = (double)tw / iw;
+		int th = (int)(ih * s + 0.5);
+		iy = cy * scale - th / 2;
+
+		/* recolor symbolic icons: render to a temp surface, then
+		 * replace RGB with the target color, keep the alpha */
+		cairo_surface_t *tmp = cairo_image_surface_create(
+			CAIRO_FORMAT_ARGB32, iw, ih);
+		cairo_t *tcr = cairo_create(tmp);
+		{
+			RsvgRectangle r = {0, 0, dw, dh};
+			rsvg_handle_render_document(handle, tcr, &r, NULL);
+		}
+		cairo_destroy(tcr);
+
+		uint32_t rr = (color >> 16) & 0xff;
+		uint32_t gg = (color >> 8) & 0xff;
+		uint32_t bb = color & 0xff;
+		uint32_t target = (rr << 16) | (gg << 8) | bb;
+		cairo_surface_flush(tmp);
+		cairo_surface_t *surf = cairo_image_surface_create(
+			CAIRO_FORMAT_ARGB32, iw, ih);
+		{
+			uint8_t *src_data = cairo_image_surface_get_data(tmp);
+			int src_stride = cairo_image_surface_get_stride(tmp);
+			uint8_t *dst_data = cairo_image_surface_get_data(surf);
+			int dst_stride = cairo_image_surface_get_stride(surf);
+			for (int y = 0; y < ih; y++) {
+				for (int x = 0; x < iw; x++) {
+					uint32_t px = *(uint32_t *)(src_data + y * src_stride + x * 4);
+					uint8_t a = (px >> 24) & 0xff;
+					*(uint32_t *)(dst_data + y * dst_stride + x * 4) =
+						(a << 24) | target;
+				}
+			}
+		}
+		cairo_surface_mark_dirty(surf);
+		cairo_surface_destroy(tmp);
+		g_object_unref(handle);
+
+		cairo_pattern_t *pat = cairo_pattern_create_for_surface(surf);
+		cairo_pattern_set_filter(pat, CAIRO_FILTER_BILINEAR);
+		cairo_save(cr);
+		cairo_translate(cr, ix, iy);
+		cairo_scale(cr, s, s);
+		cairo_set_source(cr, pat);
+		cairo_paint(cr);
+		cairo_restore(cr);
+		cairo_pattern_destroy(pat);
+		cairo_surface_destroy(surf);
+		free(path);
+		return size;
+	}
+#endif
+
+	int iw, ih;
+	uint8_t *img = get_cached_icon(l, path, &iw, &ih);
+	free(path);
+	if (!img || iw <= 0 || ih <= 0) {
+		return 0;
+	}
+	double s = (double)(size * scale) / iw;
+	int th = (int)(ih * s + 0.5);
+	ix = cx * scale - tw / 2;
+	iy = cy * scale - th / 2;
+	cairo_surface_t *surf = cairo_image_surface_create_for_data(
+		img, CAIRO_FORMAT_ARGB32, iw, ih, iw * 4);
+	cairo_pattern_t *pat = cairo_pattern_create_for_surface(surf);
+	cairo_pattern_set_filter(pat, CAIRO_FILTER_BILINEAR);
+	cairo_save(cr);
+	cairo_translate(cr, ix, iy);
+	cairo_scale(cr, s, s);
+	cairo_set_source(cr, pat);
+	cairo_paint(cr);
+	cairo_restore(cr);
+	cairo_pattern_destroy(pat);
+	cairo_surface_destroy(surf);
+	return size;
 }
 
 static const char *launcher_font_candidates[] = {
@@ -554,14 +734,29 @@ void launcher_rebuild_preferred(struct guibux_launcher *l) {
 		}
 	}
 	/* drop cached icons whose path is not referenced by any preferred
-	 * app anymore (theme change) */
+	 * app or topbar indicator anymore (theme change) */
+	static const char *topbar_icons[] = {
+		"audio-volume-muted", "audio-volume-low", "audio-volume-medium",
+		"audio-volume-high", "microphone-muted",
+		"microphone-sensitivity-low", "microphone-sensitivity-high",
+		"battery-full", "battery-good", "battery-caution", "battery-low",
+		"battery-full-charging", "battery-charging", "network-wireless",
+	};
 	for (int i = 0; i < l->num_icons; i++) {
 		bool used = false;
-		for (int p = 0; p < l->num_preferred; p++) {
+		for (int p = 0; p < l->num_preferred && !used; p++) {
 			if (strcmp(l->icon_cache[i].path,
 					l->preferred[p].icon_path) == 0) {
 				used = true;
-				break;
+			}
+		}
+		for (size_t t = 0; t < ICON_ARRAY_LEN(topbar_icons) && !used; t++) {
+			char *resolved = resolve_icon(topbar_icons[t]);
+			if (resolved != NULL) {
+				if (strcmp(l->icon_cache[i].path, resolved) == 0) {
+					used = true;
+				}
+				free(resolved);
 			}
 		}
 		if (!used) {

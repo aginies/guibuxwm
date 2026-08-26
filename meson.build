@@ -21,6 +21,10 @@ effect_c_args = get_option('effects') ? ['-DGUIBUX_EFFECTS=1'] : ['-DGUIBUX_EFFE
 vulkan_dep = dependency('vulkan', required: false)
 vulkan_c_args = vulkan_dep.found() ? ['-DGUIBUX_HAS_VULKAN=1'] : ['-DGUIBUX_HAS_VULKAN=0']
 
+# optional: SVG icon rendering for the topbar indicators (Adwaita symbolic)
+rsvg_dep = dependency('librsvg-2.0', required: false)
+rsvg_c_args = rsvg_dep.found() ? ['-DGUIBUX_HAS_RSVG=1'] : ['-DGUIBUX_HAS_RSVG=0']
+
 executable('guibuxwm',
   ['src/main.c', 'src/guibuxwm.h', 'src/output.c', 'src/toplevel.c',
     'src/window-layout.c', 'src/topbar.c', 'src/launcher.c', 'src/switcher.c',
@@ -31,9 +35,9 @@ executable('guibuxwm',
     'src/tooltip.c', 'src/window-preview.c', 'src/osd.c', 'src/power.c', 'src/effects.c', 'src/window-restore.c',
     'src/topbar-items.c',
     'src/outputs-config.c', 'src/outputs-config.h'],
-  c_args: ['-DWLR_USE_UNSTABLE', '-Wno-unused-parameter'] + effect_c_args + vulkan_c_args,
+  c_args: ['-DWLR_USE_UNSTABLE', '-Wno-unused-parameter'] + effect_c_args + vulkan_c_args + rsvg_c_args,
   include_directories: include_directories('src'),
-  dependencies: [wlroots_dep, wayland_dep, xkbcommon_dep, freetype_dep, cairo_dep, dbus_dep, threads_dep, vulkan_dep],
+  dependencies: [wlroots_dep, wayland_dep, xkbcommon_dep, freetype_dep, cairo_dep, dbus_dep, threads_dep, vulkan_dep, rsvg_dep],
   install: true,
 )
 

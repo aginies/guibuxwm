@@ -436,7 +436,7 @@ static void draw_bell(cairo_t *cr, double x, double cy, double s,
 	cairo_fill(cr);
 }
 
-/* indicator layout (logical px): 4 pad | 12 bell | 6 gap | count | 4 pad */
+/* indicator layout (logical px): 4 pad | 12 icon | 6 gap | count | 4 pad */
 #define NOTIF_IND_PAD 4
 #define NOTIF_IND_BELL 12
 #define NOTIF_IND_GAP 6
@@ -455,14 +455,26 @@ int notify_indicator_width(FT_Face face, int scale, int count) {
 }
 
 void notify_draw_indicator(cairo_surface_t *cs, cairo_t *cr, FT_Face face,
+		struct guibux_launcher *launcher,
 		int x, int baseline, int scale, int count, uint32_t color) {
 	if (count <= 0) {
 		return;
 	}
 	int font_px = face->size->metrics.height / 64;
 	double cy = baseline - font_px * 35 / 100.0;
-	draw_bell(cr, (x + NOTIF_IND_PAD + NOTIF_IND_BELL / 2) * scale,
-		cy, NOTIF_IND_BELL * scale, color);
+	/* use the theme's bookmark icon (looks like a notification tag);
+	 * falls back to the drawn bell when the icon is missing */
+	char *ipath = resolve_icon("user-bookmarks");
+	if (ipath != NULL) {
+		topbar_icon_draw(cr, launcher,
+			"user-bookmarks",
+			x + NOTIF_IND_PAD + NOTIF_IND_BELL / 2,
+			(int)(cy / scale), NOTIF_IND_BELL, scale, color);
+		free(ipath);
+	} else {
+		draw_bell(cr, (x + NOTIF_IND_PAD + NOTIF_IND_BELL / 2) * scale,
+			cy, NOTIF_IND_BELL * scale, color);
+	}
 	char cnt[16];
 	if (count > NOTIF_IND_DIGIT_CAP) {
 		snprintf(cnt, sizeof(cnt), "%d+", NOTIF_IND_DIGIT_CAP);

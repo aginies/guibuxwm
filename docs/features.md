@@ -35,8 +35,9 @@
 - **Window pills:** a global list — this monitor's windows first, then the windows of the other monitors after a separator (the `A2:` prefix, monitor letter + workspace number, disambiguates); click to focus (switches to the window's monitor and workspace first if needed), double-click to toggle fullscreen
 - **Window preview:** hovering a window pill for half a second shows a live thumbnail of the window (480x300) below the pill, so the content of a window on another workspace is visible without switching to it; the preview tracks the window's live buffer and hides when the pointer leaves
 - **Network indicator:** SSID for WiFi, interface name for Ethernet, or "No net"/"NM" when unavailable, updated via NetworkManager D-Bus; right-click opens `nmtui`; hovering an interface shows a multi-line tooltip with its IP, gateway and DNS servers
-- **Audio indicators** (`VOL` / `MIC`, PulseAudio or PipeWire via `pactl`): scroll to adjust by 1% per step, left-click toggles mute, right-click opens `pavucontrol`
-- **Battery indicator** (UPower): `BAT NN%` with a hover tooltip showing the time estimate; the text turns red at 20% or below and orange at 50% or below (discharging only — charging stays the normal color)
+- **Audio indicators** (`VOL` / `MIC`, PulseAudio or PipeWire via `pactl`): scroll to adjust by 1% per step, left-click toggles mute, right-click opens `pavucontrol`; each shows a speaker/mic icon from the icon theme next to the text
+- **Battery indicator** (UPower): `BAT NN%` with a hover tooltip showing the time estimate; the text turns red at 20% or below and orange at 50% or below (discharging only — charging stays the normal color); a battery icon reflects the charge level
+- **Network indicator**: per-interface labels with a network icon from the icon theme
 - **Configurable topbar items** (`topbar_items`): the right-side indicators (network, volume, mic, battery, notifications, clock) can be enabled, disabled or reordered per config; live-reloadable via SIGHUP
 - **Topbar items panel** (`Mod+l`): a popup listing all six indicators with an on/off column; `d` or Enter toggles the selected row, changes apply live to every topbar immediately
 

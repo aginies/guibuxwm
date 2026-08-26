@@ -192,12 +192,14 @@ struct guibux_server;
 #define NET_STR_MAX 128
 
 /* one connected network device: the label is exactly what the topbar
- * renders ("SSID 85%" / "eth0"); ip/dns/gw are empty when unknown */
+ * renders ("SSID 85%" / "eth0"); ip/dns/gw are empty when unknown;
+ * is_wifi is true for NM device type 2 (WIFI) */
 struct guibux_net_iface {
     char label[64];
     char ip[NET_STR_MAX];
     char dns[NET_STR_MAX];
     char gw[NET_STR_MAX];
+    bool is_wifi;
 };
 
 struct guibux_sysinfo {
@@ -984,6 +986,7 @@ bool notify_get_by_id(struct guibux_notify *n, uint32_t id, struct guibux_notifi
 bool notify_consume_dirty(struct guibux_notify *n);
 int notify_indicator_width(FT_Face face, int scale, int count);
 void notify_draw_indicator(cairo_surface_t *cs, cairo_t *cr, FT_Face face,
+	struct guibux_launcher *launcher,
 	int x, int baseline, int scale, int count, uint32_t color);
 void notify_panel_show(struct guibux_server *server, struct wlr_output *output);
 void notify_panel_hide(struct guibux_server *server);
@@ -1025,6 +1028,12 @@ void launcher_rebuild_preferred(struct guibux_launcher *l);
 void launcher_rebuild_icon_dirs(struct guibux_launcher *l);
 void launcher_filter(struct guibux_launcher *l);
 char *resolve_icon(const char *icon_name);
+/* draw a theme icon centered at (cx, cy) logical, size logical px,
+ * scaled by scale; returns drawn width in logical px (0 = missing).
+ * color is the fill for symbolic SVG icons (0 = use the file's own) */
+int topbar_icon_draw(cairo_t *cr, struct guibux_launcher *l,
+	const char *name, int cx, int cy, int size, int scale,
+	uint32_t color);
 void launcher_free_icons(struct guibux_launcher *l);
 
 /* switcher.c */

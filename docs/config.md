@@ -90,7 +90,8 @@ preferred_app4 = VirtUI-GUI;virtui-gui
 ### `icon_theme`
 
 Icon theme used to resolve launcher icons (preferred apps and
-`.desktop` `Icon=` entries). Leave unset to use the gtk
+`.desktop` `Icon=` entries) and the topbar indicator icons (volume,
+mic, battery, network). Leave unset to use the gtk
 `gtk-icon-theme-name` from `~/.config/gtk-3.0/settings.ini` (then
 gtk-4.0), falling back to `Adwaita`.
 
@@ -98,7 +99,8 @@ Search order: `~/.local/share/icons/<theme>`, each `XDG_DATA_DIRS`
 entry + `/share/icons/<theme>`, then `/usr/share/icons/Adwaita` and
 `/usr/share/icons/hicolor`. PNG icons only (24x24, 16x16, scalable;
 apps and mimetypes contexts). A theme or icon that does not exist is
-skipped silently (no icon, no error).
+skipped silently (no icon, no error). Topbar indicators fall back to
+text-only when their icon is missing from the theme.
 
 **Default:** gtk `gtk-icon-theme-name`, else `Adwaita`
 

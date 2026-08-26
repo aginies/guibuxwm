@@ -870,6 +870,7 @@ sysinfo_update_network(struct guibux_sysinfo *si)
             struct guibux_net_iface *ni = &ifaces[iface_count];
             memset(ni, 0, sizeof(*ni));
             snprintf(ni->label, sizeof(ni->label), "%s", label);
+            ni->is_wifi = (dev_type == 2);
 
             char *ipcfg = dbus_get_property_object_path(si->system_bus,
                 NM_SERVICE, dev_path, NM_DEVICE_IFACE, "Ip4Config", &err);
