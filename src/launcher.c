@@ -246,29 +246,26 @@ static void launcher_draw_icon(cairo_t *cr, struct guibux_launcher *l,
 		}
 		gdouble dw = 0, dh = 0;
 		rsvg_handle_get_intrinsic_size_in_pixels(handle, &dw, &dh);
-		int iw = (int)(dw + 0.5);
-		int ih = (int)(dh + 0.5);
-		if (iw <= 0 || ih <= 0) {
+		if (dw <= 0 || dh <= 0) {
 			g_object_unref(handle);
 			return;
 		}
-		double s = (double)target / iw;
-		int th = (int)(ih * s + 0.5);
+		int th = (int)(dh * target / dw + 0.5);
 		int iy = ly + (lh - th) / 2;
+		/* render directly at the target size (no bilinear upscale) */
 		cairo_surface_t *surf = cairo_image_surface_create(
-			CAIRO_FORMAT_ARGB32, iw, ih);
+			CAIRO_FORMAT_ARGB32, target, th);
 		cairo_t *sfc = cairo_create(surf);
 		{
 			RsvgRectangle r = {0, 0, dw, dh};
+			cairo_scale(sfc, (double)target / dw, (double)th / dh);
 			rsvg_handle_render_document(handle, sfc, &r, NULL);
 		}
 		cairo_destroy(sfc);
 		g_object_unref(handle);
 		cairo_pattern_t *pat = cairo_pattern_create_for_surface(surf);
-		cairo_pattern_set_filter(pat, CAIRO_FILTER_BILINEAR);
 		cairo_save(cr);
 		cairo_translate(cr, pad, iy);
-		cairo_scale(cr, s, s);
 		cairo_set_source(cr, pat);
 		cairo_paint(cr);
 		cairo_restore(cr);
@@ -330,53 +327,50 @@ int topbar_icon_draw(cairo_t *cr, struct guibux_launcher *l,
 		}
 		gdouble dw = 0, dh = 0;
 		rsvg_handle_get_intrinsic_size_in_pixels(handle, &dw, &dh);
-		int iw = (int)(dw + 0.5);
-		int ih = (int)(dh + 0.5);
-		double s = (double)tw / iw;
-		int th = (int)(ih * s + 0.5);
+		if (dw <= 0 || dh <= 0) {
+			g_object_unref(handle);
+			free(path);
+			return 0;
+		}
+		int th = (int)(dh * tw / dw + 0.5);
 		iy = cy * scale - th / 2;
 
-		/* recolor symbolic icons: render to a temp surface, then
-		 * replace RGB with the target color, keep the alpha */
-		cairo_surface_t *tmp = cairo_image_surface_create(
-			CAIRO_FORMAT_ARGB32, iw, ih);
-		cairo_t *tcr = cairo_create(tmp);
+		/* render directly at the target size (no bilinear upscale:
+		 * upsampling a 16px icon bleeds edge alpha into the topbar
+		 * background and shifts the perceived color); then recolor
+		 * the pixels to the target color, keeping the alpha */
+		cairo_surface_t *surf = cairo_image_surface_create(
+			CAIRO_FORMAT_ARGB32, tw, th);
+		cairo_t *sfc = cairo_create(surf);
 		{
 			RsvgRectangle r = {0, 0, dw, dh};
-			rsvg_handle_render_document(handle, tcr, &r, NULL);
+			cairo_scale(sfc, (double)tw / dw, (double)th / dh);
+			rsvg_handle_render_document(handle, sfc, &r, NULL);
 		}
-		cairo_destroy(tcr);
+		cairo_destroy(sfc);
+		g_object_unref(handle);
 
 		uint32_t rr = (color >> 16) & 0xff;
 		uint32_t gg = (color >> 8) & 0xff;
 		uint32_t bb = color & 0xff;
 		uint32_t target = (rr << 16) | (gg << 8) | bb;
-		cairo_surface_flush(tmp);
-		cairo_surface_t *surf = cairo_image_surface_create(
-			CAIRO_FORMAT_ARGB32, iw, ih);
+		cairo_surface_flush(surf);
 		{
-			uint8_t *src_data = cairo_image_surface_get_data(tmp);
-			int src_stride = cairo_image_surface_get_stride(tmp);
-			uint8_t *dst_data = cairo_image_surface_get_data(surf);
-			int dst_stride = cairo_image_surface_get_stride(surf);
-			for (int y = 0; y < ih; y++) {
-				for (int x = 0; x < iw; x++) {
-					uint32_t px = *(uint32_t *)(src_data + y * src_stride + x * 4);
-					uint8_t a = (px >> 24) & 0xff;
-					*(uint32_t *)(dst_data + y * dst_stride + x * 4) =
-						(a << 24) | target;
+			uint8_t *data = cairo_image_surface_get_data(surf);
+			int stride = cairo_image_surface_get_stride(surf);
+			for (int y = 0; y < th; y++) {
+				for (int x = 0; x < tw; x++) {
+					uint32_t *px = (uint32_t *)(data + y * stride + x * 4);
+					uint8_t a = (*px >> 24) & 0xff;
+					*px = (a << 24) | target;
 				}
 			}
 		}
 		cairo_surface_mark_dirty(surf);
-		cairo_surface_destroy(tmp);
-		g_object_unref(handle);
 
 		cairo_pattern_t *pat = cairo_pattern_create_for_surface(surf);
-		cairo_pattern_set_filter(pat, CAIRO_FILTER_BILINEAR);
 		cairo_save(cr);
 		cairo_translate(cr, ix, iy);
-		cairo_scale(cr, s, s);
 		cairo_set_source(cr, pat);
 		cairo_paint(cr);
 		cairo_restore(cr);
