@@ -98,9 +98,6 @@ static bool preview_snapshot(struct guibux_server *server,
 		free(data);
 		return false;
 	}
-	wlr_log(WLR_INFO, "preview-debug: readfmt=0x%x %ux%u px0=%02x %02x %02x %02x px1=%02x %02x %02x %02x",
-		fmt, w, h, data[0], data[1], data[2], data[3],
-		data[4], data[5], data[6], data[7]);
 
 	if (pv->buffer == NULL || pv->buffer_w < PREVIEW_W ||
 			pv->buffer_h < PREVIEW_H) {
