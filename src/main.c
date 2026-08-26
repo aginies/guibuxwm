@@ -110,7 +110,9 @@ int main(int argc, char *argv[]) {
 	server.color_text = DEFAULT_COLOR_TEXT;
 	server.color_dim = DEFAULT_COLOR_DIM;
 	server.color_topbar_bg = DEFAULT_COLOR_TOPBAR_BG;
+	server.color_topbar_bg2 = DEFAULT_COLOR_TOPBAR_BG;
 	server.color_topbar_text = DEFAULT_COLOR_TOPBAR_TEXT;
+	server.topbar_gradient = 0;
 	server.topbar_height = DEFAULT_TOPBAR_H;
 	server.topbar_font_size = DEFAULT_TOPBAR_FONT_SIZE;
 	server.topbar_win_pad = DEFAULT_TOPBAR_WIN_PAD;
@@ -243,6 +245,17 @@ int main(int argc, char *argv[]) {
 	wlr_subcompositor_create(server.wl_display);
 	wlr_data_device_manager_create(server.wl_display);
 	wlr_primary_selection_v1_device_manager_create(server.wl_display);
+	server.text_input_manager = wlr_text_input_manager_v3_create(server.wl_display);
+	server.text_input_new.notify = text_input_handle_new;
+	wl_signal_add(&server.text_input_manager->events.new_text_input,
+		&server.text_input_new);
+	server.fractional_scale_manager = wlr_fractional_scale_manager_v1_create(
+		server.wl_display, 1);
+	server.relative_pointer_manager = wlr_relative_pointer_manager_v1_create(
+		server.wl_display);
+	server.relative_pointer_new.notify = relative_pointer_handle_new;
+	wl_signal_add(&server.relative_pointer_manager->events.new_relative_pointer,
+		&server.relative_pointer_new);
 
 	server.output_layout = wlr_output_layout_create(server.wl_display);
 	server.xdg_output_manager = wlr_xdg_output_manager_v1_create(

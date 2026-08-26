@@ -405,6 +405,15 @@ void load_config(struct guibux_server *server, const char *path) {
 			} else {
 				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
 			}
+		} else if (!strcmp(key, "topbar_bg2")) {
+			if (parse_color(val, &server->color_topbar_bg2)) {
+				wlr_log(WLR_INFO, "config: topbar_bg2 = %s", val);
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
+			}
+		} else if (!strcmp(key, "topbar_gradient")) {
+			server->topbar_gradient = atoi(val);
+			wlr_log(WLR_INFO, "config: topbar_gradient = %d", server->topbar_gradient);
 		} else if (!strcmp(key, "topbar_height")) {
 			server->topbar_height = atoi(val);
 			/* an absurd height would push the fullscreen height to

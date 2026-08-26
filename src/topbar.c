@@ -116,6 +116,27 @@ static void set_color_alpha(cairo_t *cr, uint32_t c, double a) {
 		((c >> 8) & 0xFF) / 255.0, (c & 0xFF) / 255.0, a);
 }
 
+static void topbar_bg_fill(cairo_t *cr, struct guibux_server *server,
+		int x, int y, int w, int h) {
+	if (server->topbar_gradient) {
+		cairo_pattern_t *g = cairo_pattern_create_linear(x, y, x + w, y);
+		cairo_pattern_add_color_stop_rgb(g, 0,
+			((server->color_topbar_bg >> 16) & 0xFF) / 255.0,
+			((server->color_topbar_bg >> 8) & 0xFF) / 255.0,
+			(server->color_topbar_bg & 0xFF) / 255.0);
+		cairo_pattern_add_color_stop_rgb(g, 1,
+			((server->color_topbar_bg2 >> 16) & 0xFF) / 255.0,
+			((server->color_topbar_bg2 >> 8) & 0xFF) / 255.0,
+			(server->color_topbar_bg2 & 0xFF) / 255.0);
+		cairo_set_source(cr, g);
+		cairo_pattern_destroy(g);
+	} else {
+		set_color(cr, server->color_topbar_bg);
+	}
+	cairo_rectangle(cr, x, y, w, h);
+	cairo_fill(cr);
+}
+
 void topbar_rounded_rect(cairo_t *cr, double x, double y,
 		double w, double h, double r) {
 	if (r > w / 2)
@@ -603,14 +624,14 @@ static void topbar_render_focus(struct guibux_output *o) {
 	struct guibux_toplevel *wins[TOPBAR_WIN_MAX];
 	int nwins = 0;
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->is_fullscreen || (t->xdg_toplevel == NULL && t->xsurface == NULL))
+		if (t->xdg_toplevel == NULL && t->xsurface == NULL)
 			continue;
 		if (toplevel_output_for(t) == o->wlr_output &&
 				nwins < TOPBAR_WIN_MAX)
 			wins[nwins++] = t;
 	}
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->is_fullscreen || (t->xdg_toplevel == NULL && t->xsurface == NULL))
+		if (t->xdg_toplevel == NULL && t->xsurface == NULL)
 			continue;
 		if (toplevel_output_for(t) != o->wlr_output &&
 				nwins < TOPBAR_WIN_MAX)
@@ -618,7 +639,7 @@ static void topbar_render_focus(struct guibux_output *o) {
 	}
 	int own_count = 0;
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->is_fullscreen || (t->xdg_toplevel == NULL && t->xsurface == NULL))
+		if (t->xdg_toplevel == NULL && t->xsurface == NULL)
 			continue;
 		if (toplevel_output_for(t) == o->wlr_output)
 			own_count++;
@@ -628,9 +649,7 @@ static void topbar_render_focus(struct guibux_output *o) {
 	/* repaint the window-pill region with the topbar background */
 	int rx = o->topbar_win_region_x * scale;
 	int rw = (o->topbar_win_region_end - o->topbar_win_region_x) * scale;
-	set_color(cr, server->color_topbar_bg);
-	cairo_rectangle(cr, rx, 0, rw, h);
-	cairo_fill(cr);
+	topbar_bg_fill(cr, server, rx, 0, rw, h);
 
 	int win_x = o->topbar_win_region_x;
 	int win_end = o->topbar_win_region_end;
@@ -786,12 +805,12 @@ void topbar_render(struct guibux_output *o) {
 			o->topbar_buffer_h != h) {
 		wlr_buffer_drop(o->topbar_buffer);
 		o->topbar_buffer = NULL;
-		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-		struct wlr_drm_format format = {
-			.format = DRM_FORMAT_XRGB8888,
-			.len = 1,
-			.modifiers = mods,
-		};
+	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
+	struct wlr_drm_format format = {
+		.format = DRM_FORMAT_XRGB8888,
+		.len = 1,
+		.modifiers = mods,
+	};
 		o->topbar_buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
 			w, h, &format);
 		if (o->topbar_buffer == NULL) {
@@ -813,10 +832,10 @@ void topbar_render(struct guibux_output *o) {
 				o->topbar_buffer_h = 0;
 				return;
 			}
-		} else {
-			wlr_scene_buffer_set_buffer(o->topbar_node, o->topbar_buffer);
-		}
-		wlr_scene_buffer_set_dest_size(o->topbar_node,
+	} else {
+		wlr_scene_buffer_set_buffer(o->topbar_node, o->topbar_buffer);
+	}
+	wlr_scene_buffer_set_dest_size(o->topbar_node,
 			box.width, o->server->topbar_height);
 		wlr_scene_node_set_position(&o->topbar_node->node, box.x, box.y);
 	}
@@ -839,8 +858,7 @@ void topbar_render(struct guibux_output *o) {
 		data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
 	cairo_t *cr = cairo_create(cs);
 
-	set_color(cr, server->color_topbar_bg);
-	cairo_paint(cr);
+	topbar_bg_fill(cr, server, 0, 0, w, h);
 	/* faint inner top highlight: a raised edge against the wallpaper */
 	cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.06);
 	cairo_rectangle(cr, 0, 0, w, scale);
@@ -900,20 +918,26 @@ void topbar_render(struct guibux_output *o) {
 		x += cell_w;
 	}
 
-	/* occupancy dots: one small dot per non-fullscreen window on the
-	 * workspace (this monitor), up to 4, under the workspace number */
+	/* occupancy dots: one small marker per window on the workspace
+	 * (this monitor), up to 4, under the workspace number; circle for
+	 * normal windows, square for fullscreen */
 	{
 		int dot_r = 3;
 		int dot_gap = 2;
 		struct guibux_toplevel *dt;
 		for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {
 			int n = 0;
+			int fs[4] = {0};
+			int nfs = 0;
 			wl_list_for_each(dt, &server->toplevels, link) {
-				if (dt->is_fullscreen)
-					continue;
 				if (dt->workspace == ws &&
-						toplevel_output_for(dt) == o->wlr_output)
+						toplevel_output_for(dt) == o->wlr_output) {
 					n++;
+					if (dt->is_fullscreen && nfs < 4)
+						fs[nfs++] = 1;
+					else if (nfs < 4)
+						fs[nfs++] = 0;
+				}
 			}
 			o->topbar_ws_dots[ws] = n;
 			if (n == 0)
@@ -928,8 +952,15 @@ void topbar_render(struct guibux_output *o) {
 				set_color_alpha(cr, server->color_topbar_text, 0.5);
 			}
 			for (int d = 0; d < shown; d++) {
-				cairo_arc(cr, (dx0 + d * (2 * dot_r + dot_gap) + dot_r) * scale,
-					(dy + dot_r) * scale, dot_r * scale, 0, 2 * M_PI);
+				if (fs[d]) {
+					cairo_rectangle(cr,
+						(dx0 + d * (2 * dot_r + dot_gap)) * scale,
+						(dy + 1) * scale,
+						(2 * dot_r - 2) * scale, (2 * dot_r - 2) * scale);
+				} else {
+					cairo_arc(cr, (dx0 + d * (2 * dot_r + dot_gap) + dot_r) * scale,
+						(dy + dot_r) * scale, dot_r * scale, 0, 2 * M_PI);
+				}
 				cairo_fill(cr);
 			}
 		}
@@ -968,14 +999,14 @@ void topbar_render(struct guibux_output *o) {
 	 * groups). The prefix "A2: " (monitor letter + workspace number)
 	 * disambiguates cross-monitor entries */
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->is_fullscreen || (t->xdg_toplevel == NULL && t->xsurface == NULL))
+		if (t->xdg_toplevel == NULL && t->xsurface == NULL)
 			continue;
 		if (toplevel_output_for(t) == o->wlr_output &&
 				nwins < TOPBAR_WIN_MAX)
 			wins[nwins++] = t;
 	}
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->is_fullscreen || (t->xdg_toplevel == NULL && t->xsurface == NULL))
+		if (t->xdg_toplevel == NULL && t->xsurface == NULL)
 			continue;
 		if (toplevel_output_for(t) != o->wlr_output &&
 				nwins < TOPBAR_WIN_MAX)
@@ -985,7 +1016,7 @@ void topbar_render(struct guibux_output *o) {
 	 * many cells (only when there are windows on both sides) */
 	int own_count = 0;
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (t->is_fullscreen || (t->xdg_toplevel == NULL && t->xsurface == NULL))
+		if (t->xdg_toplevel == NULL && t->xsurface == NULL)
 			continue;
 		if (toplevel_output_for(t) == o->wlr_output)
 			own_count++;
@@ -1619,6 +1650,61 @@ int topbar_test_run(void *data) {
 						dws, o->topbar_ws_dots[dws], dn);
 					return 0;
 				}
+			}
+		}
+		/* test hook: GUIBUX_TEST_GRADIENT=1 — the bar must show a
+		 * left-to-right color change (left edge = topbar_bg, right edge
+		 * = topbar_bg2, both sampled at the top row where only the
+		 * background + 1px highlight live) */
+		const char *grad = getenv("GUIBUX_TEST_GRADIENT");
+		if (grad != NULL && server->topbar_gradient) {
+			void *gdata;
+			uint32_t gfmt;
+			size_t gstride;
+			if (wlr_buffer_begin_data_ptr_access(o->topbar_buffer,
+					WLR_BUFFER_DATA_PTR_ACCESS_READ,
+					&gdata, &gfmt, &gstride)) {
+				if (gfmt == DRM_FORMAT_XRGB8888) {
+					uint32_t *px = (uint32_t *)gdata;
+					int gw = o->topbar_buffer_w;
+					uint32_t left = px[2 * (gstride / 4)];
+					uint32_t right = px[2 * (gstride / 4) + (gw - 2)];
+					int lr = (left >> 16) & 0xFF, lg = (left >> 8) & 0xFF,
+						lb = left & 0xFF;
+					int rr = (right >> 16) & 0xFF, rg = (right >> 8) & 0xFF,
+						rb = right & 0xFF;
+					int br = (server->color_topbar_bg >> 16) & 0xFF,
+						bg = (server->color_topbar_bg >> 8) & 0xFF,
+						bb = server->color_topbar_bg & 0xFF;
+					int r2r = (server->color_topbar_bg2 >> 16) & 0xFF,
+						r2g = (server->color_topbar_bg2 >> 8) & 0xFF,
+						r2b = server->color_topbar_bg2 & 0xFF;
+					int dl = (lr > br ? lr - br : br - lr) +
+						(lg > bg ? lg - bg : bg - lg) +
+						(lb > bb ? lb - bb : bb - lb);
+					int dr = (rr > r2r ? rr - r2r : r2r - rr) +
+						(rg > r2g ? rg - r2g : r2g - rg) +
+						(rb > r2b ? rb - r2b : r2b - rb);
+					if (dl > 24 || dr > 24) {
+						wlr_log(WLR_ERROR,
+							"topbar-test: FAIL gradient edges (left %02x%02x%02x want %02x%02x%02x, right %02x%02x%02x want %02x%02x%02x)",
+							lr, lg, lb, br, bg, bb,
+							rr, rg, rb, r2r, r2g, r2b);
+						wlr_buffer_end_data_ptr_access(o->topbar_buffer);
+						return 0;
+					}
+					if (left == right) {
+						wlr_log(WLR_ERROR,
+							"topbar-test: FAIL gradient flat (left == right %02x%02x%02x)",
+							lr, lg, lb);
+						wlr_buffer_end_data_ptr_access(o->topbar_buffer);
+						return 0;
+					}
+					wlr_log(WLR_INFO,
+						"topbar-test: gradient OK (left %02x%02x%02x, right %02x%02x%02x)",
+						lr, lg, lb, rr, rg, rb);
+				}
+				wlr_buffer_end_data_ptr_access(o->topbar_buffer);
 			}
 		}
 		/* test hook: GUIBUX_TEST_TOPBAR_DISABLED=volume,battery — the

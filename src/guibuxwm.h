@@ -29,6 +29,9 @@
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_xdg_activation_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
+#include <wlr/types/wlr_text_input_v3.h>
+#include <wlr/types/wlr_fractional_scale_v1.h>
+#include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/xwayland.h>
 #endif
 
@@ -720,6 +723,11 @@ struct guibux_server {
 	struct wlr_xdg_output_manager_v1 *xdg_output_manager;
 	struct wlr_xwayland *xwayland;
 	struct wl_listener new_xwayland_surface;
+	struct wlr_text_input_manager_v3 *text_input_manager;
+	struct wl_listener text_input_new;
+	struct wlr_fractional_scale_manager_v1 *fractional_scale_manager;
+	struct wlr_relative_pointer_manager_v1 *relative_pointer_manager;
+	struct wl_listener relative_pointer_new;
 	struct wl_list toplevels;
 
 	struct wlr_cursor *cursor;
@@ -767,6 +775,8 @@ struct guibux_server {
 	int num_keybinds;
 	uint32_t color_bg, color_border, color_highlight, color_text, color_dim;
 	uint32_t color_topbar_bg, color_topbar_text;
+	uint32_t color_topbar_bg2;
+	int topbar_gradient;
 	struct output_placement placements[MAX_OUTPUT_PLACEMENTS];
 	int num_placements;
 	char *outputs_spec;  /* config `outputs` key; NULL = GUIBUX_OUTPUTS env */
@@ -1154,6 +1164,12 @@ void server_new_keyboard(struct guibux_server *server, struct wlr_input_device *
 void keyboard_handle_modifiers(struct wl_listener *listener, void *data);
 void keyboard_handle_key(struct wl_listener *listener, void *data);
 void keyboard_handle_destroy(struct wl_listener *listener, void *data);
+void text_input_handle_new(struct wl_listener *listener, void *data);
+void text_input_set_focus(struct guibux_server *server, struct wlr_surface *surface);
+void relative_pointer_handle_new(struct wl_listener *listener, void *data);
+void relative_pointer_send_motion(struct guibux_server *server,
+		struct wlr_seat *seat, uint32_t time_msec, double delta_x,
+		double delta_y, double delta_unaccel_x, double delta_unaccel_y);
 bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym, uint32_t modifiers);
 void do_action(struct guibux_server *server, enum guibux_action action, int arg, struct guibux_toplevel *toplevel);
 void keybinds_defaults(struct guibux_server *server);

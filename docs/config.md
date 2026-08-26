@@ -19,7 +19,7 @@ Send `SIGHUP` to the compositor process (`kill -HUP $(pidof guibuxwm)`) or
 bind the `reload-config` action to a key (e.g. `keybind = Mod+Shift+c:
 reload-config`) to re-read the config file without a restart.
 
-Reloaded live: colors, `topbar_height`/`topbar_font_size`/`topbar_win_pad`/`topbar_items`,
+Reloaded live: colors, `topbar_height`/`topbar_font_size`/`topbar_win_pad`/`topbar_items`/`topbar_gradient`,
 keybinds, `term`/`term_app_id`, backgrounds (`background`, `background1..4`,
 `background_scale`), `screensaver_timeout`, `lock_on_idle`, `focus_follow_mouse`, `effects*`,
 `osd*`, `restore_positions`, `outputs`, overview colors, `icon_theme`,
@@ -268,6 +268,34 @@ Topbar text color (monitor letter, workspaces, date/time).
 
 ```
 topbar_text = #1e1e2e
+```
+
+---
+
+### `topbar_bg2`
+
+Topbar gradient end color (right side). Used when `topbar_gradient` is `1`.
+
+**Default:** same as `topbar_bg`
+
+**Example:**
+
+```
+topbar_bg2 = #6a2fd8
+```
+
+---
+
+### `topbar_gradient`
+
+Enable a left-to-right gradient on the topbar background, from `topbar_bg` to `topbar_bg2`.
+
+**Default:** `0` (solid)
+
+**Example:**
+
+```
+topbar_gradient = 1
 ```
 
 ---

@@ -39,6 +39,7 @@
 - **Battery indicator** (UPower): `BAT NN%` with a hover tooltip showing the time estimate; the text turns red at 20% or below and orange at 50% or below (discharging only — charging stays the normal color); a battery icon reflects the charge level
 - **Network indicator**: per-interface labels with a network icon from the icon theme
 - **Configurable topbar items** (`topbar_items`): the right-side indicators (network, volume, mic, battery, notifications, clock) can be enabled, disabled or reordered per config; live-reloadable via SIGHUP
+- **Topbar gradient** (`topbar_gradient` + `topbar_bg2`): optional left-to-right gradient on the topbar background, from `topbar_bg` to `topbar_bg2`; live-reloadable via SIGHUP
 - **Topbar items panel** (`Mod+l`): a popup listing all six indicators with an on/off column; `d` or Enter toggles the selected row, changes apply live to every topbar immediately
 
 ## Workspaces

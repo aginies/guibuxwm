@@ -59,17 +59,19 @@ keybind = Mod+Shift+Left: move-monitor-left
 keybind = Mod+Shift+Right: move-monitor-right
 keybind = Mod+Left: snap-left
 keybind = Mod+Right: snap-right
-keybind = Mod+Shift+Up: snap-top
-keybind = Mod+Shift+Down: snap-bottom
+keybind = Mod+Ctrl+Shift+Up: snap-top
+keybind = Mod+Ctrl+Shift+Down: snap-bottom
 keybind = Mod+Up: fullscreen
 keybind = Mod+Shift+q: quit
 keybind = Alt+Escape: quit
 keybind = Mod+Alt+Escape: quit
-keybind = Ctrl+Alt+Left: switch-ws-left
-keybind = Ctrl+Alt+Right: switch-ws-right
+keybind = Mod+Ctrl+Left: switch-ws-left
+keybind = Mod+Ctrl+Right: switch-ws-right
 keybind = Mod+h: show-help
+keybind = Mod+m: outputs-panel
 keybind = Mod+p: power
 keybind = Mod+l: topbar-items
+keybind = Mod+Shift+l: lock
 
 # audio (media keys XF86AudioRaiseVolume/LowerVolume/Mute/MicMute also
 # work without any binding; topbar: scroll adjusts, left click mutes,
@@ -91,6 +93,9 @@ color_dim = #8888aa
 # topbar (openSUSE green)
 topbar_bg = #8839ef
 topbar_text = #1e1e2e
+# topbar gradient (left to right): end color + enable flag
+#topbar_bg2 = #6a2fd8
+#topbar_gradient = 1
 
 # topbar height in pixels (default: 24)
 topbar_height = 30
