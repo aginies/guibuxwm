@@ -1523,7 +1523,7 @@ int topbar_tick(void *data) {
 	tooltip_tick(server);
 	preview_tick(server);
 	osd_tick(server);
-	wl_event_source_timer_update(server->topbar_timer, 500);
+	wl_event_source_timer_update(server->topbar_timer, 1000);
 	return 0;
 }
 
