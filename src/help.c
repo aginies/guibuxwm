@@ -8,40 +8,94 @@
 
 #define HELP_LINE_H 24
 #define HELP_PAD 12
-#define HELP_MAX_LINES 32
 #define HELP_BOX_W 560
+#define HELP_MAX_LINES NUM_KEYBINDS
 
-static const char *action_name(enum guibux_action action, int arg) {
+/* section order in the help overlay; a section is shown only when it has
+ * at least one bound keybind. Audio (volume/mute/mic) is intentionally
+ * not listed */
+enum help_section {
+	HELP_SEC_WINDOWS = 0,
+	HELP_SEC_WORKSPACES,
+	HELP_SEC_SNAP,
+	HELP_SEC_DISPLAY,
+	HELP_SEC_SYSTEM,
+	HELP_SEC_COUNT,
+};
+
+static const char *help_section_names[HELP_SEC_COUNT] = {
+	"WINDOWS",
+	"WORKSPACES",
+	"SNAP",
+	"DISPLAY",
+	"SYSTEM",
+};
+
+static enum help_section action_section(enum guibux_action action) {
 	switch (action) {
-	case GUIBUX_ACT_TERMINAL:      return "terminal";
-	case GUIBUX_ACT_CLOSE:         return "close";
-	case GUIBUX_ACT_FULLSCREEN:    return "fullscreen";
-	case GUIBUX_ACT_TILE:          return "tile";
-	case GUIBUX_ACT_LAUNCHER:      return "launcher";
-	case GUIBUX_ACT_FOCUS_NEXT:    return "focus-next";
+	case GUIBUX_ACT_TERMINAL:
+	case GUIBUX_ACT_CLOSE:
+	case GUIBUX_ACT_FULLSCREEN:
+	case GUIBUX_ACT_TILE:
+	case GUIBUX_ACT_FOCUS_NEXT:
+	case GUIBUX_ACT_LAUNCHER:
+		return HELP_SEC_WINDOWS;
+	case GUIBUX_ACT_SWITCH_WS:
+	case GUIBUX_ACT_MOVE_WS:
+	case GUIBUX_ACT_SWITCH_WS_LEFT:
+	case GUIBUX_ACT_SWITCH_WS_RIGHT:
+	case GUIBUX_ACT_MOVE_MON_LEFT:
+	case GUIBUX_ACT_MOVE_MON_RIGHT:
+		return HELP_SEC_WORKSPACES;
+	case GUIBUX_ACT_SNAP_LEFT:
+	case GUIBUX_ACT_SNAP_RIGHT:
+	case GUIBUX_ACT_SNAP_TOP:
+	case GUIBUX_ACT_SNAP_BOTTOM:
+		return HELP_SEC_SNAP;
+	case GUIBUX_ACT_BRIGHTNESS_UP:
+	case GUIBUX_ACT_BRIGHTNESS_DOWN:
+		return HELP_SEC_DISPLAY;
+	case GUIBUX_ACT_VOLUME_UP:
+	case GUIBUX_ACT_VOLUME_DOWN:
+	case GUIBUX_ACT_MUTE:
+	case GUIBUX_ACT_MIC_UP:
+	case GUIBUX_ACT_MIC_DOWN:
+	case GUIBUX_ACT_MIC_MUTE:
+		/* audio is not shown in the help */
+		return HELP_SEC_COUNT;
+	default:
+		return HELP_SEC_SYSTEM;
+	}
+}
+
+static const char *action_label(enum guibux_action action, int arg) {
+	switch (action) {
+	case GUIBUX_ACT_TERMINAL:      return "new terminal";
+	case GUIBUX_ACT_CLOSE:         return "close window";
+	case GUIBUX_ACT_FULLSCREEN:    return "toggle fullscreen";
+	case GUIBUX_ACT_TILE:          return "cycle tile mode";
+	case GUIBUX_ACT_LAUNCHER:      return "command box";
+	case GUIBUX_ACT_FOCUS_NEXT:    return "cycle focus";
 	case GUIBUX_ACT_QUIT:          return "quit";
 	case GUIBUX_ACT_SWITCH_WS:     return "workspace";
-	case GUIBUX_ACT_MOVE_WS:       return "move-workspace";
-	case GUIBUX_ACT_MOVE_MON_LEFT: return "move-monitor-left";
-	case GUIBUX_ACT_MOVE_MON_RIGHT:return "move-monitor-right";
-	case GUIBUX_ACT_SNAP_LEFT:     return "snap-left";
-	case GUIBUX_ACT_SNAP_RIGHT:    return "snap-right";
-	case GUIBUX_ACT_SNAP_TOP:      return "snap-top";
-	case GUIBUX_ACT_SNAP_BOTTOM:   return "snap-bottom";
-	case GUIBUX_ACT_SWITCH_WS_LEFT: return "switch-ws-left";
-	case GUIBUX_ACT_SWITCH_WS_RIGHT: return "switch-ws-right";
-	case GUIBUX_ACT_SHOW_HELP:     return "show-help";
-	case GUIBUX_ACT_VOLUME_UP:     return "volume-up";
-	case GUIBUX_ACT_VOLUME_DOWN:   return "volume-down";
-	case GUIBUX_ACT_MUTE:          return "mute";
-	case GUIBUX_ACT_MIC_UP:        return "mic-up";
-	case GUIBUX_ACT_MIC_DOWN:      return "mic-down";
-	case GUIBUX_ACT_MIC_MUTE:      return "mic-mute";
-	case GUIBUX_ACT_BRIGHTNESS_UP: return "brightness-up";
-	case GUIBUX_ACT_BRIGHTNESS_DOWN: return "brightness-down";
-	case GUIBUX_ACT_OUTPUTS_APPLY:   return "outputs-apply";
-	case GUIBUX_ACT_OUTPUTS_PANEL:  return "outputs-panel";
-	case GUIBUX_ACT_POWER:          return "power";
+	case GUIBUX_ACT_MOVE_WS:       return "move to workspace";
+	case GUIBUX_ACT_MOVE_MON_LEFT: return "move window left";
+	case GUIBUX_ACT_MOVE_MON_RIGHT:return "move window right";
+	case GUIBUX_ACT_SNAP_LEFT:     return "snap left";
+	case GUIBUX_ACT_SNAP_RIGHT:    return "snap right";
+	case GUIBUX_ACT_SNAP_TOP:      return "snap top";
+	case GUIBUX_ACT_SNAP_BOTTOM:   return "snap bottom";
+	case GUIBUX_ACT_SWITCH_WS_LEFT: return "previous workspace";
+	case GUIBUX_ACT_SWITCH_WS_RIGHT: return "next workspace";
+	case GUIBUX_ACT_SHOW_HELP:     return "this help";
+	case GUIBUX_ACT_BRIGHTNESS_UP: return "brightness up";
+	case GUIBUX_ACT_BRIGHTNESS_DOWN: return "brightness down";
+	case GUIBUX_ACT_OUTPUTS_APPLY:   return "re-apply monitors";
+	case GUIBUX_ACT_OUTPUTS_PANEL:  return "monitor layout";
+	case GUIBUX_ACT_POWER:          return "power menu";
+	case GUIBUX_ACT_RELOAD_CONFIG:  return "reload config";
+	case GUIBUX_ACT_TOPBAR_ITEMS:   return "topbar items";
+	case GUIBUX_ACT_LOCK:           return "lock screen";
 	default:                       return "unknown";
 	}
 }
@@ -59,11 +113,11 @@ static void format_keybind(struct guibux_keybind *kb, char *out, int sz) {
 	char *k = keyname;
 	if (*k >= 'a' && *k <= 'z') *k = *k - 'a' + 'A';
 
-	const char *aname = action_name(kb->action, kb->arg);
+	const char *label = action_label(kb->action, kb->arg);
 	if (kb->action == GUIBUX_ACT_SWITCH_WS || kb->action == GUIBUX_ACT_MOVE_WS) {
-		snprintf(out, sz, "%s%s: %s %d", mods, k, aname, kb->arg);
+		snprintf(out, sz, "%s%s: %s %d", mods, k, label, kb->arg);
 	} else {
-		snprintf(out, sz, "%s%s: %s", mods, k, aname);
+		snprintf(out, sz, "%s%s: %s", mods, k, label);
 	}
 }
 
@@ -97,15 +151,24 @@ static void help_render(struct guibux_server *server) {
 
 	FT_Face face = server->launcher.face;
 	int font_px = LAUNCHER_FONT_PX * h->box_scale;
-	FT_Set_Pixel_Sizes(face, 0, font_px);
 
 	int count = h->num_lines < HELP_MAX_LINES ? h->num_lines : HELP_MAX_LINES;
 	for (int i = 0; i < count; i++) {
 		int ly = i * HELP_LINE_H * h->box_scale;
 		int lh = HELP_LINE_H * h->box_scale;
-		int mb = ly + lh / 2 + font_px * 35 / 100;
-		launcher_draw_text_on_surface(cs, face, h->lines[i],
-			HELP_PAD * h->box_scale, mb, server->color_text);
+		if (h->header[i]) {
+			/* section header: highlight color, slightly larger */
+			int hp = (font_px * 11) / 10;
+			FT_Set_Pixel_Sizes(face, 0, hp);
+			int mb = ly + lh / 2 + hp * 35 / 100;
+			launcher_draw_text_on_surface(cs, face, h->lines[i],
+				HELP_PAD * h->box_scale, mb, server->color_highlight);
+		} else {
+			FT_Set_Pixel_Sizes(face, 0, font_px);
+			int mb = ly + lh / 2 + font_px * 35 / 100;
+			launcher_draw_text_on_surface(cs, face, h->lines[i],
+				HELP_PAD * h->box_scale, mb, server->color_text);
+		}
 	}
 
 	cairo_destroy(cr);
@@ -134,10 +197,33 @@ void help_show(struct guibux_server *server) {
 	wlr_output_effective_resolution(output, &ew, &eh);
 	int scale = guibux_scale_round(output->scale);
 
+	/* bucket every keybind into its section (audio is skipped); a section
+	 * gets a header line the first time one of its binds is emitted */
+	bool section_open[HELP_SEC_COUNT] = { false };
 	h->num_lines = 0;
-	for (int i = 0; i < server->num_keybinds && h->num_lines < NUM_KEYBINDS; i++) {
-		format_keybind(&server->keybinds[i], h->lines[h->num_lines], sizeof(h->lines[0]));
-		h->num_lines++;
+	for (int sec = 0; sec < HELP_SEC_COUNT; sec++) {
+		for (int i = 0; i < server->num_keybinds; i++) {
+			struct guibux_keybind *kb = &server->keybinds[i];
+			if (action_section(kb->action) != sec) {
+				continue;
+			}
+			if (h->num_lines >= HELP_MAX_LINES) {
+				break;
+			}
+			if (!section_open[sec]) {
+				section_open[sec] = true;
+				snprintf(h->lines[h->num_lines], sizeof(h->lines[0]),
+					"%s", help_section_names[sec]);
+				h->header[h->num_lines] = 1;
+				h->num_lines++;
+				if (h->num_lines >= HELP_MAX_LINES) {
+					break;
+				}
+			}
+			format_keybind(kb, h->lines[h->num_lines], sizeof(h->lines[0]));
+			h->header[h->num_lines] = 0;
+			h->num_lines++;
+		}
 	}
 	if (h->num_lines == 0) return;
 

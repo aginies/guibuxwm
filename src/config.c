@@ -222,6 +222,8 @@ bool parse_keybind(struct guibux_server *server, const char *value) {
 		action = GUIBUX_ACT_RELOAD_CONFIG;
 	} else if (!strcmp(action_str, "topbar-items")) {
 		action = GUIBUX_ACT_TOPBAR_ITEMS;
+	} else if (!strcmp(action_str, "lock")) {
+		action = GUIBUX_ACT_LOCK;
 	} else {
 		wlr_log(WLR_ERROR, "config: bad keybind '%s' (unknown action '%s')",
 			value, action_str);
@@ -459,6 +461,9 @@ void load_config(struct guibux_server *server, const char *path) {
 		} else if (!strcmp(key, "screensaver_timeout")) {
 			screensaver_set_timeout(&server->screensaver, atoi(val));
 			wlr_log(WLR_INFO, "config: screensaver_timeout = %d", server->screensaver.timeout);
+		} else if (!strcmp(key, "lock_on_idle")) {
+			server->lock_on_idle = !strcmp(val, "true");
+			wlr_log(WLR_INFO, "config: lock_on_idle = %s", val);
 		} else if (!strcmp(key, "focus_follow_mouse")) {
 			server->focus_follow_mouse = !strcmp(val, "true");
 			wlr_log(WLR_INFO, "config: focus_follow_mouse = %s", val);

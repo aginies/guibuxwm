@@ -33,7 +33,7 @@ static const char *power_keys[POWER_COUNT] = {
 static const char *power_commands[POWER_COUNT] = {
 	"systemctl suspend",
 	"systemctl hibernate",
-	"guibuxwm-lock 2>/dev/null || loginctl lock-session",
+	NULL,  /* lock: handled in-process via lock_show() */
 	"loginctl terminate-session '$XDG_SESSION_ID' 2>/dev/null || "
 		"loginctl terminate-user '$USER'",
 	"systemctl reboot",
@@ -51,15 +51,20 @@ static void power_run(const char *cmd) {
 		execl("/bin/sh", "/bin/sh", "-c", cmd, (void *)NULL);
 		_exit(127);
 	}
+	/* track the child so the SIGCHLD handler reaps it; without this the
+	 * shell (and the systemctl/loginctl it runs) is never waitpid()'d and
+	 * lingers as a zombie, and the action silently does nothing */
+	spawn_track(pid);
 	wlr_log(WLR_INFO, "power: %s (pid %d)", cmd, pid);
 }
 
 /* which binaries back each action; an action is available when its
- * binary is on $PATH. Probed once, on the first panel show */
+ * binary is on $PATH. Probed once, on the first panel show. Lock is
+ * NULL: it runs in-process (lock_show) and needs no binary */
 static const char *power_binaries[POWER_COUNT] = {
 	"systemctl",  /* suspend   */
 	"systemctl",  /* hibernate */
-	"loginctl",   /* lock      */
+	NULL,         /* lock      */
 	"loginctl",   /* log out   */
 	"systemctl",  /* restart   */
 	"systemctl",  /* shut down */
@@ -74,6 +79,11 @@ static void power_probe(void) {
 	}
 	power_probed = true;
 	for (int i = 0; i < POWER_COUNT; i++) {
+		/* no binary = always available (in-process action) */
+		if (power_binaries[i] == NULL) {
+			power_avail[i] = true;
+			continue;
+		}
 		char cmd[128];
 		snprintf(cmd, sizeof(cmd), "command -v %s >/dev/null 2>&1",
 			power_binaries[i]);
@@ -244,6 +254,11 @@ void power_panel_select(struct guibux_server *server, int idx) {
 		return;
 	}
 	power_panel_hide(server);
+	if (idx == POWER_LOCK) {
+		/* in-process lock screen: PAM auth, no external helper */
+		lock_show(server);
+		return;
+	}
 	power_run(power_commands[idx]);
 }
 

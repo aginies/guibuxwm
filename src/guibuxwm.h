@@ -176,6 +176,7 @@ enum guibux_action {
 	GUIBUX_ACT_POWER,
 	GUIBUX_ACT_RELOAD_CONFIG,
 	GUIBUX_ACT_TOPBAR_ITEMS,
+	GUIBUX_ACT_LOCK,
 };
 
 struct guibux_keybind {
@@ -596,6 +597,9 @@ struct guibux_help {
 	int box_w, box_h, box_scale;
 	char lines[NUM_KEYBINDS][128];
 	int num_lines;
+	/* 1 = section header line (rendered in the highlight color, followed
+	 * by a spacer), 0 = keybind line */
+	int header[NUM_KEYBINDS];
 };
 
 struct guibux_outputs_panel {
@@ -638,6 +642,33 @@ struct guibux_topbar_items_panel {
 	struct wlr_buffer *buffer;
 	int box_w, box_h, box_scale;
 	int selected;
+};
+
+/* lock.c: full-screen lock overlay. One scene buffer per output, drawn
+ * over the desktop: background image, dim, clock, password dots.
+ * Password is verified with PAM; the buffer is zeroed on every hide */
+#define LOCK_PASSWORD_MAX 128
+#define LOCK_MAX_FAILS 5
+#define LOCK_LOCKOUT_MS 30000
+
+struct guibux_lock_output {
+	struct guibux_output *o;
+	struct wlr_scene_buffer *scene_node;
+	struct wlr_buffer *buffer;
+	int w, h, scale;
+};
+
+struct guibux_lock {
+	bool active;
+	char password[LOCK_PASSWORD_MAX];
+	int password_len;
+	char status[64];
+	int fail_count;
+	uint32_t fail_until_ms;
+	struct guibux_lock_output outs[MAX_OUTPUT_PLACEMENTS];
+	int num_outs;
+	time_t last_minute;
+	struct wl_event_source *tick;
 };
 
 struct guibux_launcher {
@@ -764,6 +795,7 @@ struct guibux_server {
 	struct wl_event_source *tooltip_test_timer;
 	struct wl_event_source *osd_test_timer;
 	struct wl_event_source *power_test_timer;
+	struct wl_event_source *lock_test_timer;
 	struct wl_event_source *topbar_items_test_timer;
 	struct wl_event_source *quit_test_timer;
 	struct wl_event_source *global_topbar_test_timer;
@@ -781,6 +813,8 @@ struct guibux_launcher launcher;
     struct guibux_osd osd;
     struct guibux_power_panel power_panel;
     struct guibux_topbar_items_panel topbar_items_panel;
+    struct guibux_lock lock;
+    bool lock_on_idle;
     /* auto-hide: a new notification pops the panel (like an indicator
 	 * click); it closes after a delay unless the user interacts with it.
 	 * The D-Bus worker thread writes to notify_pipe to wake the main loop */
@@ -1105,6 +1139,14 @@ int topbar_items_panel_row_at(struct guibux_server *server, double lx, double ly
 void topbar_items_panel_toggle(struct guibux_server *server, int idx);
 void topbar_items_panel_destroy(struct guibux_server *server);
 int topbar_items_panel_test_run(void *data);
+
+/* lock.c */
+void lock_show(struct guibux_server *server);
+void lock_hide(struct guibux_server *server);
+bool lock_handle_key(struct guibux_server *server, xkb_keysym_t sym);
+void lock_destroy(struct guibux_server *server);
+int lock_tick(void *data);
+int lock_test_run(void *data);
 
 /* keyboard.c */
 void server_new_input(struct wl_listener *listener, void *data);

@@ -478,6 +478,9 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 			topbar_items_panel_show(server);
 		}
 		break;
+	case GUIBUX_ACT_LOCK:
+		lock_show(server);
+		break;
 	}
 }
 
@@ -554,6 +557,8 @@ void keybinds_defaults(struct guibux_server *server) {
 		GUIBUX_ACT_POWER, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_l,
 		GUIBUX_ACT_TOPBAR_ITEMS, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_SHIFT, XKB_KEY_l,
+		GUIBUX_ACT_LOCK, 0);
 }
 
 bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
@@ -653,7 +658,11 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 		}
 
 		for (int i = 0; i < nsyms; i++) {
-			if (server->launcher.active) {
+			if (server->lock.active) {
+				/* the lock consumes every key: nothing may reach
+				 * a client while the screen is locked */
+				handled = lock_handle_key(server, syms[i]);
+			} else if (server->launcher.active) {
 				handled = launcher_handle_key(server, syms[i]);
 			} else if (server->switcher.active) {
 				handled = switcher_handle_key(server, syms[i]);

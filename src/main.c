@@ -123,6 +123,7 @@ int main(int argc, char *argv[]) {
 	server.topbar_item_count = TOPBAR_ITEMS_MAX;
 	server.background_scale = BG_FILL;
 	server.screensaver.timeout = 300;
+	server.lock_on_idle = true;
 	server.focus_follow_mouse = true;
 	server.effects_enabled = true;
 	server.effects_duration_ms = 200;
@@ -489,6 +490,17 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.power_test_timer, 2000);
 	}
 
+	const char *lock_test = getenv("GUIBUX_TEST_LOCK");
+	if (lock_test != NULL) {
+		server.lock.tick = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			lock_tick, &server);
+		server.lock_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			lock_test_run, &server);
+		wl_event_source_timer_update(server.lock_test_timer, 2000);
+	}
+
 	const char *topbar_items_test = getenv("GUIBUX_TEST_TOPBAR_ITEMS");
 	if (topbar_items_test != NULL) {
 		server.topbar_items_test_timer = wl_event_loop_add_timer(
@@ -622,6 +634,7 @@ int main(int argc, char *argv[]) {
 	osd_destroy(&server);
 	power_panel_destroy(&server);
 	topbar_items_panel_destroy(&server);
+	lock_destroy(&server);
 	screensaver_destroy(&server);
 	if (server.notify_autohide_timer != NULL) {
 		wl_event_source_remove(server.notify_autohide_timer);
@@ -682,6 +695,9 @@ int main(int argc, char *argv[]) {
 	}
 	if (server.power_test_timer != NULL) {
 		wl_event_source_remove(server.power_test_timer);
+	}
+	if (server.lock_test_timer != NULL) {
+		wl_event_source_remove(server.lock_test_timer);
 	}
 	if (server.topbar_items_test_timer != NULL) {
 		wl_event_source_remove(server.topbar_items_test_timer);

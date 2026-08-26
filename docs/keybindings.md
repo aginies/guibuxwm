@@ -47,6 +47,7 @@ At least one modifier is required:
 | `outputs-apply` | Re-apply the `outputs` config (monitor layout) without a restart |
 | `outputs-panel` | Open the monitor layout panel (`Mod+m`) |
 | `power` | Open the power menu (`Mod+p`): Suspend, Hibernate, Lock, Log out, Restart, Shut down |
+| `lock` | Lock the screen: full-screen overlay with clock and password entry (PAM auth); all input is consumed until the password is accepted |
 | `topbar-items` | Open the topbar items panel (`Mod+l`): enable/disable and reorder the right-side indicators; `d` or Enter toggles the selected row, `Esc` closes |
 | `reload-config` | Re-read the config file live (colors, keybinds, topbar, backgrounds, outputs, screensaver); `renderer` and `xkb_*` require a restart |
 | `volume-up` | Raise default sink volume by 5% |
@@ -80,6 +81,7 @@ At least one modifier is required:
 | `Mod+h` | Show the keybinding help overlay |
 | `Mod+m` | Open the monitor layout panel |
 | `Mod+p` | Open the power menu (Suspend, Hibernate, Lock, Log out, Restart, Shut down) |
+| `Mod+Shift+l` | Lock the screen (clock + password entry, PAM auth) |
 | `Mod+l` | Open the topbar items panel (enable/disable indicators, `d` toggles) |
 | `Mod+Shift+q` | Quit |
 | `Alt+Escape` | Quit |

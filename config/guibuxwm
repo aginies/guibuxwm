@@ -123,6 +123,10 @@ background = /home/aginies/Pictures/Emission_nebulae_in_Cassiopeia.jpg
 # screensaver timeout in seconds (0 = disabled, default: 300)
 screensaver_timeout = 300
 
+# lock the screen on the idle timeout, before the screensaver turns the
+# monitors off (true = enabled, false = manual lock only; default: true)
+lock_on_idle = true
+
 # focus follows mouse: keyboard focus changes when cursor enters a window
 # (true = enabled, false = click-to-focus only; default: true)
 focus_follow_mouse = true

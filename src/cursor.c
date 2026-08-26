@@ -72,9 +72,14 @@ static void process_cursor_resize(struct guibux_server *server) {
 	toplevel_set_size(toplevel, new_width, new_height);
 }
 
-void process_cursor_motion(struct guibux_server *server, uint32_t time) {
+	void process_cursor_motion(struct guibux_server *server, uint32_t time) {
 	/* an overview press becomes a drag once the pointer moves far
 	 * enough; the window then follows the cursor until release */
+	if (server->lock.active) {
+		/* no pointer focus or cursor changes while locked */
+		wlr_seat_pointer_clear_focus(server->seat);
+		return;
+	}
 	if (server->overview.active && server->overview.drag_toplevel != NULL &&
 			!server->overview.drag_active) {
 		double dx = server->cursor->x - server->overview.drag_press_x;
@@ -201,6 +206,12 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 		wl_container_of(listener, server, cursor_button);
 	struct wlr_pointer_button_event *event = data;
 	screensaver_notify_activity(server);
+	if (server->lock.active) {
+		/* the lock consumes all pointer input: no click may reach a
+		 * client while the screen is locked */
+		server->button_consumed = event->button;
+		return;
+	}
 	if (server->launcher.active &&
 			event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
 		server->button_consumed = event->button;

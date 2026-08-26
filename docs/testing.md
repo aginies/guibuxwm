@@ -87,6 +87,24 @@ toplevels, verifies the configured sizes for the given mode, closes one
 window and verifies the re-pack, then fullscreens a window and verifies it
 returns to its tile slot.
 
+## GUIBUX_TEST_LOCK
+
+`GUIBUX_TEST_LOCK=1` verifies the lock screen ~2s after start: the overlay
+is shown on every output with a valid buffer, typing appends and backspace
+removes (including multi-byte UTF-8 as a unit), Esc does not unlock, and
+hiding clears the password. If `GUIBUX_TEST_LOCK_PASSWORD` is set (and PAM
+is available at build time), it also verifies that a wrong password is
+rejected (`fail_count` increments, still locked) and the correct password
+unlocks. Logs `lock-test: OK` on success. No client needed:
+
+```sh
+GUIBUX_OUTPUTS= GUIBUX_TEST_LOCK=1 GUIBUX_TERM=true WLR_RENDERER=gles2 \
+  ./build/guibuxwm
+# with PAM auth verification:
+GUIBUX_TEST_LOCK_PASSWORD="s3cret" GUIBUX_OUTPUTS= GUIBUX_TEST_LOCK=1 \
+  GUIBUX_TERM=true WLR_RENDERER=gles2 ./build/guibuxwm
+```
+
 ## GUIBUX_TEST_TOPBAR
 
 `GUIBUX_TEST_TOPBAR=1` verifies the topbars shortly after start (one bar per
@@ -253,6 +271,8 @@ Test clients are built by the main build and live in `tests/`:
 | `GUIBUX_TEST_EXTRA_OUTPUTS=N` | Force N+1 virtual 1280x720 outputs |
 | `GUIBUX_TEST_LAUNCHER_CMD="cmd"` | Type `cmd` in the launcher headlessly; also probes icon resolution for the selected match |
 | `GUIBUX_TEST_TILE_MODE=N` | Set tile mode (0=free, 1=split, 2=main+stack) |
+| `GUIBUX_TEST_LOCK=1` | Verify lock screen (overlay, typing, PAM auth if password set) |
+| `GUIBUX_TEST_LOCK_PASSWORD="pw"` | PAM auth verification for the lock test |
 | `GUIBUX_TEST_TOPBAR=1` | Verify topbars after start |
 | `GUIBUX_TEST_AUDIO=1` | Verify audio poll + VOL/MIC indicators |
 | `GUIBUX_TEST_BATTERY=1` | Verify battery poll (UPower) + topbar indicator |

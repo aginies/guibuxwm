@@ -98,3 +98,7 @@
 ## Power Menu
 
 - **Power menu** (`Mod+p`): a centered list of system actions — Suspend, Hibernate, Lock, Log out, Restart, Shut down — driven by keyboard (Up/Down/Enter, or the letter shortcut) or mouse (click a row); each action runs the matching `systemctl`/`loginctl` command
+
+## Lock Screen
+
+- **Lock screen** (`Mod+Shift+l`, or the power menu's Lock action): a full-screen overlay on every monitor showing the desktop wallpaper (dimmed), the current time and date, and password dots as you type. All keyboard and pointer input is consumed — no key or click reaches a client window. The password is verified with PAM (`pam_authenticate`); without PAM at build time it falls back to `loginctl lock-session`. After 5 failed attempts a 30s lockout counts down on screen. The topbar is hidden while locked so no clock/battery/network info is visible. The screen locks automatically on the idle timeout (config `lock_on_idle`) before the screensaver turns the monitors off, so the desktop is never visible without authentication on wake

@@ -35,6 +35,16 @@ Config file at `~/.config/guibuxwm/config` (sample in [`config/guibuxwm`](config
 
 See [Configuration](docs/config.md) for the full reference.
 
+## Lock Screen
+
+The lock screen (`Mod+Shift+l`) authenticates via PAM. A PAM config file is required — without it PAM falls back to `/etc/pam.d/other` (empty) and every password is rejected.
+
+Install it once (as root):
+
+```sh
+sudo cp config/etc/pam.d/guibuxwm /etc/pam.d/guibuxwm
+```
+
 ## Testing
 
 ```sh

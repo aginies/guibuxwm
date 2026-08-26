@@ -65,7 +65,8 @@ static bool is_inhibited(struct guibux_screensaver *ss) {
 static bool ui_active(struct guibux_server *server) {
 	return server->launcher.active ||
 		server->switcher.active ||
-		server->help.active;
+		server->help.active ||
+		server->lock.active;
 }
 
 void screensaver_notify_activity(struct guibux_server *server) {
@@ -142,6 +143,11 @@ static int screensaver_timer_cb(void *data) {
 		return 0;
 	}
 
+	/* lock before the screensaver turns the screens off: on wake the
+	 * desktop must not be visible without authentication */
+	if (server->lock_on_idle) {
+		lock_show(server);
+	}
 	screensaver_turn_off(server);
 	return 0;
 }

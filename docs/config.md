@@ -21,7 +21,7 @@ reload-config`) to re-read the config file without a restart.
 
 Reloaded live: colors, `topbar_height`/`topbar_font_size`/`topbar_win_pad`/`topbar_items`,
 keybinds, `term`/`term_app_id`, backgrounds (`background`, `background1..4`,
-`background_scale`), `screensaver_timeout`, `focus_follow_mouse`, `effects*`,
+`background_scale`), `screensaver_timeout`, `lock_on_idle`, `focus_follow_mouse`, `effects*`,
 `osd*`, `restore_positions`, `outputs`, overview colors, `icon_theme`,
 `preferred_app1..5`.
 
@@ -390,6 +390,22 @@ Screensaver timeout in seconds. `0` = disabled.
 
 ```
 screensaver_timeout = 600
+```
+
+---
+
+### `lock_on_idle`
+
+Lock the screen on the idle timeout (before the screensaver turns the monitors off), so the desktop is never visible without authentication on wake.
+
+`true` = enabled, `false` = manual lock only (`Mod+Shift+l` or the power menu).
+
+**Default:** `true`
+
+**Example:**
+
+```
+lock_on_idle = false
 ```
 
 ---
