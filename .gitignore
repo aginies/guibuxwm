@@ -7,10 +7,10 @@ build/
 .env
 .gitconfig
 .gitmodules
-.idea/
+.idea
 .mcp.json
 .profile
 .ripgreprc
-.vscode/
+.vscode
 .zprofile
 .zshrc
