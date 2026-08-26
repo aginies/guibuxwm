@@ -1058,10 +1058,35 @@ sysinfo_update_battery(struct guibux_sysinfo *si)
 }
 
 /*
+ * Parse combined "pactl get-<sink|source>-volume X; pactl
+ * get-<sink|source>-mute X" output for the volume percent and the
+ * mute flag. The volume line carries "NN%", the mute line "Mute:
+ * yes|no"; either may be left untouched when its value is absent.
+ */
+static void
+parse_volume_output(const char *out, int *volume, bool *muted)
+{
+    if (volume) {
+        int v = parse_percent(out);
+        if (v >= 0) {
+            *volume = v;
+        }
+    }
+    if (muted) {
+        const char *m = strstr(out, "Mute:");
+        if (m) {
+            *muted = (strstr(m, "yes") != NULL);
+        }
+    }
+}
+
+/*
  * Update sink/source (mic) volume + mute via pactl. Works with
  * PulseAudio and PipeWire (pulse compat). A failed read leaves the
  * previous values untouched; audio_available stays false until the
  * first successful read (no audio on the system -> indicator hidden).
+ * Two calls total: each combines the volume and mute queries for one
+ * device into a single fork+exec (was four).
  */
 static void
 sysinfo_update_audio(struct guibux_sysinfo *si)
@@ -1069,30 +1094,20 @@ sysinfo_update_audio(struct guibux_sysinfo *si)
     int volume = -1, mic_volume = -1;
     bool muted = false, mic_muted = false;
 
-    char *out = run_capture("pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null");
+    char *out = run_capture(
+        "pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null; "
+        "pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null");
     if (out) {
-        volume = parse_percent(out);
+        parse_volume_output(out, &volume, &muted);
         free(out);
-    }
-    if (volume >= 0) {
-        out = run_capture("pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null");
-        if (out) {
-            muted = (strstr(out, "Mute: yes") != NULL);
-            free(out);
-        }
     }
 
-    out = run_capture("pactl get-source-volume @DEFAULT_SOURCE@ 2>/dev/null");
+    out = run_capture(
+        "pactl get-source-volume @DEFAULT_SOURCE@ 2>/dev/null; "
+        "pactl get-source-mute @DEFAULT_SOURCE@ 2>/dev/null");
     if (out) {
-        mic_volume = parse_percent(out);
+        parse_volume_output(out, &mic_volume, &mic_muted);
         free(out);
-    }
-    if (mic_volume >= 0) {
-        out = run_capture("pactl get-source-mute @DEFAULT_SOURCE@ 2>/dev/null");
-        if (out) {
-            mic_muted = (strstr(out, "Mute: yes") != NULL);
-            free(out);
-        }
     }
 
     int brightness = -1;
