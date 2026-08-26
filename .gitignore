@@ -1,1 +1,16 @@
 build/
+
+# personal dotfiles and editor/tooling state
+.bash_profile
+.bashrc
+.claude/
+.env
+.gitconfig
+.gitmodules
+.idea/
+.mcp.json
+.profile
+.ripgreprc
+.vscode/
+.zprofile
+.zshrc
