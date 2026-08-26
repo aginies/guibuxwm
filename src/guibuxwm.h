@@ -204,8 +204,14 @@ struct guibux_net_iface {
 
 struct guibux_sysinfo {
     DBusConnection *system_bus;
+    DBusConnection *session_bus;
+    bool pulse_available;
     bool nm_available;
     bool upower_available;
+    /* set by the NM Properties.Changed signal handler; the worker
+     * polls network state only when this is true (or on the periodic
+     * fallback), so an idle desktop does zero D-Bus network work */
+    bool net_dirty;
     char network[64];
     struct guibux_net_iface net_ifaces[NET_IFACES_MAX];
     int net_iface_count;

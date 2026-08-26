@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <dirent.h>
 #include <sys/wait.h>
 #include <arpa/inet.h>
 
@@ -40,6 +41,10 @@ static const char *NM_WIFI_IFACE = "org.freedesktop.NetworkManager.Device.Wirele
 /* D-Bus timeout in milliseconds */
 #define DBUS_TIMEOUT_MS 3000
 #define SYSINFO_INTERVAL_SEC 5
+/* how often to re-poll network state even without an NM change signal
+ * (fallback for missed signals); battery/audio still use
+ * SYSINFO_INTERVAL_SEC */
+#define NET_POLL_FALLBACK_SEC 30
 
 /*
  * Run a command through /bin/sh and capture its stdout.
@@ -140,197 +145,6 @@ dbus_properties_get(DBusConnection *conn, const char *service,
         conn, msg, DBUS_TIMEOUT_MS, err);
     dbus_message_unref(msg);
     return reply;
-}
-
-/*
- * Get a D-Bus property as uint32.
- */
-static dbus_uint32_t
-dbus_get_property_uint32(DBusConnection *conn, const char *service,
-                          const char *object_path,
-                          const char *interface, const char *property,
-                          DBusError *err)
-{
-    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
-        interface, property, err);
-    if (!reply) {
-        return 0;
-    }
-
-    DBusMessageIter iter, variant;
-    dbus_message_iter_init(reply, &iter);
-    dbus_message_iter_recurse(&iter, &variant);
-
-    dbus_uint32_t val = 0;
-    dbus_uint32_t type = dbus_message_iter_get_arg_type(&variant);
-    if (type == DBUS_TYPE_UINT32) {
-        dbus_message_iter_get_basic(&variant, &val);
-    } else if (type == DBUS_TYPE_BYTE) {
-        unsigned char byte_val = 0;
-        dbus_message_iter_get_basic(&variant, &byte_val);
-        val = byte_val;
-    } else if (type == DBUS_TYPE_UINT16) {
-        dbus_uint16_t uint16_val = 0;
-        dbus_message_iter_get_basic(&variant, &uint16_val);
-        val = uint16_val;
-    }
-
-    dbus_message_unref(reply);
-    return val;
-}
-
-/*
- * Get a D-Bus property as int64 (e.g. UPower TimeToEmpty/TimeToFull,
- * which newer UPower exposes as int64 instead of uint32).
- * Returns 0 on failure or type mismatch.
- */
-static int64_t
-dbus_get_property_int64(DBusConnection *conn, const char *service,
-                         const char *object_path,
-                         const char *interface, const char *property,
-                         DBusError *err)
-{
-    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
-        interface, property, err);
-    if (!reply) {
-        return 0;
-    }
-
-    DBusMessageIter iter, variant;
-    dbus_message_iter_init(reply, &iter);
-    dbus_message_iter_recurse(&iter, &variant);
-
-    int64_t val = 0;
-    dbus_uint32_t type = dbus_message_iter_get_arg_type(&variant);
-    if (type == DBUS_TYPE_INT64) {
-        dbus_int64_t v;
-        dbus_message_iter_get_basic(&variant, &v);
-        val = v;
-    } else if (type == DBUS_TYPE_INT32) {
-        dbus_int32_t v;
-        dbus_message_iter_get_basic(&variant, &v);
-        val = v;
-    } else if (type == DBUS_TYPE_INT16) {
-        dbus_int16_t v;
-        dbus_message_iter_get_basic(&variant, &v);
-        val = v;
-    } else if (type == DBUS_TYPE_UINT32) {
-        dbus_uint32_t v;
-        dbus_message_iter_get_basic(&variant, &v);
-        val = v;
-    } else if (type == DBUS_TYPE_UINT16) {
-        dbus_uint16_t v;
-        dbus_message_iter_get_basic(&variant, &v);
-        val = v;
-    } else if (type == DBUS_TYPE_BYTE) {
-        unsigned char v;
-        dbus_message_iter_get_basic(&variant, &v);
-        val = v;
-    }
-
-    dbus_message_unref(reply);
-    return val;
-}
-
-/*
- * Get a D-Bus property as double (e.g. UPower Percentage).
- * Returns -1 on failure or type mismatch.
- */
-static double
-dbus_get_property_double(DBusConnection *conn, const char *service,
-                          const char *object_path,
-                          const char *interface, const char *property,
-                          DBusError *err)
-{
-    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
-        interface, property, err);
-    if (!reply) {
-        return -1.0;
-    }
-
-    DBusMessageIter iter, variant;
-    dbus_message_iter_init(reply, &iter);
-    dbus_message_iter_recurse(&iter, &variant);
-
-    double val = -1.0;
-    if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_DOUBLE) {
-        dbus_message_iter_get_basic(&variant, &val);
-    }
-
-    dbus_message_unref(reply);
-    return val;
-}
-
-/*
- * Get a D-Bus property as string.
- */
-static char *
-dbus_get_property_string(DBusConnection *conn, const char *service,
-                          const char *object_path,
-                          const char *interface, const char *property,
-                          DBusError *err)
-{
-    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
-        interface, property, err);
-    if (!reply) {
-        return NULL;
-    }
-
-    DBusMessageIter iter, variant;
-    dbus_message_iter_init(reply, &iter);
-    dbus_message_iter_recurse(&iter, &variant);
-
-    char *result = NULL;
-    if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_STRING) {
-        const char *s = NULL;
-        dbus_message_iter_get_basic(&variant, &s);
-        result = strdup(s);
-    }
-
-    dbus_message_unref(reply);
-    return result;
-}
-
-/*
- * Get a D-Bus byte array property (e.g. SSID).
- * Returns newly allocated NUL-terminated string, or NULL.
- */
-static char *
-dbus_get_property_byte_array(DBusConnection *conn, const char *service,
-                               const char *object_path,
-                               const char *interface, const char *property,
-                               DBusError *err)
-{
-    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
-        interface, property, err);
-    if (!reply) {
-        return NULL;
-    }
-
-    DBusMessageIter iter, variant, arr;
-    dbus_message_iter_init(reply, &iter);
-    dbus_message_iter_recurse(&iter, &variant);
-
-    char *result = NULL;
-    if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_ARRAY) {
-        dbus_message_iter_recurse(&variant, &arr);
-        char buf[256] = {0};
-        int len = 0;
-        while (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_BYTE &&
-               len < 255) {
-            unsigned char byte_val = 0;
-            dbus_message_iter_get_basic(&arr, &byte_val);
-            buf[len++] = byte_val;
-            dbus_message_iter_next(&arr);
-        }
-        buf[len] = '\0';
-        if (len > 0) {
-            result = strdup(buf);
-        }
-    }
-
-    dbus_message_unref(reply);
-    return result;
 }
 
 static void
@@ -448,76 +262,285 @@ dbus_call_path_array(DBusConnection *conn, const char *service,
 }
 
 /*
- * Get a D-Bus property as object path (e.g. NM IP4Config).
- * Returns newly allocated string, or NULL.
+ * Cache of all properties for one object, fetched with a single
+ * Properties.GetAll call instead of one Properties.Get per property.
+ * The variant iterators point into the reply message, which the cache
+ * owns; prop_cache_free() unrefs it.
  */
-static char *
-dbus_get_property_object_path(DBusConnection *conn, const char *service,
-                               const char *object_path,
-                               const char *interface, const char *property,
-                               DBusError *err)
+struct prop_cache {
+    struct {
+        const char *name;
+        DBusMessageIter variant;
+    } *props;
+    int count;
+    DBusMessage *reply;
+};
+
+static void
+prop_cache_free(struct prop_cache *c)
 {
-    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
-        interface, property, err);
-    if (!reply) {
-        return NULL;
+    if (!c->props) {
+        return;
+    }
+    for (int i = 0; i < c->count; i++) {
+        free((char *)c->props[i].name);
+    }
+    free(c->props);
+    c->props = NULL;
+    c->count = 0;
+    if (c->reply) {
+        dbus_message_unref(c->reply);
+        c->reply = NULL;
+    }
+}
+
+/*
+ * Fetch every property of an object (optionally restricted to one
+ * interface) in a single Properties.GetAll round-trip. Returns false
+ * on D-Bus error; the cache is left empty.
+ */
+static bool
+prop_cache_get_all(DBusConnection *conn, const char *service,
+                   const char *object_path, const char *interface,
+                   struct prop_cache *c, DBusError *err)
+{
+    memset(c, 0, sizeof(*c));
+    DBusMessage *msg = dbus_message_new_method_call(
+        service, object_path,
+        "org.freedesktop.DBus.Properties", "GetAll");
+    if (!msg) {
+        return false;
+    }
+    /* NULL interface = all interfaces; append_args takes the pointer
+     * to the string, so a NULL value would crash the UTF-8 check */
+    if (interface) {
+        dbus_message_append_args(msg,
+            DBUS_TYPE_STRING, &interface,
+            DBUS_TYPE_INVALID);
+    }
+    c->reply = dbus_connection_send_with_reply_and_block(
+        conn, msg, DBUS_TIMEOUT_MS, err);
+    dbus_message_unref(msg);
+    if (!c->reply) {
+        return false;
     }
 
-    DBusMessageIter iter, variant;
-    dbus_message_iter_init(reply, &iter);
-    dbus_message_iter_recurse(&iter, &variant);
+    DBusMessageIter iter, dict, val;
+    dbus_message_iter_init(c->reply, &iter);
+    if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_ARRAY) {
+        prop_cache_free(c);
+        return false;
+    }
+    dbus_message_iter_recurse(&iter, &iter);
+    int count = 0;
+    while (dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_DICT_ENTRY) {
+        count++;
+        dbus_message_iter_next(&iter);
+    }
+    c->props = calloc(count ? count : 1, sizeof(*c->props));
+    if (!c->props) {
+        prop_cache_free(c);
+        return false;
+    }
+    dbus_message_iter_init(c->reply, &iter);
+    dbus_message_iter_recurse(&iter, &iter);
+    int i = 0;
+    while (dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_DICT_ENTRY
+           && i < count) {
+        dbus_message_iter_recurse(&iter, &dict);
+        const char *name = NULL;
+        dbus_message_iter_get_basic(&dict, &name);
+        dbus_message_iter_next(&dict);
+        if (dbus_message_iter_get_arg_type(&dict) == DBUS_TYPE_VARIANT) {
+            dbus_message_iter_recurse(&dict, &val);
+        } else {
+            val = dict;
+        }
+        c->props[i].name = strdup(name ? name : "");
+        c->props[i].variant = val;
+        i++;
+        dbus_message_iter_next(&iter);
+    }
+    c->count = i;
+    return true;
+}
 
+/*
+ * Find a property in the cache. Returns NULL if absent.
+ */
+static DBusMessageIter *
+prop_cache_find(const struct prop_cache *c, const char *name)
+{
+    for (int i = 0; i < c->count; i++) {
+        if (strcmp(c->props[i].name, name) == 0) {
+            return &c->props[i].variant;
+        }
+    }
+    return NULL;
+}
+
+static dbus_uint32_t
+prop_cache_uint32(const struct prop_cache *c, const char *name)
+{
+    DBusMessageIter *v = prop_cache_find(c, name);
+    if (!v) {
+        return 0;
+    }
+    dbus_uint32_t val = 0;
+    dbus_uint32_t type = dbus_message_iter_get_arg_type(v);
+    if (type == DBUS_TYPE_UINT32) {
+        dbus_message_iter_get_basic(v, &val);
+    } else if (type == DBUS_TYPE_BYTE) {
+        unsigned char b = 0;
+        dbus_message_iter_get_basic(v, &b);
+        val = b;
+    } else if (type == DBUS_TYPE_UINT16) {
+        dbus_uint16_t u16 = 0;
+        dbus_message_iter_get_basic(v, &u16);
+        val = u16;
+    }
+    return val;
+}
+
+static int64_t
+prop_cache_int64(const struct prop_cache *c, const char *name)
+{
+    DBusMessageIter *v = prop_cache_find(c, name);
+    if (!v) {
+        return 0;
+    }
+    int64_t val = 0;
+    dbus_uint32_t type = dbus_message_iter_get_arg_type(v);
+    if (type == DBUS_TYPE_INT64) {
+        dbus_int64_t x;
+        dbus_message_iter_get_basic(v, &x);
+        val = x;
+    } else if (type == DBUS_TYPE_INT32) {
+        dbus_int32_t x;
+        dbus_message_iter_get_basic(v, &x);
+        val = x;
+    } else if (type == DBUS_TYPE_INT16) {
+        dbus_int16_t x;
+        dbus_message_iter_get_basic(v, &x);
+        val = x;
+    } else if (type == DBUS_TYPE_UINT32) {
+        dbus_uint32_t x;
+        dbus_message_iter_get_basic(v, &x);
+        val = x;
+    } else if (type == DBUS_TYPE_UINT16) {
+        dbus_uint16_t x;
+        dbus_message_iter_get_basic(v, &x);
+        val = x;
+    } else if (type == DBUS_TYPE_BYTE) {
+        unsigned char x;
+        dbus_message_iter_get_basic(v, &x);
+        val = x;
+    }
+    return val;
+}
+
+static double
+prop_cache_double(const struct prop_cache *c, const char *name)
+{
+    DBusMessageIter *v = prop_cache_find(c, name);
+    if (!v) {
+        return -1.0;
+    }
+    double val = -1.0;
+    if (dbus_message_iter_get_arg_type(v) == DBUS_TYPE_DOUBLE) {
+        dbus_message_iter_get_basic(v, &val);
+    }
+    return val;
+}
+
+static char *
+prop_cache_string(const struct prop_cache *c, const char *name)
+{
+    DBusMessageIter *v = prop_cache_find(c, name);
+    if (!v) {
+        return NULL;
+    }
     char *result = NULL;
-    if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_OBJECT_PATH) {
+    if (dbus_message_iter_get_arg_type(v) == DBUS_TYPE_STRING) {
+        const char *s = NULL;
+        dbus_message_iter_get_basic(v, &s);
+        result = strdup(s);
+    }
+    return result;
+}
+
+static char *
+prop_cache_byte_array(const struct prop_cache *c, const char *name)
+{
+    DBusMessageIter *v = prop_cache_find(c, name);
+    if (!v) {
+        return NULL;
+    }
+    char *result = NULL;
+    if (dbus_message_iter_get_arg_type(v) == DBUS_TYPE_ARRAY) {
+        DBusMessageIter arr = *v;
+        dbus_message_iter_recurse(&arr, &arr);
+        char buf[256] = {0};
+        int len = 0;
+        while (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_BYTE &&
+               len < 255) {
+            unsigned char b = 0;
+            dbus_message_iter_get_basic(&arr, &b);
+            buf[len++] = b;
+            dbus_message_iter_next(&arr);
+        }
+        if (len > 0) {
+            result = strdup(buf);
+        }
+    }
+    return result;
+}
+
+static char *
+prop_cache_object_path(const struct prop_cache *c, const char *name)
+{
+    DBusMessageIter *v = prop_cache_find(c, name);
+    if (!v) {
+        return NULL;
+    }
+    char *result = NULL;
+    if (dbus_message_iter_get_arg_type(v) == DBUS_TYPE_OBJECT_PATH) {
         const char *p = NULL;
-        dbus_message_iter_get_basic(&variant, &p);
+        dbus_message_iter_get_basic(v, &p);
         if (p && p[0] != '\0') {
             result = strdup(p);
         }
     }
-
-    dbus_message_unref(reply);
     return result;
 }
 
 /*
- * Get the first address from a D-Bus AddressData property (NM
- * IP4Config/IP6Config AddressData: aa{sv}, array of dicts with
- * "address" (s) and "prefix" (u)). Fills addr (4 or 16 bytes) and
- * sets *af to AF_INET or AF_INET6. Returns false on failure or empty
- * array.
+ * First address from a cached AddressData property (aa{sv} with
+ * "address" (s) entries). Fills addr (4 or 16 bytes), sets *af.
+ * Returns false on failure or empty array.
  */
 static bool
-dbus_get_property_first_address(DBusConnection *conn, const char *service,
-                                  const char *object_path,
-                                  const char *interface, const char *property,
-                                  void *addr, int *af, DBusError *err)
+prop_cache_first_address(const struct prop_cache *c, const char *name,
+                         void *addr, int *af)
 {
-    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
-        interface, property, err);
-    if (!reply) {
+    DBusMessageIter *v = prop_cache_find(c, name);
+    if (!v) {
         return false;
     }
-
-    DBusMessageIter iter, variant, arr, dict, val;
-    dbus_message_iter_init(reply, &iter);
-    dbus_message_iter_recurse(&iter, &variant);
-
     bool ok = false;
-    if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_ARRAY) {
-        /* AddressData is aa{sv}: the variant holds an array whose first
-         * element is the inner array of dict entries */
-        dbus_message_iter_recurse(&variant, &arr);
+    if (dbus_message_iter_get_arg_type(v) == DBUS_TYPE_ARRAY) {
+        DBusMessageIter arr = *v;
+        dbus_message_iter_recurse(&arr, &arr);
         if (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_ARRAY) {
             dbus_message_iter_recurse(&arr, &arr);
         }
         if (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_DICT_ENTRY) {
+            DBusMessageIter dict, val;
             dbus_message_iter_recurse(&arr, &dict);
             while (dbus_message_iter_get_arg_type(&dict) != DBUS_TYPE_INVALID) {
                 const char *key = NULL;
                 dbus_message_iter_get_basic(&dict, &key);
                 dbus_message_iter_next(&dict);
-                /* dict values are wrapped in a variant */
                 if (dbus_message_iter_get_arg_type(&dict) == DBUS_TYPE_VARIANT) {
                     dbus_message_iter_recurse(&dict, &val);
                 } else {
@@ -544,8 +567,65 @@ dbus_get_property_first_address(DBusConnection *conn, const char *service,
             }
         }
     }
+    return ok;
+}
 
-    dbus_message_unref(reply);
+/*
+ * DNS servers from a cached NameserverData property (aa{sv} with
+ * "address" (s) entries). Fills out (NUL-terminated, comma-separated).
+ * Returns false on failure or no DNS.
+ */
+static bool
+prop_cache_dns(const struct prop_cache *c, const char *name,
+               char *out, size_t out_size)
+{
+    DBusMessageIter *v = prop_cache_find(c, name);
+    if (!v) {
+        out[0] = '\0';
+        return false;
+    }
+    bool ok = false;
+    out[0] = '\0';
+    int len = 0;
+    if (dbus_message_iter_get_arg_type(v) == DBUS_TYPE_ARRAY) {
+        DBusMessageIter arr = *v;
+        dbus_message_iter_recurse(&arr, &arr);
+        if (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_ARRAY) {
+            dbus_message_iter_recurse(&arr, &arr);
+        }
+        while (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_DICT_ENTRY) {
+            DBusMessageIter dict, val;
+            dbus_message_iter_recurse(&arr, &dict);
+            while (dbus_message_iter_get_arg_type(&dict) != DBUS_TYPE_INVALID) {
+                const char *key = NULL;
+                dbus_message_iter_get_basic(&dict, &key);
+                dbus_message_iter_next(&dict);
+                if (dbus_message_iter_get_arg_type(&dict) == DBUS_TYPE_VARIANT) {
+                    dbus_message_iter_recurse(&dict, &val);
+                } else {
+                    val = dict;
+                }
+                if (key && strcmp(key, "address") == 0 &&
+                        dbus_message_iter_get_arg_type(&val) == DBUS_TYPE_STRING) {
+                    const char *s = NULL;
+                    dbus_message_iter_get_basic(&val, &s);
+                    len += snprintf(out + len, out_size - (size_t)len,
+                        "%s%s", len ? ", " : "", s);
+                    if (len >= (int)out_size - 1) {
+                        len = (int)out_size - 1;
+                        break;
+                    }
+                    ok = true;
+                    break;
+                }
+                dbus_message_iter_next(&dict);
+            }
+            dbus_message_iter_next(&arr);
+            if (len >= (int)out_size - 1) {
+                break;
+            }
+        }
+    }
     return ok;
 }
 
@@ -610,106 +690,6 @@ route_gateway(const char *iface, unsigned char *gw, int *af)
 }
 
 /*
- * Get the default gateway from a D-Bus Gateway property (NM
- * IP4Config/IP6Config Gateway: a plain string, possibly empty).
- * Returns false on failure or empty string.
- */
-static bool
-dbus_get_property_gateway(DBusConnection *conn, const char *service,
-                           const char *object_path,
-                           const char *interface,
-                           unsigned char *gw, int *af, DBusError *err)
-{
-    char *s = dbus_get_property_string(conn, service, object_path,
-        interface, "Gateway", err);
-    if (!s) {
-        return false;
-    }
-    bool ok = false;
-    struct in_addr a4;
-    struct in6_addr a6;
-    if (inet_pton(AF_INET, s, &a4) == 1) {
-        memcpy(gw, &a4, 4);
-        *af = AF_INET;
-        ok = true;
-    } else if (inet_pton(AF_INET6, s, &a6) == 1) {
-        memcpy(gw, &a6, 16);
-        *af = AF_INET6;
-        ok = true;
-    }
-    free(s);
-    return ok;
-}
-
-/*
- * Get the DNS servers from a D-Bus NameserverData property (NM
- * IP4Config/IP6Config NameserverData: aa{sv}, array of dicts with
- * "address" (s)). Fills out (NUL-terminated, comma-separated).
- * Returns false on failure or no DNS.
- */
-static bool
-dbus_get_property_dns(DBusConnection *conn, const char *service,
-                        const char *object_path,
-                        const char *interface, const char *property,
-                        char *out, size_t out_size, DBusError *err)
-{
-    DBusMessage *reply = dbus_properties_get(conn, service, object_path,
-        interface, property, err);
-    if (!reply) {
-        return false;
-    }
-
-    DBusMessageIter iter, variant, arr, dict, val;
-    dbus_message_iter_init(reply, &iter);
-    dbus_message_iter_recurse(&iter, &variant);
-
-    bool ok = false;
-    out[0] = '\0';
-    int len = 0;
-    if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_ARRAY) {
-        dbus_message_iter_recurse(&variant, &arr);
-        if (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_ARRAY) {
-            dbus_message_iter_recurse(&arr, &arr);
-        }
-        while (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_DICT_ENTRY) {
-            dbus_message_iter_recurse(&arr, &dict);
-            while (dbus_message_iter_get_arg_type(&dict) != DBUS_TYPE_INVALID) {
-                const char *key = NULL;
-                dbus_message_iter_get_basic(&dict, &key);
-                dbus_message_iter_next(&dict);
-                /* dict values are wrapped in a variant */
-                if (dbus_message_iter_get_arg_type(&dict) == DBUS_TYPE_VARIANT) {
-                    dbus_message_iter_recurse(&dict, &val);
-                } else {
-                    val = dict;
-                }
-                if (key && strcmp(key, "address") == 0 &&
-                        dbus_message_iter_get_arg_type(&val) == DBUS_TYPE_STRING) {
-                    const char *s = NULL;
-                    dbus_message_iter_get_basic(&val, &s);
-                    len += snprintf(out + len, out_size - (size_t)len,
-                        "%s%s", len ? ", " : "", s);
-                    if (len >= (int)out_size - 1) {
-                        len = (int)out_size - 1;
-                        break;
-                    }
-                    ok = true;
-                    break;
-                }
-                dbus_message_iter_next(&dict);
-            }
-            dbus_message_iter_next(&arr);
-            if (len >= (int)out_size - 1) {
-                break;
-            }
-        }
-    }
-
-    dbus_message_unref(reply);
-    return ok;
-}
-
-/*
  * Append a formatted string to the display buffer, clamped so the
  * result always fits and stays NUL-terminated.
  */
@@ -750,6 +730,8 @@ sysinfo_set_network(struct guibux_sysinfo *si, const char *s,
  * Update network status from NetworkManager via D-Bus.
  * Shows all connected interfaces (except loopback).
  * WiFi: "SSID 85%", Ethernet: "eth0", etc.
+ * One Properties.GetAll per object (device, wifi, ip config) instead
+ * of one Properties.Get per property.
  */
 static void
 sysinfo_update_network(struct guibux_sysinfo *si)
@@ -788,60 +770,52 @@ sysinfo_update_network(struct guibux_sysinfo *si)
     for (int i = 0; all_devices[i]; i++) {
         const char *dev_path = all_devices[i];
 
-        /* Get device type */
-        dbus_uint32_t dev_type = dbus_get_property_uint32(
-            si->system_bus, NM_SERVICE, dev_path,
-            NM_DEVICE_IFACE, "DeviceType", &err);
-        if (dbus_error_is_set(&err)) {
-            dbus_error_free(&err);
+        struct prop_cache dev;
+        if (!prop_cache_get_all(si->system_bus, NM_SERVICE, dev_path,
+                NM_DEVICE_IFACE, &dev, &err)) {
+            if (dbus_error_is_set(&err)) {
+                dbus_error_free(&err);
+            }
             continue;
         }
 
+        dbus_uint32_t dev_type = prop_cache_uint32(&dev, "DeviceType");
+
         /* Skip loopback (type 32) */
         if (dev_type == 32) {
+            prop_cache_free(&dev);
             continue;
         }
 
         /* Get device state - 110 = activated */
-        dbus_uint32_t dev_state = dbus_get_property_uint32(
-            si->system_bus, NM_SERVICE, dev_path,
-            NM_DEVICE_IFACE, "State", &err);
-        if (dbus_error_is_set(&err)) {
-            dbus_error_free(&err);
-            continue;
-        }
+        dbus_uint32_t dev_state = prop_cache_uint32(&dev, "State");
 
         /* Only show devices that are not disconnected (state >= 50) */
         if (dev_state < 50) {
+            prop_cache_free(&dev);
             continue;
         }
 
         any_connected = true;
 
-        /* Get interface name */
-        char *iface = dbus_get_property_string(si->system_bus, NM_SERVICE, dev_path,
-            NM_DEVICE_IFACE, "Interface", &err);
-        if (dbus_error_is_set(&err)) {
-            dbus_error_free(&err);
-            iface = NULL;
-        }
+        char *iface = prop_cache_string(&dev, "Interface");
 
         char label[64] = {0};
         if (dev_type == 2) {
-            /* WiFi: get SSID and signal */
-            char *ssid = dbus_get_property_byte_array(si->system_bus, NM_SERVICE, dev_path,
-                NM_WIFI_IFACE, "Ssid", &err);
-            if (dbus_error_is_set(&err)) {
+            /* WiFi: get SSID and signal from the Wireless interface */
+            struct prop_cache wifi;
+            char *ssid = NULL;
+            dbus_uint32_t strength = 0;
+            if (prop_cache_get_all(si->system_bus, NM_SERVICE, dev_path,
+                    NM_WIFI_IFACE, &wifi, &err)) {
+                if (dbus_error_is_set(&err)) {
+                    dbus_error_free(&err);
+                }
+                ssid = prop_cache_byte_array(&wifi, "Ssid");
+                strength = prop_cache_uint32(&wifi, "Strength");
+                prop_cache_free(&wifi);
+            } else {
                 dbus_error_free(&err);
-                ssid = NULL;
-            }
-
-            dbus_uint32_t strength = dbus_get_property_uint32(
-                si->system_bus, NM_SERVICE, dev_path,
-                NM_WIFI_IFACE, "Strength", &err);
-            if (dbus_error_is_set(&err)) {
-                dbus_error_free(&err);
-                strength = 0;
             }
 
             if (ssid && ssid[0] != '\0') {
@@ -872,61 +846,57 @@ sysinfo_update_network(struct guibux_sysinfo *si)
             snprintf(ni->label, sizeof(ni->label), "%s", label);
             ni->is_wifi = (dev_type == 2);
 
-            char *ipcfg = dbus_get_property_object_path(si->system_bus,
-                NM_SERVICE, dev_path, NM_DEVICE_IFACE, "Ip4Config", &err);
-            if (dbus_error_is_set(&err)) {
-                dbus_error_free(&err);
-                ipcfg = NULL;
-            }
-            if (ipcfg == NULL) {
-                ipcfg = dbus_get_property_object_path(si->system_bus,
-                    NM_SERVICE, dev_path, NM_DEVICE_IFACE, "Ip6Config", &err);
-                if (dbus_error_is_set(&err)) {
-                    dbus_error_free(&err);
-                    ipcfg = NULL;
-                }
-            }
-            /* the config object exposes its data on the IP4Config/IP6Config
-             * interface, not the base NetworkManager one */
-            const char *cfg_iface = strstr(ipcfg, "IP6Config") ?
-                "org.freedesktop.NetworkManager.IP6Config" :
+            char *ipcfg = prop_cache_object_path(&dev, "Ip4Config");
+            const char *cfg_iface =
                 "org.freedesktop.NetworkManager.IP4Config";
+            if (ipcfg == NULL) {
+                ipcfg = prop_cache_object_path(&dev, "Ip6Config");
+                cfg_iface = "org.freedesktop.NetworkManager.IP6Config";
+            }
             if (ipcfg != NULL) {
-                unsigned char addr[16];
-                int af = 0;
-                if (dbus_get_property_first_address(si->system_bus,
-                        NM_SERVICE, ipcfg, cfg_iface, "AddressData",
-                        addr, &af, &err)) {
+                struct prop_cache cfg;
+                if (prop_cache_get_all(si->system_bus, NM_SERVICE, ipcfg,
+                        cfg_iface, &cfg, &err)) {
                     if (dbus_error_is_set(&err)) {
                         dbus_error_free(&err);
                     }
-                    inet_ntop(af, addr, ni->ip, sizeof(ni->ip));
-                } else if (dbus_error_is_set(&err)) {
-                    dbus_error_free(&err);
-                }
-                unsigned char gw_bytes[16];
-                int gw_af = 0;
-                if (dbus_get_property_gateway(si->system_bus,
-                        NM_SERVICE, ipcfg, cfg_iface,
-                        gw_bytes, &gw_af, &err)) {
-                    if (dbus_error_is_set(&err)) {
-                        dbus_error_free(&err);
+                    unsigned char addr[16];
+                    int af = 0;
+                    if (prop_cache_first_address(&cfg, "AddressData",
+                            addr, &af)) {
+                        inet_ntop(af, addr, ni->ip, sizeof(ni->ip));
                     }
-                    inet_ntop(gw_af, gw_bytes, ni->gw, sizeof(ni->gw));
-                } else if (dbus_error_is_set(&err)) {
-                    dbus_error_free(&err);
-                }
-                /* NM's Gateway is empty for tunnels / point-to-point links;
-                 * fall back to the kernel route table */
-                if (ni->gw[0] == '\0' && iface != NULL) {
-                    route_gateway(iface, gw_bytes, &gw_af);
+                    unsigned char gw_bytes[16];
+                    int gw_af = 0;
+                    char *gw = prop_cache_string(&cfg, "Gateway");
+                    if (gw) {
+                        struct in_addr a4;
+                        struct in6_addr a6;
+                        if (inet_pton(AF_INET, gw, &a4) == 1) {
+                            memcpy(gw_bytes, &a4, 4);
+                            gw_af = AF_INET;
+                        } else if (inet_pton(AF_INET6, gw, &a6) == 1) {
+                            memcpy(gw_bytes, &a6, 16);
+                            gw_af = AF_INET6;
+                        }
+                    }
+                    free(gw);
                     if (gw_af != 0) {
                         inet_ntop(gw_af, gw_bytes, ni->gw, sizeof(ni->gw));
                     }
-                }
-                dbus_get_property_dns(si->system_bus, NM_SERVICE, ipcfg,
-                    cfg_iface, "NameserverData", ni->dns, sizeof(ni->dns), &err);
-                if (dbus_error_is_set(&err)) {
+                    /* NM's Gateway is empty for tunnels / point-to-point
+                     * links; fall back to the kernel route table */
+                    if (ni->gw[0] == '\0' && iface != NULL) {
+                        route_gateway(iface, gw_bytes, &gw_af);
+                        if (gw_af != 0) {
+                            inet_ntop(gw_af, gw_bytes, ni->gw,
+                                sizeof(ni->gw));
+                        }
+                    }
+                    prop_cache_dns(&cfg, "NameserverData", ni->dns,
+                        sizeof(ni->dns));
+                    prop_cache_free(&cfg);
+                } else {
                     dbus_error_free(&err);
                 }
                 free(ipcfg);
@@ -934,6 +904,7 @@ sysinfo_update_network(struct guibux_sysinfo *si)
             iface_count++;
         }
 
+        prop_cache_free(&dev);
         free(iface);
     }
 
@@ -991,47 +962,31 @@ sysinfo_update_battery(struct guibux_sysinfo *si)
         for (int i = 0; devices[i]; i++) {
             const char *dev_path = devices[i];
 
-            dbus_uint32_t type = dbus_get_property_uint32(
-                si->system_bus, UPower_SERVICE, dev_path,
-                UPower_DEVICE_IFACE, "Type", &err);
-            if (dbus_error_is_set(&err)) {
-                dbus_error_free(&err);
-                continue;
-            }
-            if (type != UP_DEVICE_TYPE_BATTERY) {
+            struct prop_cache bat;
+            if (!prop_cache_get_all(si->system_bus, UPower_SERVICE,
+                    dev_path, UPower_DEVICE_IFACE, &bat, &err)) {
+                if (dbus_error_is_set(&err)) {
+                    dbus_error_free(&err);
+                }
                 continue;
             }
 
-            double d = dbus_get_property_double(
-                si->system_bus, UPower_SERVICE, dev_path,
-                UPower_DEVICE_IFACE, "Percentage", &err);
-            if (dbus_error_is_set(&err)) {
-                dbus_error_free(&err);
+            dbus_uint32_t type = prop_cache_uint32(&bat, "Type");
+            if (type != UP_DEVICE_TYPE_BATTERY) {
+                prop_cache_free(&bat);
                 continue;
             }
+
+            double d = prop_cache_double(&bat, "Percentage");
             if (d < 0.0 || d > 100.0) {
+                prop_cache_free(&bat);
                 continue;
             }
             pct = (int)(d + 0.5);
 
-            state = (int)dbus_get_property_uint32(
-                si->system_bus, UPower_SERVICE, dev_path,
-                UPower_DEVICE_IFACE, "State", &err);
-            if (dbus_error_is_set(&err)) {
-                dbus_error_free(&err);
-            }
-            int64_t tte = dbus_get_property_int64(
-                si->system_bus, UPower_SERVICE, dev_path,
-                UPower_DEVICE_IFACE, "TimeToEmpty", &err);
-            if (dbus_error_is_set(&err)) {
-                dbus_error_free(&err);
-            }
-            int64_t ttf = dbus_get_property_int64(
-                si->system_bus, UPower_SERVICE, dev_path,
-                UPower_DEVICE_IFACE, "TimeToFull", &err);
-            if (dbus_error_is_set(&err)) {
-                dbus_error_free(&err);
-            }
+            state = (int)prop_cache_uint32(&bat, "State");
+            int64_t tte = prop_cache_int64(&bat, "TimeToEmpty");
+            int64_t ttf = prop_cache_int64(&bat, "TimeToFull");
             /* TimeToEmpty is only meaningful while discharging,
              * TimeToFull while charging; 0 = no estimate */
             if (state == 1) {
@@ -1039,6 +994,7 @@ sysinfo_update_battery(struct guibux_sysinfo *si)
             } else if (state == 2) {
                 eta = (int)tte;
             }
+            prop_cache_free(&bat);
             break;
         }
     }
@@ -1081,12 +1037,168 @@ parse_volume_output(const char *out, int *volume, bool *muted)
 }
 
 /*
- * Update sink/source (mic) volume + mute via pactl. Works with
- * PulseAudio and PipeWire (pulse compat). A failed read leaves the
- * previous values untouched; audio_available stays false until the
- * first successful read (no audio on the system -> indicator hidden).
- * Two calls total: each combines the volume and mute queries for one
- * device into a single fork+exec (was four).
+ * PulseAudio / PipeWire (pulse compat) on the session bus:
+ * org.freedesktop.PulseAudio1
+ */
+static const char *PULSE_SERVICE = "org.freedesktop.PulseAudio1";
+static const char *PULSE_CORE_PATH = "/org/freedesktop/PulseAudio/Core";
+static const char *PULSE_CORE_IFACE = "org.freedesktop.PulseAudio1.Core";
+static const char *PULSE_SINK_IFACE = "org.freedesktop.PulseAudio1.Sink";
+static const char *PULSE_SOURCE_IFACE = "org.freedesktop.PulseAudio1.Source";
+
+/*
+ * Find the default sink/source object path via Core.GetSinkInputList /
+ * GetSourceInputList (each entry: index, name, is_default, ...).
+ * kind: "Sink" or "Source". Returns newly allocated path, or NULL.
+ */
+static char *
+pulse_default_path(DBusConnection *conn, const char *method,
+                   const char *kind, DBusError *err)
+{
+    DBusMessage *msg = dbus_message_new_method_call(
+        PULSE_SERVICE, PULSE_CORE_PATH, PULSE_CORE_IFACE, method);
+    if (!msg) {
+        return NULL;
+    }
+    DBusMessage *reply = dbus_connection_send_with_reply_and_block(
+        conn, msg, DBUS_TIMEOUT_MS, err);
+    dbus_message_unref(msg);
+    if (!reply) {
+        return NULL;
+    }
+
+    char *result = NULL;
+    DBusMessageIter iter, entry;
+    dbus_message_iter_init(reply, &iter);
+    if (dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_ARRAY) {
+        dbus_message_iter_recurse(&iter, &iter);
+        while (dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_ARRAY) {
+            dbus_message_iter_recurse(&iter, &entry);
+            /* entry: u index, s name, b is_default, ... */
+            dbus_uint32_t index = 0;
+            const char *name = NULL;
+            dbus_bool_t is_default = FALSE;
+            dbus_message_iter_get_basic(&entry, &index);
+            dbus_message_iter_next(&entry);
+            dbus_message_iter_get_basic(&entry, &name);
+            dbus_message_iter_next(&entry);
+            dbus_message_iter_get_basic(&entry, &is_default);
+            if (is_default) {
+                char buf[256];
+                snprintf(buf, sizeof(buf),
+                    "/org/freedesktop/PulseAudio/Core/%s/%u", kind, index);
+                result = strdup(buf);
+                break;
+            }
+            dbus_message_iter_next(&iter);
+        }
+    }
+
+    dbus_message_unref(reply);
+    return result;
+}
+
+/*
+ * Volume percent (0-100) + mute from a PulseAudio Sink/Source object:
+ * one Properties.GetAll, Volume is an array of per-channel doubles
+ * (take the mean), Mute is a bool.
+ */
+static bool
+pulse_device_volume(DBusConnection *conn, const char *path,
+                    const char *iface, int *volume, bool *muted,
+                    DBusError *err)
+{
+    struct prop_cache c;
+    if (!prop_cache_get_all(conn, PULSE_SERVICE, path, iface, &c, err)) {
+        return false;
+    }
+    bool ok = false;
+    DBusMessageIter *v = prop_cache_find(&c, "Volume");
+    if (v && dbus_message_iter_get_arg_type(v) == DBUS_TYPE_ARRAY) {
+        DBusMessageIter arr = *v;
+        dbus_message_iter_recurse(&arr, &arr);
+        double sum = 0.0;
+        int n = 0;
+        while (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_DOUBLE) {
+            double d = 0.0;
+            dbus_message_iter_get_basic(&arr, &d);
+            sum += d;
+            n++;
+            dbus_message_iter_next(&arr);
+        }
+        if (n > 0) {
+            *volume = (int)(sum / (double)n * 100.0 + 0.5);
+            ok = true;
+        }
+    }
+    DBusMessageIter *m = prop_cache_find(&c, "Mute");
+    if (m && dbus_message_iter_get_arg_type(m) == DBUS_TYPE_BOOLEAN) {
+        dbus_bool_t b = FALSE;
+        dbus_message_iter_get_basic(m, &b);
+        *muted = (b == TRUE);
+    }
+    prop_cache_free(&c);
+    return ok;
+}
+
+/*
+ * Read screen brightness from /sys/class/backlight (first device with
+ * a brightness file). Returns percent 0-100, or -1 when no backlight
+ * is exposed (e.g. headless / external display).
+ */
+static int
+brightness_from_sysfs(void)
+{
+    DIR *dir = opendir("/sys/class/backlight");
+    if (!dir) {
+        return -1;
+    }
+    int result = -1;
+    struct dirent *e;
+    while ((e = readdir(dir)) != NULL) {
+        if (e->d_name[0] == '.') {
+            continue;
+        }
+        char path[512];
+        snprintf(path, sizeof(path),
+            "/sys/class/backlight/%s/brightness", e->d_name);
+        FILE *f = fopen(path, "r");
+        if (!f) {
+            continue;
+        }
+        int cur = 0;
+        if (fscanf(f, "%d", &cur) != 1) {
+            fclose(f);
+            continue;
+        }
+        fclose(f);
+        snprintf(path, sizeof(path),
+            "/sys/class/backlight/%s/max_brightness", e->d_name);
+        f = fopen(path, "r");
+        if (!f) {
+            continue;
+        }
+        int max = 0;
+        if (fscanf(f, "%d", &max) != 1 || max <= 0) {
+            fclose(f);
+            continue;
+        }
+        fclose(f);
+        result = (cur * 100) / max;
+        break;
+    }
+    closedir(dir);
+    return result;
+}
+
+/*
+ * Update sink/source (mic) volume + mute and screen brightness.
+ * Audio: PulseAudio D-Bus on the session bus (works with PulseAudio
+ * and PipeWire pulse compat); falls back to pactl subprocess when
+ * PulseAudio1 is not on the bus. Brightness: /sys/class/backlight;
+ * falls back to brightnessctl. A failed read leaves the previous
+ * values untouched; audio_available stays false until the first
+ * successful read (no audio on the system -> indicator hidden).
  */
 static void
 sysinfo_update_audio(struct guibux_sysinfo *si)
@@ -1094,27 +1206,59 @@ sysinfo_update_audio(struct guibux_sysinfo *si)
     int volume = -1, mic_volume = -1;
     bool muted = false, mic_muted = false;
 
-    char *out = run_capture(
-        "pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null; "
-        "pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null");
-    if (out) {
-        parse_volume_output(out, &volume, &muted);
-        free(out);
+    if (si->pulse_available && si->session_bus) {
+        DBusError err = DBUS_ERROR_INIT;
+        char *sink = pulse_default_path(si->session_bus,
+            "GetSinkInputList", "Sink", &err);
+        if (dbus_error_is_set(&err)) {
+            dbus_error_free(&err);
+        }
+        if (sink) {
+            pulse_device_volume(si->session_bus, sink, PULSE_SINK_IFACE,
+                &volume, &muted, &err);
+            if (dbus_error_is_set(&err)) {
+                dbus_error_free(&err);
+            }
+            free(sink);
+        }
+        char *source = pulse_default_path(si->session_bus,
+            "GetSourceInputList", "Source", &err);
+        if (dbus_error_is_set(&err)) {
+            dbus_error_free(&err);
+        }
+        if (source) {
+            pulse_device_volume(si->session_bus, source,
+                PULSE_SOURCE_IFACE, &mic_volume, &mic_muted, &err);
+            if (dbus_error_is_set(&err)) {
+                dbus_error_free(&err);
+            }
+            free(source);
+        }
+    } else {
+        char *out = run_capture(
+            "pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null; "
+            "pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null");
+        if (out) {
+            parse_volume_output(out, &volume, &muted);
+            free(out);
+        }
+
+        out = run_capture(
+            "pactl get-source-volume @DEFAULT_SOURCE@ 2>/dev/null; "
+            "pactl get-source-mute @DEFAULT_SOURCE@ 2>/dev/null");
+        if (out) {
+            parse_volume_output(out, &mic_volume, &mic_muted);
+            free(out);
+        }
     }
 
-    out = run_capture(
-        "pactl get-source-volume @DEFAULT_SOURCE@ 2>/dev/null; "
-        "pactl get-source-mute @DEFAULT_SOURCE@ 2>/dev/null");
-    if (out) {
-        parse_volume_output(out, &mic_volume, &mic_muted);
-        free(out);
-    }
-
-    int brightness = -1;
-    out = run_capture("brightnessctl get 2>/dev/null");
-    if (out) {
-        brightness = parse_percent(out);
-        free(out);
+    int brightness = brightness_from_sysfs();
+    if (brightness < 0) {
+        char *out = run_capture("brightnessctl get 2>/dev/null");
+        if (out) {
+            brightness = parse_percent(out);
+            free(out);
+        }
     }
 
     pthread_mutex_lock(&si->lock);
@@ -1135,6 +1279,20 @@ sysinfo_update_audio(struct guibux_sysinfo *si)
     pthread_mutex_unlock(&si->lock);
 }
 
+static dbus_bool_t
+sysinfo_net_filter(DBusConnection *conn, DBusMessage *msg, void *data)
+{
+    if (dbus_message_is_signal(msg,
+            "org.freedesktop.DBus.Properties", "PropertiesChanged")) {
+        struct guibux_sysinfo *si = data;
+        pthread_mutex_lock(&si->lock);
+        si->net_dirty = true;
+        pthread_mutex_unlock(&si->lock);
+        pthread_cond_signal(&si->wake);
+    }
+    return TRUE;
+}
+
 static void *
 sysinfo_worker(void *data)
 {
@@ -1152,8 +1310,29 @@ sysinfo_worker(void *data)
         if (dbus_bus_name_has_owner(si->system_bus, NM_SERVICE, &err)) {
             pthread_mutex_lock(&si->lock);
             si->nm_available = true;
+            si->net_dirty = true;
             pthread_mutex_unlock(&si->lock);
             wlr_log(WLR_INFO, "sysinfo: NetworkManager active");
+            /* poll network state only when NM reports a change, not
+             * every interval: an idle desktop then does zero network
+             * D-Bus work. The periodic loop below is the fallback for
+             * missed signals. */
+            const char *rule =
+                "type='signal',"
+                "interface='org.freedesktop.DBus.Properties',"
+                "member='PropertiesChanged',"
+                "path_namespace='/org/freedesktop/NetworkManager'";
+             dbus_bus_add_match(si->system_bus, rule, &err);
+             if (dbus_connection_add_filter(si->system_bus,
+                     sysinfo_net_filter, si, NULL)) {
+                 wlr_log(WLR_INFO, "sysinfo: NM change watch active");
+             } else {
+                if (dbus_error_is_set(&err)) {
+                    dbus_error_free(&err);
+                }
+                wlr_log(WLR_INFO,
+                    "sysinfo: NM change watch failed, polling only");
+            }
         } else {
             dbus_error_free(&err);
             wlr_log(WLR_INFO, "sysinfo: NetworkManager not found on D-Bus");
@@ -1166,6 +1345,36 @@ sysinfo_worker(void *data)
         } else {
             dbus_error_free(&err);
             wlr_log(WLR_INFO, "sysinfo: UPower not found on D-Bus");
+        }
+    }
+
+    /* dedicated private connection: the shared session bus is also
+     * driven by the notify thread (main loop), and libdbus is not
+     * thread-safe on one connection */
+    const char *addr = getenv("DBUS_SESSION_BUS_ADDRESS");
+    if (addr && addr[0] != '\0') {
+        si->session_bus = dbus_connection_open(addr, &err);
+        if (si->session_bus) {
+            dbus_bus_register(si->session_bus, &err);
+        }
+    }
+    if (!si->session_bus) {
+        if (dbus_error_is_set(&err)) {
+            wlr_log(WLR_INFO, "sysinfo: cannot open session bus: %s",
+                err.message);
+            dbus_error_free(&err);
+        }
+    } else {
+        wlr_log(WLR_INFO, "sysinfo: session bus connected");
+        if (dbus_bus_name_has_owner(si->session_bus, PULSE_SERVICE, &err)) {
+            pthread_mutex_lock(&si->lock);
+            si->pulse_available = true;
+            pthread_mutex_unlock(&si->lock);
+            wlr_log(WLR_INFO, "sysinfo: PulseAudio active");
+        } else {
+            dbus_error_free(&err);
+            wlr_log(WLR_INFO,
+                "sysinfo: PulseAudio not found, falling back to pactl");
         }
     }
 
@@ -1199,10 +1408,12 @@ sysinfo_worker(void *data)
         pthread_mutex_unlock(&si->lock);
     }
 
+    time_t last_net_poll = 0;
     while (true) {
         bool running = false;
         bool nm = false;
         bool upower = false;
+        bool net_dirty = false;
         pthread_mutex_lock(&si->lock);
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -1211,12 +1422,27 @@ sysinfo_worker(void *data)
         running = si->worker_running;
         nm = si->nm_available;
         upower = si->upower_available;
+        net_dirty = si->net_dirty;
+        if (net_dirty) {
+            si->net_dirty = false;
+        }
         pthread_mutex_unlock(&si->lock);
         if (!running) {
             break;
         }
-        if (nm && si->system_bus) {
+        /* drain NM change signals that arrived during the sleep; the
+         * filter marks net_dirty. Non-blocking: the 5s tick above is
+         * the cadence, the 30s fallback below covers missed signals. */
+        if (si->system_bus) {
+            dbus_connection_read_write_dispatch(si->system_bus, 0);
+        }
+        /* network: poll when NM signalled a change, or when the
+         * fallback interval elapsed (self-corrects missed signals) */
+        time_t now = time(NULL);
+        if (nm && si->system_bus &&
+            (net_dirty || now - last_net_poll >= NET_POLL_FALLBACK_SEC)) {
             sysinfo_update_network(si);
+            last_net_poll = now;
         }
         /* battery works without NetworkManager (UPower poll) */
         if (upower && si->system_bus) {
@@ -1232,6 +1458,12 @@ sysinfo_worker(void *data)
         dbus_connection_unref(si->system_bus);
         si->system_bus = NULL;
     }
+    if (si->session_bus) {
+        /* private connection: close it, not just unref */
+        dbus_connection_close(si->session_bus);
+        dbus_connection_unref(si->session_bus);
+        si->session_bus = NULL;
+    }
     return NULL;
 }
 
@@ -1241,7 +1473,10 @@ sysinfo_init(struct guibux_server *server)
     struct guibux_sysinfo *si = &server->sysinfo;
 
     si->system_bus = NULL;
+    si->session_bus = NULL;
+    si->pulse_available = false;
     si->nm_available = false;
+    si->net_dirty = false;
     si->upower_available = false;
     si->network[0] = '\0';
     si->net_iface_count = 0;
