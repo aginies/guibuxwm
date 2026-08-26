@@ -58,6 +58,8 @@ static const char *icon_contexts[] = {
 static const char *icon_symbolic_dirs[] = {
 	"symbolic/status",
 	"symbolic/devices",
+	"symbolic/places",
+	"symbolic/apps",
 };
 
 static void icon_add_dir(const char *dir) {
@@ -386,8 +388,8 @@ int topbar_icon_draw(cairo_t *cr, struct guibux_launcher *l,
 
 		/* render directly at the target size (no bilinear upscale:
 		 * upsampling a 16px icon bleeds edge alpha into the topbar
-		 * background and shifts the perceived color); then recolor
-		 * the pixels to the target color, keeping the alpha */
+		 * background and shifts the perceived color); the alpha channel
+		 * is then used as a mask to paint the icon in the target color */
 		cairo_surface_t *surf = cairo_image_surface_create(
 			CAIRO_FORMAT_ARGB32, tw, th);
 		cairo_t *sfc = cairo_create(surf);
@@ -399,29 +401,14 @@ int topbar_icon_draw(cairo_t *cr, struct guibux_launcher *l,
 		cairo_destroy(sfc);
 		g_object_unref(handle);
 
-		uint32_t rr = (color >> 16) & 0xff;
-		uint32_t gg = (color >> 8) & 0xff;
-		uint32_t bb = color & 0xff;
-		uint32_t target = (rr << 16) | (gg << 8) | bb;
-		cairo_surface_flush(surf);
-		{
-			uint8_t *data = cairo_image_surface_get_data(surf);
-			int stride = cairo_image_surface_get_stride(surf);
-			for (int y = 0; y < th; y++) {
-				for (int x = 0; x < tw; x++) {
-					uint32_t *px = (uint32_t *)(data + y * stride + x * 4);
-					uint8_t a = (*px >> 24) & 0xff;
-					*px = (a << 24) | target;
-				}
-			}
-		}
-		cairo_surface_mark_dirty(surf);
-
 		cairo_pattern_t *pat = cairo_pattern_create_for_surface(surf);
 		cairo_save(cr);
 		cairo_translate(cr, ix, iy);
-		cairo_set_source(cr, pat);
-		cairo_paint(cr);
+		cairo_set_source_rgb(cr,
+			((color >> 16) & 0xff) / 255.0,
+			((color >> 8) & 0xff) / 255.0,
+			(color & 0xff) / 255.0);
+		cairo_mask(cr, pat);
 		cairo_restore(cr);
 		cairo_pattern_destroy(pat);
 		cairo_surface_destroy(surf);
