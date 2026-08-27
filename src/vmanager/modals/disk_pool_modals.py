@@ -712,8 +712,9 @@ class MoveVolumeModal(BaseModal[dict]):
 class AttachVolumeModal(BaseModal[dict | None]):
     """Modal screen for attaching an existing disk file as a storage volume."""
 
-    def __init__(self) -> None:
+    def __init__(self, is_remote: bool = False) -> None:
         super().__init__()
+        self.is_remote = is_remote
         self.detected_format: str | None = None
 
     def compose(self) -> ComposeResult:
@@ -726,7 +727,7 @@ class AttachVolumeModal(BaseModal[dict | None]):
             )
             with Horizontal():
                 yield Input(placeholder=StaticText.DISK_IMAGE_PATH_PLACEHOLDER, id="vol-path-input")
-                yield Button(ButtonLabels.BROWSE, id="browse-vol-btn")
+                yield Button(ButtonLabels.BROWSE, id="browse-vol-btn", disabled=self.is_remote)
             with Horizontal():
                 yield Button(ButtonLabels.ATTACH, variant="primary", id="attach-btn")
                 yield Button(ButtonLabels.CANCEL, variant="default", id="cancel-btn")
@@ -769,6 +770,8 @@ class AttachVolumeModal(BaseModal[dict | None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button press events."""
         if event.button.id == "browse-vol-btn":
+            if self.is_remote:
+                return
             input_to_update = self.query_one("#vol-path-input", Input)
 
             def on_file_selected(path: str | None) -> None:
