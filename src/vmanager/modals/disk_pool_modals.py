@@ -320,9 +320,10 @@ class AddDiskModal(BaseModal[dict | None]):
 class AddPoolModal(BaseModal[bool | None]):
     """Modal screen for adding a new storage pool."""
 
-    def __init__(self, conn: libvirt.virConnect) -> None:
+    def __init__(self, conn: libvirt.virConnect, is_remote: bool = False) -> None:
         super().__init__()
         self.conn = conn
+        self.is_remote = is_remote
 
     def compose(self) -> ComposeResult:
         with Vertical(id="add-pool-dialog"):
@@ -348,7 +349,7 @@ class AddPoolModal(BaseModal[bool | None]):
                             id="dir-target-path-input",
                             placeholder=StaticText.DIR_TARGET_PATH_PLACEHOLDER,
                         )
-                        yield Button(ButtonLabels.BROWSE, id="browse-dir-btn")
+                        yield Button(ButtonLabels.BROWSE, id="browse-dir-btn", disabled=self.is_remote)
 
             # Fields for `netfs` type
             with Vertical(id="netfs-fields"):
@@ -356,7 +357,7 @@ class AddPoolModal(BaseModal[bool | None]):
                     yield Label(StaticText.TARGET_PATH_HOST)
                     with Vertical():
                         yield Input("/mnt/nfs", id="netfs-target-path-input")
-                        yield Button(ButtonLabels.BROWSE, id="browse-netfs-btn")
+                        yield Button(ButtonLabels.BROWSE, id="browse-netfs-btn", disabled=self.is_remote)
                     yield Select(
                         [
                             ("auto", "auto"),
@@ -391,6 +392,8 @@ class AddPoolModal(BaseModal[bool | None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button press events."""
         if event.button.id in ("browse-dir-btn", "browse-netfs-btn"):
+            if self.is_remote:
+                return
             input_id = (
                 "#dir-target-path-input"
                 if event.button.id == "browse-dir-btn"
