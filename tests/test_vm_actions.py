@@ -1051,6 +1051,63 @@ class TestVMActionsComplete(unittest.TestCase):
 
     @patch("vmanager.vm_actions.get_internal_id")
     @patch("vmanager.vm_actions.invalidate_cache")
+    @patch("vmanager.vm_actions._find_vol_by_path")
+    @patch("vmanager.vm_actions.get_vm_disks_info")
+    def test_delete_vm_skips_cdrom(
+        self, mock_get_disks, mock_find_vol, mock_invalidate_cache, mock_get_internal_id
+    ):
+        """Test delete_vm does not delete CD-ROM ISO files."""
+        from vmanager.vm_actions import delete_vm
+
+        xml_content = """<domain>
+          <name>test-vm</name>
+          <uuid>test-uuid</uuid>
+          <os><type arch="x86_64">hvm</type></os>
+          <devices>
+            <disk type="file" device="disk">
+              <source file="/var/lib/libvirt/images/test-vm.qcow2"/>
+              <target dev="vda" bus="virtio"/>
+            </disk>
+            <disk type="file" device="cdrom">
+              <source file="/var/lib/libvirt/images/install.iso"/>
+              <target dev="sda" bus="sata"/>
+            </disk>
+          </devices>
+        </domain>"""
+
+        mock_domain_del = MagicMock()
+        mock_domain_del.XMLDesc.return_value = xml_content
+        mock_domain_del.isActive.return_value = False
+
+        mock_conn = MagicMock()
+        mock_conn.lookupByUUIDString.return_value = mock_domain_del
+        mock_conn.listStoragePools.return_value = []
+
+        mock_disk_vol = MagicMock()
+        mock_iso_vol = MagicMock()
+        mock_pool = MagicMock()
+
+        def find_vol(conn, path):
+            if path == "/var/lib/libvirt/images/test-vm.qcow2":
+                return (mock_disk_vol, mock_pool)
+            if path == "/var/lib/libvirt/images/install.iso":
+                return (mock_iso_vol, mock_pool)
+            return (None, None)
+
+        mock_find_vol.side_effect = find_vol
+        mock_get_disks.return_value = [
+            {"path": "/var/lib/libvirt/images/test-vm.qcow2", "status": "enabled", "device_type": "disk"},
+            {"path": "/var/lib/libvirt/images/install.iso", "status": "enabled", "device_type": "cdrom"},
+        ]
+        mock_get_internal_id.return_value = "test-id"
+
+        delete_vm(self.mock_domain, delete_storage=True, conn=mock_conn)
+
+        mock_disk_vol.delete.assert_called_once_with(0)
+        mock_iso_vol.delete.assert_not_called()
+
+    @patch("vmanager.vm_actions.get_internal_id")
+    @patch("vmanager.vm_actions.invalidate_cache")
     def test_check_for_other_spice_devices(self, mock_invalidate_cache, mock_get_internal_id):
         """Test check_for_other_spice_devices function"""
         # Mock the domain object

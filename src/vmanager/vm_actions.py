@@ -2233,7 +2233,10 @@ def delete_vm(
                     root = ET.fromstring(xml_desc)
                     if delete_storage:
                         # Pass delete_conn to resolve volumes
-                        disks_to_delete = get_vm_disks_info(delete_conn, root)
+                        disks_to_delete = [
+                            d for d in get_vm_disks_info(delete_conn, root)
+                            if d.get("device_type") != "cdrom"
+                        ]
                     
                     boot_files_to_delete = get_vm_boot_files(root)
                 except libvirt.libvirtError as e:
