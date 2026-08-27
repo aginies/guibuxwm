@@ -17,7 +17,7 @@ from ..constants import AppInfo, ButtonLabels, ErrorMessages, StaticText, Succes
 from ..provisioning.templates.auto_template_manager import AutoYaSTTemplateManager
 from ..network_manager import ensure_default_network, list_networks
 from ..storage_manager import ensure_default_pool, list_storage_pools
-from ..utils import remote_viewer_cmd
+from ..utils import is_remote_connection, remote_viewer_cmd
 from ..vm_provisioner import VMProvisioner, VMType
 from ..provisioning.os_provider import OSType, OSVersion
 
@@ -40,6 +40,7 @@ class InstallVMModal(BaseModal[str | None]):
         self.vm_service = vm_service
         self.uri = uri
         self.conn = self.vm_service.connect(uri)
+        self.is_remote = is_remote_connection(self.conn.getURI()) if self.conn else False
         self.provisioner = VMProvisioner(self.conn)
         self.template_manager = AutoYaSTTemplateManager(self.provisioner)
         self.iso_list = []
@@ -1256,7 +1257,7 @@ class InstallVMModal(BaseModal[str | None]):
                 self.app.show_error_message(ErrorMessages.SELECT_VALID_ISO_VOLUME)
                 return
             # Validate that the volume path exists and is accessible
-            if not os.path.exists(iso_url):
+            if not self.is_remote and not os.path.exists(iso_url):
                 self.app.show_error_message(
                     ErrorMessages.ISO_VOLUME_NOT_FOUND_TEMPLATE.format(iso_url=iso_url)
                 )
