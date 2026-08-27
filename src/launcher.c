@@ -10,6 +10,10 @@
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/render/allocator.h>
 #include <drm_fourcc.h>
+#define STBI_NO_GIF
+#define STBI_NO_BMP
+#define STBI_NO_HDR
+#define STBI_NO_PSD
 #include "stb_image.h"
 #ifdef GUIBUX_HAS_RSVG
 #include <librsvg-2.0/librsvg/rsvg.h>

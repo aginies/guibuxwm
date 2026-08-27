@@ -204,7 +204,7 @@ void help_show(struct guibux_server *server) {
 	for (int sec = 0; sec < HELP_SEC_COUNT; sec++) {
 		for (int i = 0; i < server->num_keybinds; i++) {
 			struct guibux_keybind *kb = &server->keybinds[i];
-			if (action_section(kb->action) != sec) {
+			if (action_section(kb->action) != (enum help_section)sec) {
 				continue;
 			}
 			if (h->num_lines >= HELP_MAX_LINES) {
