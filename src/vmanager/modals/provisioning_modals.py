@@ -1247,7 +1247,8 @@ class InstallVMModal(BaseModal[str | None]):
 
         if distro == "generic_custom":
             custom_path = self.query_one("#custom-iso-path", Input).value.strip()
-            custom_path = validate_path_in_allowed_dirs(custom_path, conn=self.conn)
+            if not self.is_remote:
+                custom_path = validate_path_in_allowed_dirs(custom_path, conn=self.conn)
             validate = self.query_one("#validate-checksum", Checkbox).value
             if validate:
                 checksum = self.query_one("#checksum-input", Input).value.strip()
@@ -1416,17 +1417,18 @@ class InstallVMModal(BaseModal[str | None]):
                             raise Exception(str(e))
 
                     else:
-                        # Validate local path exists
-                        if not os.path.exists(custom_path):
-                            raise Exception(
-                                ErrorMessages.CUSTOM_ISO_PATH_NOT_EXIST_TEMPLATE.format(
-                                    path=custom_path
+                        # Validate local path exists (skip for remote connections)
+                        if not self.is_remote:
+                            if not os.path.exists(custom_path):
+                                raise Exception(
+                                    ErrorMessages.CUSTOM_ISO_PATH_NOT_EXIST_TEMPLATE.format(
+                                        path=custom_path
+                                    )
                                 )
-                            )
-                        if not os.path.isfile(custom_path):
-                            raise Exception(
-                                ErrorMessages.CUSTOM_ISO_NOT_FILE_TEMPLATE.format(path=custom_path)
-                            )
+                            if not os.path.isfile(custom_path):
+                                raise Exception(
+                                    ErrorMessages.CUSTOM_ISO_NOT_FILE_TEMPLATE.format(path=custom_path)
+                                )
 
                     # 1. Validate Checksum
                     if validate:
