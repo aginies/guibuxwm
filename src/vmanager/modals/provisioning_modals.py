@@ -1315,6 +1315,7 @@ class InstallVMModal(BaseModal[str | None]):
             return
 
         # Disable inputs
+        self.query_one("#automation-collapsible", Collapsible).collapsed = True
         for widget in self.query("Input"):
             widget.disabled = True
         for widget in self.query("Select"):
