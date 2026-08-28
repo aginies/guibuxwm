@@ -824,7 +824,7 @@ static void topbar_pills_draw(struct guibux_output *o, cairo_t *cr,
 	}
 	o->topbar_win_count = rendered;
 	/* cache the pill region for the focus-only fast path */
-	o->topbar_win_region_x = win_x;
+	o->topbar_win_region_x = win_x0;
 	o->topbar_win_region_end = win_end;
 }
 
