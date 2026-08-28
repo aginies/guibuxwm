@@ -518,6 +518,14 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.lock_test_timer, 2000);
 	}
 
+	const char *screenshot_test = getenv("GUIBUX_TEST_SCREENSHOT");
+	if (screenshot_test != NULL) {
+		server.screenshot_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			screenshot_test_run, &server);
+		wl_event_source_timer_update(server.screenshot_test_timer, 2000);
+	}
+
 	const char *topbar_items_test = getenv("GUIBUX_TEST_TOPBAR_ITEMS");
 	if (topbar_items_test != NULL) {
 		server.topbar_items_test_timer = wl_event_loop_add_timer(
@@ -652,6 +660,7 @@ int main(int argc, char *argv[]) {
 	power_panel_destroy(&server);
 	topbar_items_panel_destroy(&server);
 	lock_destroy(&server);
+	screenshot_destroy(&server);
 	screensaver_destroy(&server);
 	if (server.notify_autohide_timer != NULL) {
 		wl_event_source_remove(server.notify_autohide_timer);

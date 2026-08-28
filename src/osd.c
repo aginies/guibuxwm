@@ -6,6 +6,7 @@
 
 #define OSD_PAD 12
 #define OSD_MIN_W 220
+#define OSD_SHOT_MIN_W 480
 #define OSD_TEXT_H 24
 #define OSD_BAR_H 8
 #define OSD_TEXT_BAR_GAP 8
@@ -66,30 +67,40 @@ void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
 	int font_px = server->topbar_font_size * scale;
 	FT_Set_Pixel_Sizes(server->launcher.face, 0, font_px);
 
-	const char *label;
-	char text[64];
-	switch (kind) {
-	case OSD_MIC:
-		label = "MIC";
-		break;
-	case OSD_BRIGHTNESS:
-		label = "BRI";
-		break;
-	default:
-		label = "VOL";
-		break;
-	}
-	if (muted) {
-		snprintf(text, sizeof(text), "%s MUTE", label);
+	char text[256];
+	if (kind == OSD_SHOT) {
+		snprintf(text, sizeof(text), "%s", osd->text);
 	} else {
-		snprintf(text, sizeof(text), "%s %d%%", label, value);
+		const char *label;
+		switch (kind) {
+		case OSD_MIC:
+			label = "MIC";
+			break;
+		case OSD_BRIGHTNESS:
+			label = "BRI";
+			break;
+		default:
+			label = "VOL";
+			break;
+		}
+		if (muted) {
+			snprintf(text, sizeof(text), "%s MUTE", label);
+		} else {
+			snprintf(text, sizeof(text), "%s %d%%", label, value);
+		}
 	}
 
 	int tw = guibux_text_width(server->launcher.face, text) / scale;
 	int bw = tw + 2 * OSD_PAD;
-	if (bw < OSD_MIN_W)
-		bw = OSD_MIN_W;
-	int bh = OSD_PAD + OSD_TEXT_H + OSD_TEXT_BAR_GAP + OSD_BAR_H + OSD_PAD;
+	int min_w = (kind == OSD_SHOT) ? OSD_SHOT_MIN_W : OSD_MIN_W;
+	if (bw < min_w)
+		bw = min_w;
+	int bh;
+	if (kind == OSD_SHOT) {
+		bh = 2 * OSD_PAD + OSD_TEXT_H;
+	} else {
+		bh = OSD_PAD + OSD_TEXT_H + OSD_TEXT_BAR_GAP + OSD_BAR_H + OSD_PAD;
+	}
 
 	int bx = (box.width - bw) / 2;
 	if (bx < 4)
@@ -149,20 +160,22 @@ void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
 				font_px * 35 / 100;
 			launcher_draw_text_on_surface(cs, server->launcher.face, text,
 				OSD_PAD * scale, baseline, server->color_text);
-			int bar_y = (OSD_PAD + OSD_TEXT_H + OSD_TEXT_BAR_GAP) * scale;
-			int bar_w = (w - 2 * OSD_PAD * scale);
-			set_color(cr, server->color_border);
-			cairo_rectangle(cr, OSD_PAD * scale, bar_y, bar_w, OSD_BAR_H * scale);
-			cairo_fill(cr);
-			int fill_w = muted ? 0 : (bar_w * value) / 100;
-			if (fill_w > bar_w)
-				fill_w = bar_w;
-			if (fill_w < 0)
-				fill_w = 0;
-			if (fill_w > 0) {
-				set_color(cr, server->color_text);
-				cairo_rectangle(cr, OSD_PAD * scale, bar_y, fill_w, OSD_BAR_H * scale);
+			if (kind != OSD_SHOT) {
+				int bar_y = (OSD_PAD + OSD_TEXT_H + OSD_TEXT_BAR_GAP) * scale;
+				int bar_w = (w - 2 * OSD_PAD * scale);
+				set_color(cr, server->color_border);
+				cairo_rectangle(cr, OSD_PAD * scale, bar_y, bar_w, OSD_BAR_H * scale);
 				cairo_fill(cr);
+				int fill_w = muted ? 0 : (bar_w * value) / 100;
+				if (fill_w > bar_w)
+					fill_w = bar_w;
+				if (fill_w < 0)
+					fill_w = 0;
+				if (fill_w > 0) {
+					set_color(cr, server->color_text);
+					cairo_rectangle(cr, OSD_PAD * scale, bar_y, fill_w, OSD_BAR_H * scale);
+					cairo_fill(cr);
+				}
 			}
 			cairo_destroy(cr);
 			cairo_surface_destroy(cs);
@@ -171,6 +184,12 @@ void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
 	}
 	wlr_scene_buffer_set_buffer(osd->scene_node, osd->buffer);
 	wlr_output_schedule_frame(output);
+}
+
+void osd_shot(struct guibux_server *server, const char *msg) {
+	struct guibux_osd *osd = &server->osd;
+	snprintf(osd->text, sizeof(osd->text), "%s", msg);
+	osd_show(server, OSD_SHOT, 0, false);
 }
 
 void osd_tick(struct guibux_server *server) {
@@ -225,6 +244,27 @@ int osd_test_run(void *data) {
 	osd_tick(server);
 	if (server->osd.active) {
 		wlr_log(WLR_ERROR, "osd-test: FAIL osd not hidden after timeout");
+		return 0;
+	}
+	/* OSD_SHOT: text-only, no bar */
+	osd_shot(server, "/home/user/Pictures/guibuxwm-20260101-120000.png");
+	if (!server->osd.active) {
+		wlr_log(WLR_ERROR, "osd-test: FAIL shot osd not shown");
+		return 0;
+	}
+	if (server->osd.kind != OSD_SHOT) {
+		wlr_log(WLR_ERROR, "osd-test: FAIL shot osd wrong kind");
+		return 0;
+	}
+	if (server->osd.box_h != 2 * OSD_PAD + OSD_TEXT_H) {
+		wlr_log(WLR_ERROR, "osd-test: FAIL shot osd height %d (want %d, no bar)",
+			server->osd.box_h, 2 * OSD_PAD + OSD_TEXT_H);
+		return 0;
+	}
+	server->osd.hide_at_ms = 0;
+	osd_tick(server);
+	if (server->osd.active) {
+		wlr_log(WLR_ERROR, "osd-test: FAIL shot osd not hidden");
 		return 0;
 	}
 	wlr_log(WLR_INFO, "osd-test: OK (volume 65%%, box %dx%d at %d,%d)",

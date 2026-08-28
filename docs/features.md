@@ -106,3 +106,7 @@
 ## Lock Screen
 
 - **Lock screen** (`Mod+Shift+l`, or the power menu's Lock action): a full-screen overlay on every monitor showing the desktop wallpaper (dimmed), the current time and date, and password dots as you type. All keyboard and pointer input is consumed — no key or click reaches a client window. The password is verified with PAM (`pam_authenticate`); without PAM at build time it falls back to `loginctl lock-session`. After 5 failed attempts a 30s lockout counts down on screen. The topbar is hidden while locked so no clock/battery/network info is visible. The screen locks automatically on the idle timeout (config `lock_on_idle`) before the screensaver turns the monitors off, so the desktop is never visible without authentication on wake
+
+## Screenshot
+
+- **Screenshot** to PNG in `$XDG_PICTURES_DIR` (or `~/Pictures`), named `guibuxwm-YYYYMMDD-HHMMSS.png`: `Mod+Print` captures the monitor under the cursor, `Mod+Shift+Print` dims the monitor and lets you drag a region (right-click or `Esc` cancels; the dim is not saved), `Mod+Ctrl+Print` captures the focused window

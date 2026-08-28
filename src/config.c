@@ -224,6 +224,12 @@ bool parse_keybind(struct guibux_server *server, const char *value) {
 		action = GUIBUX_ACT_TOPBAR_ITEMS;
 	} else if (!strcmp(action_str, "lock")) {
 		action = GUIBUX_ACT_LOCK;
+	} else if (!strcmp(action_str, "screenshot-fullscreen")) {
+		action = GUIBUX_ACT_SCREENSHOT_FULLSCREEN;
+	} else if (!strcmp(action_str, "screenshot-region")) {
+		action = GUIBUX_ACT_SCREENSHOT_REGION;
+	} else if (!strcmp(action_str, "screenshot-window")) {
+		action = GUIBUX_ACT_SCREENSHOT_WINDOW;
 	} else {
 		wlr_log(WLR_ERROR, "config: bad keybind '%s' (unknown action '%s')",
 			value, action_str);

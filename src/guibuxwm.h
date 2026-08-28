@@ -180,6 +180,9 @@ enum guibux_action {
 	GUIBUX_ACT_RELOAD_CONFIG,
 	GUIBUX_ACT_TOPBAR_ITEMS,
 	GUIBUX_ACT_LOCK,
+	GUIBUX_ACT_SCREENSHOT_FULLSCREEN,
+	GUIBUX_ACT_SCREENSHOT_REGION,
+	GUIBUX_ACT_SCREENSHOT_WINDOW,
 };
 
 struct guibux_keybind {
@@ -365,6 +368,7 @@ enum guibux_osd_kind {
     OSD_VOLUME,
     OSD_MIC,
     OSD_BRIGHTNESS,
+    OSD_SHOT,
 };
 
 struct guibux_osd {
@@ -378,6 +382,25 @@ struct guibux_osd {
     int value;
     bool muted;
     uint32_t hide_at_ms;
+    char text[256];
+};
+
+/* screenshot.c: region-select overlay + pre-captured clean desktop. The
+ * desktop is read back before the dim overlay is committed so the saved
+ * image never includes the selection UI */
+struct guibux_screenshot {
+	bool active;                 /* region-select mode in progress */
+	struct guibux_output *output;
+	struct wlr_scene_rect *dim;          /* dim overlay over the output */
+	struct wlr_scene_buffer *sel_node;   /* selection border */
+	struct wlr_buffer *sel_buf;
+	int sel_x, sel_y, sel_w, sel_h;      /* logical, output-local */
+	bool dragging;
+	int drag_start_x, drag_start_y;
+	/* pre-captured clean desktop (device px, XRGB8888) */
+	uint8_t *clean_data;
+	uint32_t clean_w, clean_h, clean_stride;
+	char last_path[2048];
 };
 
 /* window-restore.c: last known position per app, persisted across
@@ -815,9 +838,10 @@ struct guibux_server {
 	struct wl_event_source *osd_test_timer;
 	struct wl_event_source *power_test_timer;
 	struct wl_event_source *lock_test_timer;
-	struct wl_event_source *topbar_items_test_timer;
-	struct wl_event_source *quit_test_timer;
-	struct wl_event_source *global_topbar_test_timer;
+    struct wl_event_source *topbar_items_test_timer;
+    struct wl_event_source *quit_test_timer;
+    struct wl_event_source *screenshot_test_timer;
+    struct wl_event_source *global_topbar_test_timer;
 	bool psel_test_enter_sent;
 struct guibux_launcher launcher;
     struct guibux_sysinfo sysinfo;
@@ -834,6 +858,7 @@ struct guibux_launcher launcher;
     struct guibux_power_panel power_panel;
     struct guibux_topbar_items_panel topbar_items_panel;
     struct guibux_lock lock;
+    struct guibux_screenshot screenshot;
     bool lock_on_idle;
     /* auto-hide: a new notification pops the panel (like an indicator
 	 * click); it closes after a delay unless the user interacts with it.
@@ -1053,6 +1078,7 @@ void preview_destroy(struct guibux_server *server);
 /* osd.c */
 void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
 	int value, bool muted);
+void osd_shot(struct guibux_server *server, const char *msg);
 void osd_hide(struct guibux_server *server);
 void osd_tick(struct guibux_server *server);
 void osd_destroy(struct guibux_server *server);
@@ -1179,6 +1205,16 @@ bool lock_handle_key(struct guibux_server *server, xkb_keysym_t sym);
 void lock_destroy(struct guibux_server *server);
 int lock_tick(void *data);
 int lock_test_run(void *data);
+
+/* screenshot.c */
+void screenshot_region_begin(struct guibux_server *server);
+void screenshot_region_update(struct guibux_server *server, double lx, double ly);
+void screenshot_region_end(struct guibux_server *server);
+void screenshot_region_cancel(struct guibux_server *server);
+void screenshot_window(struct guibux_server *server, struct guibux_toplevel *t);
+void screenshot_fullscreen(struct guibux_server *server);
+void screenshot_destroy(struct guibux_server *server);
+int screenshot_test_run(void *data);
 
 /* keyboard.c */
 void server_new_input(struct wl_listener *listener, void *data);

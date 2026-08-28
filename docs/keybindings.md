@@ -58,6 +58,9 @@ At least one modifier is required:
 | `mic-mute` | Toggle default source (mic) mute |
 | `brightness-up` | Increase brightness by 5% |
 | `brightness-down` | Decrease brightness by 5% |
+| `screenshot-fullscreen` | Capture the monitor under the cursor to a PNG (`Mod+Print`) |
+| `screenshot-region` | Drag a rectangle on the monitor under the cursor and save it to a PNG (`Mod+Shift+Print`) |
+| `screenshot-window` | Capture the focused window to a PNG (`Mod+Ctrl+Print`) |
 
 ## Default Keybindings
 
@@ -86,6 +89,9 @@ At least one modifier is required:
 | `Mod+Shift+q` | Quit |
 | `Alt+Escape` | Quit |
 | `Mod+Alt+Escape` | Quit |
+| `Mod+Print` | Screenshot: capture the monitor under the cursor to a PNG |
+| `Mod+Shift+Print` | Screenshot: drag a region on the monitor and save it to a PNG |
+| `Mod+Ctrl+Print` | Screenshot: capture the focused window to a PNG |
 
 ## Mouse
 
@@ -197,6 +203,14 @@ Every change is saved to the `outputs` line of the config and applied live, the 
 - `Esc` closes without running anything
 
 Each action runs the matching command: `systemctl suspend`, `systemctl hibernate`, `guibuxwm-lock` (falling back to `loginctl lock-session`), `loginctl terminate-session`, `systemctl reboot`, `systemctl poweroff`.
+
+## Screenshot
+
+Screenshot actions capture the screen to a PNG file in `$XDG_PICTURES_DIR` (or `~/Pictures`), named `guibuxwm-YYYYMMDD-HHMMSS.png`.
+
+- `Mod+Print` (`screenshot-fullscreen`): capture the whole monitor under the cursor.
+- `Mod+Shift+Print` (`screenshot-region`): dim the monitor and drag a rectangle with the left mouse button. Release to save the region; right-click or `Esc` cancels. The dim is not included in the saved image.
+- `Mod+Ctrl+Print` (`screenshot-window`): capture the keyboard-focused window.
 
 ## Overriding Defaults
 

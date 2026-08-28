@@ -40,7 +40,8 @@ xkb_layout = fr
 #          snap-left, snap-right, snap-top, snap-bottom,
 #          switch-ws-left, switch-ws-right,
 #          volume-up, volume-down, mute, mic-up, mic-down, mic-mute,
-#          brightness-up, brightness-down, power
+#          brightness-up, brightness-down, power,
+#          screenshot-fullscreen, screenshot-region, screenshot-window
 keybind = Mod+Return: terminal
 keybind = Mod+q: close
 keybind = Mod+f: fullscreen
@@ -72,6 +73,9 @@ keybind = Mod+m: outputs-panel
 keybind = Mod+p: power
 keybind = Mod+l: topbar-items
 keybind = Mod+Shift+l: lock
+keybind = Mod+Print: screenshot-fullscreen
+keybind = Mod+Shift+Print: screenshot-region
+keybind = Mod+Ctrl+Print: screenshot-window
 
 # audio (media keys XF86AudioRaiseVolume/LowerVolume/Mute/MicMute also
 # work without any binding; topbar: scroll adjusts, left click mutes,

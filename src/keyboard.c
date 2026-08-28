@@ -482,6 +482,15 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 	case GUIBUX_ACT_LOCK:
 		lock_show(server);
 		break;
+	case GUIBUX_ACT_SCREENSHOT_FULLSCREEN:
+		screenshot_fullscreen(server);
+		break;
+	case GUIBUX_ACT_SCREENSHOT_REGION:
+		screenshot_region_begin(server);
+		break;
+	case GUIBUX_ACT_SCREENSHOT_WINDOW:
+		screenshot_window(server, toplevel);
+		break;
 	}
 }
 
@@ -560,6 +569,12 @@ void keybinds_defaults(struct guibux_server *server) {
 		GUIBUX_ACT_TOPBAR_ITEMS, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_SHIFT, XKB_KEY_l,
 		GUIBUX_ACT_LOCK, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_Print,
+		GUIBUX_ACT_SCREENSHOT_FULLSCREEN, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_SHIFT, XKB_KEY_Print,
+		GUIBUX_ACT_SCREENSHOT_REGION, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO | WLR_MODIFIER_CTRL, XKB_KEY_Print,
+		GUIBUX_ACT_SCREENSHOT_WINDOW, 0);
 }
 
 bool handle_keybinding(struct guibux_server *server, xkb_keysym_t sym,
@@ -697,6 +712,13 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 					handled = handle_keybinding(server, base_sym, modifiers) ||
 						handle_keybinding(server, syms[i], modifiers);
 				}
+			} else if (server->screenshot.active) {
+				/* region-select owns the keyboard: Esc cancels, everything
+				 * else is swallowed so no key reaches a client */
+				if (syms[i] == XKB_KEY_Escape) {
+					screenshot_region_cancel(server);
+				}
+				handled = true;
 			} else if (repeat) {
 				break;
 			} else if (syms[i] == XKB_KEY_F12) {

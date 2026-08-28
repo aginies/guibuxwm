@@ -138,6 +138,12 @@ static void process_cursor_resize(struct guibux_server *server) {
 		wlr_seat_pointer_clear_focus(server->seat);
 		return;
 	}
+	if (server->screenshot.active) {
+		/* region-select owns the pointer: no client focus, track the drag */
+		wlr_seat_pointer_clear_focus(server->seat);
+		screenshot_region_update(server, server->cursor->x, server->cursor->y);
+		return;
+	}
 	if (server->overview.active && server->overview.drag_toplevel != NULL &&
 			!server->overview.drag_active) {
 		double dx = server->cursor->x - server->overview.drag_press_x;
@@ -281,6 +287,27 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 	if (server->lock.active) {
 		/* the lock consumes all pointer input: no click may reach a
 		 * client while the screen is locked */
+		server->button_consumed = event->button;
+		return;
+	}
+	if (server->screenshot.active) {
+		/* region-select owns the pointer: left button drags the selection,
+		 * any other button cancels */
+		if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
+			if (event->button == 272) { /* BTN_LEFT: start the drag */
+				struct guibux_screenshot *ss = &server->screenshot;
+				ss->dragging = true;
+				ss->drag_start_x = server->cursor->x;
+				ss->drag_start_y = server->cursor->y;
+				ss->sel_x = ss->sel_y = ss->sel_w = ss->sel_h = 0;
+			} else {
+				screenshot_region_cancel(server);
+			}
+		} else { /* RELEASED */
+			if (event->button == 272) {
+				screenshot_region_end(server);
+			}
+		}
 		server->button_consumed = event->button;
 		return;
 	}

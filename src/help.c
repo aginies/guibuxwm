@@ -96,6 +96,9 @@ static const char *action_label(enum guibux_action action, int arg) {
 	case GUIBUX_ACT_RELOAD_CONFIG:  return "reload config";
 	case GUIBUX_ACT_TOPBAR_ITEMS:   return "topbar items";
 	case GUIBUX_ACT_LOCK:           return "lock screen";
+	case GUIBUX_ACT_SCREENSHOT_FULLSCREEN: return "screenshot: monitor";
+	case GUIBUX_ACT_SCREENSHOT_REGION:     return "screenshot: region";
+	case GUIBUX_ACT_SCREENSHOT_WINDOW:     return "screenshot: window";
 	default:                       return "unknown";
 	}
 }

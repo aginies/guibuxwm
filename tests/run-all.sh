@@ -37,6 +37,7 @@ run "topbar tooltips" ./run-tooltip-test.sh
 run "osd" ./run-osd-test.sh
 run "power menu" ./run-power-test.sh
 run "lock screen" ./run-lock-test.sh
+run "screenshot" ./run-screenshot-test.sh
 run "topbar items panel" ./run-topbar-items-test.sh
 run "topbar scroll" ./run-scroll-test.sh
 run "alt+drag move" ./run-altdrag-test.sh
