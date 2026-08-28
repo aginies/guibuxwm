@@ -113,6 +113,31 @@ void end_seat_grabs(struct guibux_server *server) {
 	}
 }
 
+/* after a workspace switch, focus the window under the pointer on the
+ * switched output; if the pointer is on empty space, focus the first
+ * visible window of that output */
+static void ws_switch_refocus(struct guibux_output *output) {
+	struct guibux_server *server = output->server;
+	struct wlr_surface *surface;
+	double sx, sy;
+	struct guibux_toplevel *at = desktop_toplevel_at(server,
+		server->cursor->x, server->cursor->y, &surface, &sx, &sy);
+	if (at != NULL && toplevel_visible(at) &&
+			toplevel_output_for(at) == output->wlr_output) {
+		focus_toplevel(at, toplevel_covered(at));
+		return;
+	}
+	struct guibux_toplevel *t;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (toplevel_visible(t) &&
+				toplevel_output_for(t) == output->wlr_output) {
+			focus_toplevel(t, true);
+			return;
+		}
+	}
+	clear_keyboard_focus(server);
+}
+
 /* state change only: current workspace, background, grabs, focus,
  * topbar. Scene node visibility is applied by the caller (immediately,
  * or by the transition animation) */
@@ -124,40 +149,7 @@ void ws_switch_state(struct guibux_output *output, int ws) {
 	background_render(output);
 
 	end_seat_grabs(server);
-
-	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
-	struct wlr_xdg_toplevel *focused_xdg = NULL;
-	struct wlr_xwayland_surface *focused_xs = NULL;
-	if (focused != NULL) {
-		focused_xdg = wlr_xdg_toplevel_try_from_wlr_surface(focused);
-		focused_xs = wlr_xwayland_surface_try_from_wlr_surface(focused);
-	}
-	struct guibux_toplevel *focused_toplevel = NULL;
-	if (focused_xdg != NULL || focused_xs != NULL) {
-		struct guibux_toplevel *t;
-		wl_list_for_each(t, &server->toplevels, link) {
-			if ((focused_xdg != NULL && t->xdg_toplevel == focused_xdg) ||
-					(focused_xs != NULL && t->xsurface == focused_xs)) {
-				focused_toplevel = t;
-				break;
-			}
-		}
-	}
-	if (focused_toplevel != NULL && !toplevel_visible(focused_toplevel)) {
-		struct guibux_toplevel *t;
-		struct guibux_toplevel *next = NULL;
-		wl_list_for_each(t, &server->toplevels, link) {
-			if (toplevel_visible(t)) {
-				next = t;
-				break;
-			}
-		}
-		if (next != NULL) {
-			focus_toplevel(next, true);
-		} else {
-			clear_keyboard_focus(server);
-		}
-	}
+	ws_switch_refocus(output);
 	topbar_mark_dirty(output);
 }
 
@@ -180,6 +172,7 @@ void switch_workspace(struct guibux_output *output, int ws) {
 		return;
 	}
 	ws_switch_immediate(output, ws);
+	osd_ws(output->server, output, ws);
 }
 
 void move_toplevel_to_workspace(struct guibux_toplevel *toplevel, int ws) {

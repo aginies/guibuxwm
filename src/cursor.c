@@ -4,63 +4,6 @@
 /* pointer travel before an overview press becomes a drag */
 #define OVERVIEW_DRAG_THRESHOLD 5
 
-/* the window's box in absolute scene coordinates */
-static void toplevel_abs_box(struct guibux_toplevel *t, struct wlr_box *box) {
-	struct wlr_box geo;
-	toplevel_get_geometry(t, &geo);
-	box->x = (int)t->scene_tree->node.x + geo.x;
-	box->y = (int)t->scene_tree->node.y + geo.y;
-	box->width = geo.width;
-	box->height = geo.height;
-}
-
-/* true when another visible, non-fullscreen window on the same output
- * sits above this one in the scene tree and overlaps it: the hover
- * focus is hidden and must raise to be usable */
-static bool toplevel_covered(struct guibux_toplevel *t) {
-	if (t->scene_tree == NULL || !t->scene_tree->node.enabled) {
-		return false;
-	}
-	struct wlr_box tb;
-	toplevel_abs_box(t, &tb);
-	if (tb.width <= 0 || tb.height <= 0) {
-		return false;
-	}
-	struct wlr_scene_node *self = &t->scene_tree->node;
-	struct wlr_scene_node *n;
-	bool seen_self = false;
-	wl_list_for_each(n, &t->server->scene->tree.children, link) {
-		if (n == self) {
-			seen_self = true;
-			continue;
-		}
-		if (!seen_self || !n->enabled || n->type != WLR_SCENE_NODE_TREE) {
-			continue;
-		}
-		struct guibux_toplevel *o = n->data;
-		if (o == NULL || o == t || o->scene_tree == NULL) {
-			continue;
-		}
-		if (o->is_fullscreen || !o->scene_tree->node.enabled) {
-			continue;
-		}
-		if (toplevel_output_for(o) != toplevel_output_for(t)) {
-			continue;
-		}
-		struct wlr_box ob;
-		toplevel_abs_box(o, &ob);
-		if (ob.width <= 0 || ob.height <= 0) {
-			continue;
-		}
-		if (ob.x >= tb.x + tb.width || ob.x + ob.width <= tb.x ||
-				ob.y >= tb.y + tb.height || ob.y + ob.height <= tb.y) {
-			continue;
-		}
-		return true;
-	}
-	return false;
-}
-
 void reset_cursor_mode(struct guibux_server *server) {
 	server->cursor_mode = GUIBUX_CURSOR_PASSTHROUGH;
 	server->grabbed_toplevel = NULL;

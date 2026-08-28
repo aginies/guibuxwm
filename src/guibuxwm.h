@@ -369,6 +369,7 @@ enum guibux_osd_kind {
     OSD_MIC,
     OSD_BRIGHTNESS,
     OSD_SHOT,
+    OSD_WS,
 };
 
 struct guibux_osd {
@@ -383,6 +384,7 @@ struct guibux_osd {
     bool muted;
     uint32_t hide_at_ms;
     char text[256];
+    int font_scale;  /* font size multiplier, 1 = topbar_font_size */
 };
 
 /* screenshot.c: region-select overlay + pre-captured clean desktop. The
@@ -922,6 +924,7 @@ struct wlr_output *toplevel_output_for(struct guibux_toplevel *toplevel);
 struct wlr_output *toplevel_output_at_position(struct guibux_toplevel *toplevel);
 void topbar_raise_all(struct guibux_server *server);
 bool toplevel_visible(struct guibux_toplevel *toplevel);
+bool toplevel_covered(struct guibux_toplevel *toplevel);
 void server_new_output(struct wl_listener *listener, void *data);
 void output_frame(struct wl_listener *listener, void *data);
 void output_request_state(struct wl_listener *listener, void *data);
@@ -1079,6 +1082,7 @@ void preview_destroy(struct guibux_server *server);
 void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
 	int value, bool muted);
 void osd_shot(struct guibux_server *server, const char *msg);
+void osd_ws(struct guibux_server *server, struct guibux_output *output, int ws);
 void osd_hide(struct guibux_server *server);
 void osd_tick(struct guibux_server *server);
 void osd_destroy(struct guibux_server *server);

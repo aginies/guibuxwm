@@ -8,6 +8,7 @@
 #define OSD_MIN_W 220
 #define OSD_SHOT_MIN_W 480
 #define OSD_TEXT_H 24
+#define OSD_WS_TEXT_H 96
 #define OSD_BAR_H 8
 #define OSD_TEXT_BAR_GAP 8
 
@@ -64,11 +65,12 @@ void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
 	struct wlr_box box;
 	wlr_output_layout_get_box(server->output_layout, output, &box);
 	int scale = guibux_scale_round(output->scale);
-	int font_px = server->topbar_font_size * scale;
+	int font_scale = osd->font_scale > 0 ? osd->font_scale : 1;
+	int font_px = server->topbar_font_size * scale * font_scale;
 	FT_Set_Pixel_Sizes(server->launcher.face, 0, font_px);
 
 	char text[256];
-	if (kind == OSD_SHOT) {
+	if (kind == OSD_SHOT || kind == OSD_WS) {
 		snprintf(text, sizeof(text), "%s", osd->text);
 	} else {
 		const char *label;
@@ -95,9 +97,10 @@ void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
 	int min_w = (kind == OSD_SHOT) ? OSD_SHOT_MIN_W : OSD_MIN_W;
 	if (bw < min_w)
 		bw = min_w;
+	int text_h = (kind == OSD_WS) ? OSD_WS_TEXT_H : OSD_TEXT_H;
 	int bh;
-	if (kind == OSD_SHOT) {
-		bh = 2 * OSD_PAD + OSD_TEXT_H;
+	if (kind == OSD_SHOT || kind == OSD_WS) {
+		bh = 2 * OSD_PAD + text_h;
 	} else {
 		bh = OSD_PAD + OSD_TEXT_H + OSD_TEXT_BAR_GAP + OSD_BAR_H + OSD_PAD;
 	}
@@ -156,11 +159,11 @@ void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
 			cairo_set_line_width(cr, scale);
 			cairo_rectangle(cr, scale / 2.0, scale / 2.0, w - scale, h - scale);
 			cairo_stroke(cr);
-			int baseline = OSD_PAD * scale + OSD_TEXT_H * scale / 2 +
+			int baseline = OSD_PAD * scale + text_h * scale / 2 +
 				font_px * 35 / 100;
 			launcher_draw_text_on_surface(cs, server->launcher.face, text,
 				OSD_PAD * scale, baseline, server->color_text);
-			if (kind != OSD_SHOT) {
+			if (kind != OSD_SHOT && kind != OSD_WS) {
 				int bar_y = (OSD_PAD + OSD_TEXT_H + OSD_TEXT_BAR_GAP) * scale;
 				int bar_w = (w - 2 * OSD_PAD * scale);
 				set_color(cr, server->color_border);
@@ -190,6 +193,15 @@ void osd_shot(struct guibux_server *server, const char *msg) {
 	struct guibux_osd *osd = &server->osd;
 	snprintf(osd->text, sizeof(osd->text), "%s", msg);
 	osd_show(server, OSD_SHOT, 0, false);
+}
+
+void osd_ws(struct guibux_server *server, struct guibux_output *output, int ws) {
+	struct guibux_osd *osd = &server->osd;
+	char mon = output != NULL ? 'A' + (output->topbar_number - 1) : 'A';
+	snprintf(osd->text, sizeof(osd->text), "%c%d", mon, ws);
+	osd->font_scale = 4;
+	osd_show(server, OSD_WS, 0, false);
+	osd->font_scale = 1;
 }
 
 void osd_tick(struct guibux_server *server) {
@@ -265,6 +277,27 @@ int osd_test_run(void *data) {
 	osd_tick(server);
 	if (server->osd.active) {
 		wlr_log(WLR_ERROR, "osd-test: FAIL shot osd not hidden");
+		return 0;
+	}
+	/* OSD_WS: big font, text-only, no bar */
+	osd_ws(server, guibux_output_for(server, output), 3);
+	if (!server->osd.active) {
+		wlr_log(WLR_ERROR, "osd-test: FAIL ws osd not shown");
+		return 0;
+	}
+	if (server->osd.kind != OSD_WS) {
+		wlr_log(WLR_ERROR, "osd-test: FAIL ws osd wrong kind");
+		return 0;
+	}
+	if (server->osd.box_h != 2 * OSD_PAD + OSD_WS_TEXT_H) {
+		wlr_log(WLR_ERROR, "osd-test: FAIL ws osd height %d (want %d, big font)",
+			server->osd.box_h, 2 * OSD_PAD + OSD_WS_TEXT_H);
+		return 0;
+	}
+	server->osd.hide_at_ms = 0;
+	osd_tick(server);
+	if (server->osd.active) {
+		wlr_log(WLR_ERROR, "osd-test: FAIL ws osd not hidden");
 		return 0;
 	}
 	wlr_log(WLR_INFO, "osd-test: OK (volume 65%%, box %dx%d at %d,%d)",
