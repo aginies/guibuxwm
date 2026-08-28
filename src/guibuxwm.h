@@ -561,6 +561,7 @@ struct guibux_toplevel {
 	struct wlr_buffer *border_buffer;
 	int border_w, border_h;  /* last rendered size (logical px) */
 	int border_scale;        /* last rendered output scale */
+	int border_workspace;    /* last rendered workspace (color key) */
 	uint32_t border_color;   /* last rendered stroke color */
 	bool border_valid;       /* buffer holds a complete stroke */
 };

@@ -128,6 +128,31 @@ int workspace_test_run(void *data) {
 		switch_workspace(o, 1);
 	}
 	effects_flush(server);
+	/* after switching back, the focused window's border must carry its
+	 * own workspace color: a stale border buffer (drawn for another
+	 * workspace) would only be caught here, not by the move check above */
+	{
+		struct wlr_surface *focused =
+			server->seat->keyboard_state.focused_surface;
+		struct guibux_toplevel *ft = NULL;
+		wl_list_for_each(t, &server->toplevels, link) {
+			if (toplevel_get_surface(t) == focused) {
+				ft = t;
+				break;
+			}
+		}
+		if (ft != NULL && server->overview.ws_colors_enabled &&
+				ft->workspace >= 1 && ft->workspace <= NUM_WORKSPACES &&
+				server->overview.ws_colors[ft->workspace - 1] != 0) {
+			if (ft->border_color != server->overview.ws_colors[ft->workspace - 1]) {
+				wlr_log(WLR_ERROR, "workspace-test: FAIL border color after "
+					"switch back (got 0x%08x, want 0x%08x)",
+					ft->border_color,
+					server->overview.ws_colors[ft->workspace - 1]);
+				return 0;
+			}
+		}
+	}
 	wl_list_for_each(t, &server->toplevels, link) {
 		if (!t->scene_tree->node.enabled) {
 			wlr_log(WLR_ERROR, "workspace-test: FAIL toplevel still "

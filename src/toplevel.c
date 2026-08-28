@@ -83,9 +83,9 @@ static void toplevel_border_render(struct guibux_toplevel *t) {
 		buffer_new = true;
 	}
 
-	/* the stroke depends only on size, scale, and color; skip the cairo
-	 * redraw when none changed (commits during idle/focus churn). A
-	 * freshly created buffer is always blank and must be drawn */
+	/* the stroke depends only on size, scale, workspace, and color; skip
+	 * the cairo redraw when none changed (commits during idle/focus
+	 * churn). A freshly created buffer is always blank and must be drawn */
 	uint32_t stroke_color = server->window_border_color;
 	if (server->overview.ws_colors_enabled &&
 			t->workspace >= 1 && t->workspace <= NUM_WORKSPACES &&
@@ -94,19 +94,21 @@ static void toplevel_border_render(struct guibux_toplevel *t) {
 	}
 	if (!buffer_new && t->border_valid &&
 			t->border_w == bw_l && t->border_h == bh_l &&
-			t->border_scale == scale && t->border_color == stroke_color) {
+			t->border_scale == scale &&
+			t->border_workspace == t->workspace &&
+			t->border_color == stroke_color) {
 		wlr_scene_node_set_position(&t->border_node->node, off, off);
 		wlr_scene_node_set_enabled(&t->border_node->node, true);
 		return;
 	}
-	t->border_scale = scale;
-	t->border_color = stroke_color;
 
 	void *data;
 	uint32_t buf_format;
 	size_t stride;
 	if (!wlr_buffer_begin_data_ptr_access(t->border_buffer,
 			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &buf_format, &stride)) {
+		/* the cache keys are only written after a successful draw:
+		 * a failed access must not mark the stale buffer as valid */
 		return;
 	}
 	if (buf_format == DRM_FORMAT_ARGB8888) {
@@ -136,6 +138,9 @@ static void toplevel_border_render(struct guibux_toplevel *t) {
 	}
 	wlr_buffer_end_data_ptr_access(t->border_buffer);
 	t->border_valid = true;
+	t->border_scale = scale;
+	t->border_color = stroke_color;
+	t->border_workspace = t->workspace;
 
 	/* position the buffer relative to the scene tree (window origin) */
 	wlr_scene_node_set_position(&t->border_node->node, off, off);
