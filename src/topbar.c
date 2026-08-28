@@ -878,19 +878,25 @@ static void topbar_render_focus(struct guibux_output *o) {
 	}
 	int cell_y = o->topbar_cell_y;
 	int cell_h = o->topbar_cell_h;
-	/* repaint the workspace-cells region with the topbar background so
-	 * stale mini-map rects do not linger, then redraw the mini-map */
+	/* repaint the workspace-cells region with an opaque topbar background
+	 * so stale mini-map rects do not linger, then redraw the mini-map.
+	 * Opaque (not topbar_bg_fill's translucent fill): the RGB24 surface
+	 * has no alpha channel, so a translucent fill would blend with the
+	 * stale content underneath and leave ghost pixels */
 	int ws_x0 = o->topbar_ws_x[1];
 	int ws_x1 = o->topbar_ws_x[NUM_WORKSPACES] + o->topbar_ws_cell_w;
-	topbar_bg_fill(cr, server, ws_x0 * scale, 0,
-		(ws_x1 - ws_x0) * scale, h);
+	set_color(cr, server->color_topbar_bg);
+	cairo_rectangle(cr, ws_x0 * scale, 0, (ws_x1 - ws_x0) * scale, h);
+	cairo_fill(cr);
 	topbar_minimap_draw(o, cr, scale, cell_y, cell_h,
 		o->topbar_ws_cell_w, kb_focus_t);
 	/* repaint the pill region and redraw the pills */
 	if (o->topbar_win_region_x > 0) {
 		int rx = o->topbar_win_region_x * scale;
 		int rw = (o->topbar_win_region_end - o->topbar_win_region_x) * scale;
-		topbar_bg_fill(cr, server, rx, 0, rw, h);
+		set_color(cr, server->color_topbar_bg);
+		cairo_rectangle(cr, rx, 0, rw, h);
+		cairo_fill(cr);
 		int font_px = server->topbar_font_size * scale;
 		int baseline = o->server->topbar_height / 2 * scale + font_px * 35 / 100;
 		topbar_pills_draw(o, cr, cs, scale, baseline, cell_y, cell_h,
