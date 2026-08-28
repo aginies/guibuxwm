@@ -161,6 +161,7 @@ static void process_cursor_resize(struct guibux_server *server) {
 				server->cursor->y))) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
 	} else if (server->power_panel.active &&
+			!server->power_panel.confirming &&
 			power_panel_action_at(server, server->cursor->x,
 				server->cursor->y) >= 0) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
@@ -282,12 +283,16 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 	}
 	if (server->power_panel.active) {
 		if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
-			int idx = power_panel_action_at(server, server->cursor->x,
-				server->cursor->y);
-			if (idx >= 0) {
-				power_panel_select(server, idx);
+			if (server->power_panel.confirming) {
+				power_panel_handle_key(server, XKB_KEY_Return);
 			} else {
-				power_panel_hide(server);
+				int idx = power_panel_action_at(server, server->cursor->x,
+					server->cursor->y);
+				if (idx >= 0) {
+					power_panel_select(server, idx);
+				} else {
+					power_panel_hide(server);
+				}
 			}
 		}
 		server->button_consumed = event->button;

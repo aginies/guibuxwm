@@ -667,6 +667,8 @@ struct guibux_power_panel {
 	struct wlr_buffer *buffer;
 	int box_w, box_h, box_scale;
 	int selected;
+	bool confirming;
+	int confirm_idx;
 };
 
 struct guibux_topbar_items_panel {
