@@ -154,8 +154,18 @@ static void switcher_render(struct guibux_server *server) {
 		int mb = ly + lh / 2 + font_px * 35 / 100;
 		uint32_t mc = (i == s->selection) ? server->color_text :
 			server->color_dim;
-		launcher_draw_text_on_surface(cs, face, label,
-			SWITCHER_PAD * s->box_scale, mb, mc);
+		int tx = SWITCHER_PAD * s->box_scale;
+		/* workspace color bar left of the label, like the topbar pills */
+		uint32_t ws_color = server->overview.ws_colors[t->workspace - 1];
+		if (server->overview.ws_colors_enabled && ws_color != 0) {
+			set_color(cr, ws_color);
+			cairo_rectangle(cr, (SWITCHER_PAD - 7) * s->box_scale,
+				ly + 4 * s->box_scale, 3 * s->box_scale,
+				lh - 8 * s->box_scale);
+			cairo_fill(cr);
+			tx += 7 * s->box_scale;
+		}
+		launcher_draw_text_on_surface(cs, face, label, tx, mb, mc);
 	}
 
 	cairo_destroy(cr);

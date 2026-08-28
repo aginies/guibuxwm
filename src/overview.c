@@ -154,6 +154,15 @@ static void overview_render_ws_col(struct guibux_output *o, int hover_ws) {
 		snprintf(label, sizeof(label), "%c%d",
 			'A' + (o->topbar_number - 1), ws);
 		int tw = guibux_text_width(face, label);
+		/* workspace color bar on the left edge, like the topbar pills */
+		int bar_w = 0;
+		if (server->overview.ws_colors_enabled &&
+				server->overview.ws_colors[ws - 1] != 0) {
+			bar_w = 3 * sc;
+			set_color(cr, server->overview.ws_colors[ws - 1]);
+			cairo_rectangle(cr, 0, y, bar_w, ch);
+			cairo_fill(cr);
+		}
 		int x = (w - tw) / 2;
 		if (x < 0) x = 0;
 		int mb = y + ch / 2 + font_px * 35 / 100;
