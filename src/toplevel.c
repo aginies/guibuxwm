@@ -598,6 +598,12 @@ void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	wl_list_remove(&toplevel->request_resize.link);
 	wl_list_remove(&toplevel->request_maximize.link);
 	wl_list_remove(&toplevel->request_fullscreen.link);
+	/* the scene tree is destroyed by wlroots after this signal (the xdg
+	 * surface's destroy fires later); detach the listener now or it would
+	 * fire on freed memory when the border node dies with the tree */
+	if (toplevel->scene_tree != NULL) {
+		wl_list_remove(&toplevel->scene_destroy.link);
+	}
 
 	toplevel->open_effect_pending = false;
 	if (toplevel->scene_tree != NULL) {
@@ -1019,12 +1025,17 @@ static void xsurface_destroy(struct wl_listener *listener, void *data) {
 	wlr_log(WLR_INFO, "destroyed xwayland toplevel '%s'",
 		toplevel->xsurface->title ? toplevel->xsurface->title : "(untitled)");
 
-	/* map/unmap/commit listeners are added at associate time and survive
-	 * dissociate (which only destroys the scene tree); removing them
-	 * conditionally on scene_tree leaks the list entries */
-	wl_list_remove(&toplevel->map.link);
-	wl_list_remove(&toplevel->unmap.link);
-	wl_list_remove(&toplevel->commit.link);
+	/* map/unmap/commit listeners are removed at dissociate time (which
+	 * always precedes destroy for a mapped X11 window); removing them
+	 * again here would corrupt the surface's listener list. The scene
+	 * tree (and its destroy listener) was also destroyed at dissociate
+	 * time; only the never-associated case still has a live tree */
+	if (toplevel->scene_tree != NULL) {
+		wl_list_remove(&toplevel->map.link);
+		wl_list_remove(&toplevel->unmap.link);
+		wl_list_remove(&toplevel->commit.link);
+		wl_list_remove(&toplevel->scene_destroy.link);
+	}
 	wl_list_remove(&toplevel->associate.link);
 	wl_list_remove(&toplevel->dissociate.link);
 	wl_list_remove(&toplevel->destroy.link);
