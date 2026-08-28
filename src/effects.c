@@ -325,6 +325,14 @@ void effects_window_open(struct guibux_toplevel *toplevel) {
 	toplevel->open_effect_pending = true;
 }
 
+/* completion of the open slide: snap the node to its target so a killed
+ * or settled anim never leaves it at the slide start (a ghost on a
+ * neighbouring monitor) */
+static void effects_slide_done(void *data) {
+	struct guibux_effects_anim *a = data;
+	wlr_scene_node_set_position(a->node, (int)a->tx, (int)a->ty);
+}
+
 /* called on every commit while pending; starts the effect once the
  * window has buffer content (a size to scale) */
 void effects_window_open_start(struct guibux_toplevel *toplevel) {
@@ -375,6 +383,17 @@ void effects_window_open_start(struct guibux_toplevel *toplevel) {
 				a->fy = cy;
 				a->tx = nx;
 				a->ty = ny;
+				/* snap to the real position on completion: a killed or
+				 * settled anim must never leave the node at the slide
+				 * start (or an interpolated point), which would ghost on
+				 * a neighbouring monitor */
+				a->done = effects_slide_done;
+				a->done_data = a;
+			} else {
+				/* no anim slot: the node would stay at the slide start
+				 * forever (a ghost on another monitor) */
+				wlr_scene_node_set_position(&toplevel->scene_tree->node,
+					nx, ny);
 			}
 		}
 	}
