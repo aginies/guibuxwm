@@ -192,11 +192,19 @@ class RemoteAutoHTTPServer:
         self.actual_port: Optional[int] = None
         self.remote_dir: Optional[str] = None
         self._pid_file: Optional[str] = None
+        self._ssh_master: Optional[str] = None
+
+    def _ssh_control_args(self) -> list:
+        """SSH ControlMaster args for connection reuse."""
+        if not self._ssh_master:
+            self._ssh_master = f"/tmp/virtui_ssh_{uuid.uuid4().hex[:8]}"
+        return ["-o", f"ControlMaster=auto", "-o", f"ControlPath={self._ssh_master}",
+                "-o", "ControlPersist=60"]
 
     def _run_remote(self, cmd: str, check: bool = True, timeout: int = 30) -> subprocess.CompletedProcess:
         """Run a command on the remote host via SSH."""
         return subprocess.run(
-            ["ssh", self.remote_host, cmd],
+            ["ssh", *self._ssh_control_args(), self.remote_host, cmd],
             capture_output=True,
             text=True,
             check=check,
@@ -258,14 +266,18 @@ class RemoteAutoHTTPServer:
             # Create remote directory
             self._run_remote(f"mkdir -p {self.remote_dir}", timeout=10)
 
-            # Push each file from local serve_dir to remote via base64
-            for item in sorted(self.serve_dir.iterdir()):
-                if not item.is_file():
-                    continue
-                with open(item, "rb") as f:
-                    b64_data = base64.b64encode(f.read()).decode("ascii")
+            # Push all files in one SSH call via tar+base64
+            files = [item for item in sorted(self.serve_dir.iterdir()) if item.is_file()]
+            if files:
+                import tarfile
+                import io
+                tar_buffer = io.BytesIO()
+                with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
+                    for item in files:
+                        tar.add(item, arcname=item.name)
+                tar_b64 = base64.b64encode(tar_buffer.getvalue()).decode("ascii")
                 self._run_remote(
-                    f"echo '{b64_data}' | base64 -d > {self.remote_dir}/{item.name}",
+                    f"echo '{tar_b64}' | base64 -d | tar x -C {self.remote_dir}",
                     timeout=60,
                 )
 
@@ -379,6 +391,11 @@ class RemoteAutoHTTPServer:
             self.actual_port = None
             self.remote_dir = None
             self._pid_file = None
+            if self._ssh_master:
+                subprocess.run(["ssh", "-o", f"ControlPath={self._ssh_master}",
+                                "-O", "exit", self.remote_host],
+                               capture_output=True, check=False, timeout=10)
+                self._ssh_master = None
 
     def get_url(self, filename: str, host: str = "localhost") -> str:
         """
