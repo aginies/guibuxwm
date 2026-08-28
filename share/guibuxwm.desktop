@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=guibuxwm
+Comment=Wayland window compositor
+Exec=guibuxwm
+TryExec=guibuxwm
+Type=Application
+DesktopNames=guibuxwm

@@ -56,4 +56,11 @@ executable('guibuxwm-output',
   install: true,
 )
 
+# session entries: same file installed to both xsessions and
+# wayland-sessions so the login manager offers guibuxwm as a session
+install_data('share/guibuxwm.desktop',
+  install_dir: get_option('prefix') / 'share/xsessions')
+install_data('share/guibuxwm.desktop',
+  install_dir: get_option('prefix') / 'share/wayland-sessions')
+
 subdir('tests')
