@@ -1,5 +1,6 @@
 #include "guibuxwm.h"
 #include <wlr/types/wlr_scene.h>
+#include <drm_fourcc.h>
 #include <string.h>
 #include <strings.h>
 
@@ -7,66 +8,113 @@
 // Focus border
 // ---------------------------------------------------------------------------
 
-/* update the focus border rect to match the window's current geometry;
- * the border is a 2px outline slightly larger than the window */
-static void toplevel_border_update(struct guibux_toplevel *t) {
-	if (t->border_node == NULL || t->scene_tree == NULL) {
-		return;
-	}
+/* draw a rounded-rect outline into the border buffer; the outline is
+ * centered on the window edge (offset -bw/2) so it matches the client's
+ * rounded corners. The buffer is created on first use and reused (only
+ * re-created when the size or scale changes) */
+static void toplevel_border_render(struct guibux_toplevel *t) {
 	struct guibux_server *server = t->server;
 	int bw = server->window_border_width;
-	if (bw <= 0 || t->is_fullscreen) {
-		wlr_scene_node_set_enabled(&t->border_node->node, false);
+	if (bw <= 0 || t->is_fullscreen || t->scene_tree == NULL) {
+		toplevel_border_hide(t);
 		return;
 	}
 	struct wlr_box geo;
 	toplevel_get_geometry(t, &geo);
 	if (geo.width <= 0 || geo.height <= 0) {
-		wlr_scene_node_set_enabled(&t->border_node->node, false);
+		toplevel_border_hide(t);
 		return;
 	}
-	/* border is centered on the window edge: offset by -bw/2 */
+	/* the border is drawn slightly larger than the window, centered on
+	 * the window edge: the buffer spans [off, off+geo.w+bw] x [off, off+geo.h+bw]
+	 * where off = -bw/2, so the buffer's logical size is geo.w+bw x geo.h+bw */
 	int off = -bw / 2;
-	wlr_scene_node_set_position(&t->border_node->node,
-		t->scene_tree->node.x + off,
-		t->scene_tree->node.y + off);
-	wlr_scene_rect_set_size(t->border_node,
-		geo.width + bw, geo.height + bw);
-	uint32_t c = server->window_border_color;
-	float color[4] = {
-		((c >> 16) & 0xFF) / 255.0f,
-		((c >> 8) & 0xFF) / 255.0f,
-		(c & 0xFF) / 255.0f,
-		1.0f,
-	};
-	wlr_scene_rect_set_color(t->border_node, color);
-	wlr_scene_node_set_enabled(&t->border_node->node, true);
-}
+	int bw_l = geo.width + bw;   /* buffer logical width */
+	int bh_l = geo.height + bw;  /* buffer logical height */
+	struct wlr_output *wo = toplevel_output_for(t);
+	int scale = wo != NULL ? guibux_scale_round(wo->scale) : 1;
+	int bw_d = bw_l * scale;  /* buffer device width */
+	int bh_d = bh_l * scale;  /* buffer device height */
 
-/* create the border rect if it doesn't exist; it starts disabled */
-static void toplevel_border_ensure(struct guibux_toplevel *t) {
-	if (t->border_node != NULL || t->scene_tree == NULL) {
+	/* create or resize the buffer */
+	if (t->border_buffer == NULL || t->border_w != bw_l || t->border_h != bh_l) {
+		if (t->border_node != NULL) {
+			wlr_scene_node_destroy(&t->border_node->node);
+			t->border_node = NULL;
+		}
+		if (t->border_buffer != NULL) {
+			wlr_buffer_drop(t->border_buffer);
+			t->border_buffer = NULL;
+		}
+		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
+		struct wlr_drm_format format = {
+			.format = DRM_FORMAT_ARGB8888,
+			.len = 1,
+			.modifiers = mods,
+		};
+		t->border_buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
+			bw_d, bh_d, &format);
+		if (t->border_buffer == NULL) {
+			wlr_log(WLR_ERROR, "border: failed to create buffer");
+			return;
+		}
+		t->border_w = bw_l;
+		t->border_h = bh_l;
+		t->border_node = wlr_scene_buffer_create(t->scene_tree, t->border_buffer);
+		if (t->border_node == NULL) {
+			wlr_buffer_drop(t->border_buffer);
+			t->border_buffer = NULL;
+			t->border_w = 0;
+			t->border_h = 0;
+			return;
+		}
+		wlr_scene_buffer_set_dest_size(t->border_node, bw_l, bh_l);
+	}
+
+	void *data;
+	uint32_t buf_format;
+	size_t stride;
+	if (!wlr_buffer_begin_data_ptr_access(t->border_buffer,
+			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &buf_format, &stride)) {
 		return;
 	}
-	uint32_t c = t->server->window_border_color;
-	float color[4] = {
-		((c >> 16) & 0xFF) / 255.0f,
-		((c >> 8) & 0xFF) / 255.0f,
-		(c & 0xFF) / 255.0f,
-		1.0f,
-	};
-	t->border_node = wlr_scene_rect_create(t->scene_tree, 0, 0, color);
-	if (t->border_node != NULL) {
-		wlr_scene_node_set_enabled(&t->border_node->node, false);
+	if (buf_format == DRM_FORMAT_ARGB8888) {
+		cairo_surface_t *cs = cairo_image_surface_create_for_data(
+			data, CAIRO_FORMAT_ARGB32, bw_d, bh_d, (int)stride);
+		cairo_t *cr = cairo_create(cs);
+		/* clear to transparent (black with no alpha in XRGB = invisible
+		 * over the window since the border is drawn on top) */
+		cairo_set_source_rgba(cr, 0, 0, 0, 0);
+		cairo_paint(cr);
+		/* rounded-rect outline: the window's corner radius is typically
+		 * 8-12px; use 12px to match common GTK/Qt defaults */
+		double radius = 12.0 * scale;
+		double line_w = bw * scale;
+		/* inset the path by half the line width so the stroke is centered
+		 * on the buffer edge (the buffer spans the window + bw) */
+		double inset = line_w / 2.0;
+		topbar_rounded_rect(cr, inset, inset,
+			bw_d - 2 * inset, bh_d - 2 * inset, radius);
+		uint32_t c = server->window_border_color;
+		cairo_set_source_rgb(cr, ((c >> 16) & 0xFF) / 255.0,
+			((c >> 8) & 0xFF) / 255.0, (c & 0xFF) / 255.0);
+		cairo_set_line_width(cr, line_w);
+		cairo_stroke(cr);
+		cairo_destroy(cr);
+		cairo_surface_destroy(cs);
 	}
+	wlr_buffer_end_data_ptr_access(t->border_buffer);
+
+	/* position the buffer relative to the scene tree (window origin) */
+	wlr_scene_node_set_position(&t->border_node->node, off, off);
+	wlr_scene_node_set_enabled(&t->border_node->node, true);
 }
 
 void toplevel_border_show(struct guibux_toplevel *t) {
 	if (t == NULL || t->scene_tree == NULL) {
 		return;
 	}
-	toplevel_border_ensure(t);
-	toplevel_border_update(t);
+	toplevel_border_render(t);
 }
 
 void toplevel_border_hide(struct guibux_toplevel *t) {
@@ -311,6 +359,12 @@ static void toplevel_scene_destroyed(struct wl_listener *listener, void *data) {
 	wl_list_remove(&toplevel->scene_destroy.link);
 	toplevel->scene_tree = NULL;
 	toplevel->border_node = NULL;
+	if (toplevel->border_buffer != NULL) {
+		wlr_buffer_drop(toplevel->border_buffer);
+		toplevel->border_buffer = NULL;
+	}
+	toplevel->border_w = 0;
+	toplevel->border_h = 0;
 }
 
 void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
@@ -367,10 +421,14 @@ void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 		? guibux_output_for(toplevel->server, output) : NULL;
 	enum restore_result rr = restore_apply(toplevel->server, toplevel);
 	if (rr != RESTORE_FREE) {
-		if (rr == RESTORE_TILE) {
-			/* saved output+workspace resolved: tile it there */
-			o = toplevel->output;
-		}
+		/* restore_apply may have switched the saved output's workspace
+		 * and set toplevel->output: it is authoritative for both the
+		 * tile and the free result, so re-derive o from it (the cursor
+		 * output captured above is stale after a workspace switch) */
+		o = toplevel->output != NULL
+			? toplevel->output
+			: (output != NULL
+				? guibux_output_for(toplevel->server, output) : NULL);
 		toplevel->output = o;
 		toplevel->workspace = o != NULL ? o->current_workspace : 1;
 		if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
@@ -476,7 +534,7 @@ void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 	/* keep the focus border in sync with the window geometry */
 	if (toplevel->border_node != NULL &&
 			toplevel->border_node->node.enabled) {
-		toplevel_border_update(toplevel);
+		toplevel_border_render(toplevel);
 	}
 }
 
@@ -751,7 +809,10 @@ static void xsurface_associate(struct wl_listener *listener, void *data) {
 	 * matching the xdg scene tree layout */
 	toplevel->scene_tree = wlr_scene_tree_create(&toplevel->server->scene->tree);
 	toplevel->scene_tree->node.data = toplevel;
-	wlr_scene_surface_create(toplevel->scene_tree, xsurface->surface);
+	/* subsurface tree: X11 clients (Firefox, Chromium) render their
+	 * content into subsurfaces of the root surface; a plain scene
+	 * surface would drop them, leaving previews and screenshots blank */
+	wlr_scene_subsurface_tree_create(toplevel->scene_tree, xsurface->surface);
 
 	toplevel->scene_destroy.notify = toplevel_scene_destroyed;
 	wl_signal_add(&toplevel->scene_tree->node.events.destroy,
@@ -808,10 +869,14 @@ static void xsurface_map(struct wl_listener *listener, void *data) {
 		? guibux_output_for(toplevel->server, output) : NULL;
 	enum restore_result rr = restore_apply(toplevel->server, toplevel);
 	if (rr != RESTORE_FREE) {
-		if (rr == RESTORE_TILE) {
-			/* saved output+workspace resolved: tile it there */
-			o = toplevel->output;
-		}
+		/* restore_apply may have switched the saved output's workspace
+		 * and set toplevel->output: it is authoritative for both the
+		 * tile and the free result, so re-derive o from it (the cursor
+		 * output captured above is stale after a workspace switch) */
+		o = toplevel->output != NULL
+			? toplevel->output
+			: (output != NULL
+				? guibux_output_for(toplevel->server, output) : NULL);
 		toplevel->output = o;
 		toplevel->workspace = o != NULL ? o->current_workspace : 1;
 		if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {

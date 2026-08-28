@@ -553,9 +553,11 @@ struct guibux_toplevel {
 	struct wl_listener request_configure;
 	struct wl_listener set_title;
 	struct wl_listener ping_timeout;
-	/* focus border: a wlr_scene_rect slightly larger than the window,
-	 * shown only when the window has keyboard focus */
-	struct wlr_scene_rect *border_node;
+	/* focus border: a wlr_scene_buffer with a cairo-drawn rounded-rect
+	 * outline, shown only when the window has keyboard focus */
+	struct wlr_scene_buffer *border_node;
+	struct wlr_buffer *border_buffer;
+	int border_w, border_h;  /* last rendered size (logical px) */
 };
 
 struct guibux_popup {
