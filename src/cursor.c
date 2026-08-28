@@ -423,6 +423,15 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 					set_fullscreen(win, !win->is_fullscreen, NULL);
 				} else {
 					focus_toplevel(win, true);
+					/* focus_toplevel early-returns when the window already
+					 * has keyboard focus (e.g. right after the workspace
+					 * switch above): force the pill highlight redraw so the
+					 * clicked pill lights up */
+					struct guibux_output *bo;
+					wl_list_for_each(bo, &server->outputs, link) {
+						bo->topbar_focus_dirty = true;
+						wlr_output_schedule_frame(bo->wlr_output);
+					}
 				}
 				server->last_topbar_click_time = event->time_msec;
 				server->last_topbar_click_win = win;
