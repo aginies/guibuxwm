@@ -29,8 +29,9 @@ log3=$(mktemp)
 log4=$(mktemp)
 log5=$(mktemp)
 log6=$(mktemp)
+log7=$(mktemp)
 cfg_term=$(mktemp)
-trap 'rm -rf "$state_home" "$cfg" "$cfg_term" "$log1" "$log2" "$log3" "$log4" "$log5" "$log6"' EXIT
+trap 'rm -rf "$state_home" "$cfg" "$cfg_term" "$log1" "$log2" "$log3" "$log4" "$log5" "$log6" "$log7"' EXIT
 
 start_comp() {
   local log=$1
@@ -262,6 +263,51 @@ if [ -f "$state_file" ] && grep -q "$APP" "$state_file"; then
   exit 1
 fi
 echo "PHASE6 OK: terminal excluded from restore"
+
+echo "=== phase 7: known terminal app_id (terminator) is not saved ==="
+rm -f "$state_file"
+GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TERM=true \
+  XDG_STATE_HOME="$state_home" WLR_RENDERER=gles2 \
+  "$COMP" -c "$cfg" >"$log7" 2>&1 &
+comp7=$!
+wd=""
+for i in $(seq 1 50); do
+  wd=$(grep -oP 'WAYLAND_DISPLAY=\K\S+' "$log7" | head -1)
+  [ -n "$wd" ] && break
+  sleep 0.1
+done
+if [ -z "$wd" ]; then
+  echo "NO WAYLAND_DISPLAY (phase 7)"
+  kill $comp7 2>/dev/null
+  cat "$log7"
+  exit 1
+fi
+sleep 0.5
+WAYLAND_DISPLAY=$wd RESTORE_TEST_APP_ID=terminator "$CLIENT"
+rc7=$?
+kill $comp7 2>/dev/null
+wait $comp7 2>/dev/null
+if [ $rc7 -ne 0 ]; then
+  echo "FAIL: phase 7 client"
+  exit 1
+fi
+sleep 0.3
+if ! grep -q "restore: skipping terminal 'terminator'" "$log7"; then
+  echo "FAIL: terminator was not recognized as terminal"
+  echo "--- compositor log ---"; cat "$log7"
+  exit 1
+fi
+if grep -q "restore: saved 'terminator'" "$log7"; then
+  echo "FAIL: terminator position was saved"
+  echo "--- compositor log ---"; cat "$log7"
+  exit 1
+fi
+if [ -f "$state_file" ] && grep -q "terminator" "$state_file"; then
+  echo "FAIL: terminator entry present in state file"
+  cat "$state_file"
+  exit 1
+fi
+echo "PHASE7 OK: terminator excluded from restore"
 
 echo "PASS"
 exit 0

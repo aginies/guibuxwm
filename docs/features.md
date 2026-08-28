@@ -72,7 +72,7 @@
 
 ## Window Position Restore
 
-- **Window position restore:** each app's last monitor, workspace, position and size are remembered and restored on the next launch (state file under `XDG_STATE_HOME`); the configured terminal is excluded (`term_app_id`), a missing or moved monitor falls back to cascading placement
+- **Window position restore:** each app's last monitor, workspace, position and size are remembered and restored on the next launch (state file under `XDG_STATE_HOME`); terminals are excluded (the configured terminal via `term_app_id`, plus a built-in list of common terminal app_ids), a missing or moved monitor falls back to cascading placement
 
 ## Session Environment
 

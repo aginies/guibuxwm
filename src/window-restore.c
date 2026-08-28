@@ -117,6 +117,23 @@ static const char *restore_excluded_ids[] = {
 	"st",
 	"xfce4-terminal",
 	"org.xfce.Terminal",
+	"terminator",
+	"net.tsudor.Terminator",
+	"tilix",
+	"qterminal",
+	"wezterm",
+	"org.wezfurlong.wezterm",
+	"hyper",
+	"co.elastic.hyper",
+	"tabby",
+	"org.xtig.tabby",
+	"guake",
+	"mate-terminal",
+	"org.mate.Terminal",
+	"lxterminal",
+	"org.lxde.Lxterminal",
+	"eterm",
+	"rxvt",
 };
 #define RESTORE_EXCLUDED_COUNT \
 	(sizeof(restore_excluded_ids) / sizeof(restore_excluded_ids[0]))
@@ -240,8 +257,11 @@ void restore_free(struct guibux_server *server) {
 static bool restore_update_entry(struct guibux_server *server,
 		struct guibux_toplevel *toplevel) {
 	const char *app_id = toplevel_app_id(toplevel);
-	if (app_id == NULL || app_id[0] == '\0' ||
-			restore_is_excluded(server, app_id)) {
+	if (app_id == NULL || app_id[0] == '\0') {
+		return false;
+	}
+	if (restore_is_excluded(server, app_id)) {
+		wlr_log(WLR_INFO, "restore: skipping terminal '%s'", app_id);
 		return false;
 	}
 	/* a fullscreen window's geometry is the whole output: keep the

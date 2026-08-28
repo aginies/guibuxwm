@@ -136,7 +136,8 @@ int main(int argc, char *argv[]) {
 	xdg_surface_add_listener(xdg_surface, &xdg_listener, NULL);
 	toplevel = xdg_surface_get_toplevel(xdg_surface);
 	xdg_toplevel_add_listener(toplevel, &toplevel_listener, NULL);
-	xdg_toplevel_set_app_id(toplevel, APP_ID);
+	xdg_toplevel_set_app_id(toplevel,
+		getenv("RESTORE_TEST_APP_ID") ? getenv("RESTORE_TEST_APP_ID") : APP_ID);
 	xdg_surface_set_window_geometry(xdg_surface, 0, 0, 640, 400);
 	wl_surface_commit(surface); // no buffer: wait for first configure
 
