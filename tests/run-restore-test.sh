@@ -309,5 +309,85 @@ if [ -f "$state_file" ] && grep -q "terminator" "$state_file"; then
 fi
 echo "PHASE7 OK: terminator excluded from restore"
 
+echo "=== phase 8: 'st' prefix does not match 'steam' ==="
+rm -f "$state_file"
+GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TERM=true \
+  XDG_STATE_HOME="$state_home" WLR_RENDERER=gles2 \
+  "$COMP" -c "$cfg" >"$log8" 2>&1 &
+comp8=$!
+wd=""
+for i in $(seq 1 50); do
+  wd=$(grep -oP 'WAYLAND_DISPLAY=\K\S+' "$log8" | head -1)
+  [ -n "$wd" ] && break
+  sleep 0.1
+done
+if [ -z "$wd" ]; then
+  echo "NO WAYLAND_DISPLAY (phase 8)"
+  kill $comp8 2>/dev/null
+  cat "$log8"
+  exit 1
+fi
+sleep 0.5
+WAYLAND_DISPLAY=$wd RESTORE_TEST_APP_ID=steam "$CLIENT"
+rc8=$?
+kill $comp8 2>/dev/null
+wait $comp8 2>/dev/null
+if [ $rc8 -ne 0 ]; then
+  echo "FAIL: phase 8 client"
+  exit 1
+fi
+sleep 0.3
+if grep -q "restore: skipping terminal 'steam'" "$log8"; then
+  echo "FAIL: 'steam' was wrongly recognized as terminal 'st'"
+  echo "--- compositor log ---"; cat "$log8"
+  exit 1
+fi
+if ! grep -q "restore: saved 'steam'" "$log8"; then
+  echo "FAIL: 'steam' position was not saved"
+  echo "--- compositor log ---"; cat "$log8"
+  exit 1
+fi
+echo "PHASE8 OK: 'steam' not matched by 'st' prefix"
+
+echo "=== phase 9: 'st' itself is still excluded ==="
+rm -f "$state_file"
+GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TERM=true \
+  XDG_STATE_HOME="$state_home" WLR_RENDERER=gles2 \
+  "$COMP" -c "$cfg" >"$log9" 2>&1 &
+comp9=$!
+wd=""
+for i in $(seq 1 50); do
+  wd=$(grep -oP 'WAYLAND_DISPLAY=\K\S+' "$log9" | head -1)
+  [ -n "$wd" ] && break
+  sleep 0.1
+done
+if [ -z "$wd" ]; then
+  echo "NO WAYLAND_DISPLAY (phase 9)"
+  kill $comp9 2>/dev/null
+  cat "$log9"
+  exit 1
+fi
+sleep 0.5
+WAYLAND_DISPLAY=$wd RESTORE_TEST_APP_ID=st "$CLIENT"
+rc9=$?
+kill $comp9 2>/dev/null
+wait $comp9 2>/dev/null
+if [ $rc9 -ne 0 ]; then
+  echo "FAIL: phase 9 client"
+  exit 1
+fi
+sleep 0.3
+if ! grep -q "restore: skipping terminal 'st'" "$log9"; then
+  echo "FAIL: 'st' was not recognized as terminal"
+  echo "--- compositor log ---"; cat "$log9"
+  exit 1
+fi
+if grep -q "restore: saved 'st'" "$log9"; then
+  echo "FAIL: 'st' position was saved"
+  echo "--- compositor log ---"; cat "$log9"
+  exit 1
+fi
+echo "PHASE9 OK: 'st' still excluded"
+
 echo "PASS"
 exit 0

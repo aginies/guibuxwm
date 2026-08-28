@@ -150,11 +150,17 @@ static bool restore_is_excluded(struct guibux_server *server,
 			return true;
 		}
 	}
-	/* known terminal app_ids */
+	/* known terminal app_ids; prefix match so variants like "foot-client"
+	 * or "rxvt-unicode" are caught, but the next char must be a separator
+	 * so "st" does not match "steam" */
 	for (size_t i = 0; i < RESTORE_EXCLUDED_COUNT; i++) {
 		size_t len = strlen(restore_excluded_ids[i]);
 		if (strncasecmp(app_id, restore_excluded_ids[i], len) == 0) {
-			return true;
+			char next = app_id[len];
+			if (next == '\0' || next == '-' || next == '.' ||
+					next == '_' || next == '+') {
+				return true;
+			}
 		}
 	}
 	return false;
