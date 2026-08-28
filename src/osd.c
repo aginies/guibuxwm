@@ -153,6 +153,7 @@ void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
 			cairo_surface_t *cs = cairo_image_surface_create_for_data(
 				data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
 			cairo_t *cr = cairo_create(cs);
+			memset(data, 0, stride * h);
 			/* translucent rounded background */
 			cairo_set_source_rgba(cr,
 				((server->color_bg >> 16) & 0xFF) / 255.0,

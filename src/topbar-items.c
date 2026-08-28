@@ -51,6 +51,7 @@ static void topbar_items_panel_render(struct guibux_server *server) {
 	cairo_surface_t *cs = cairo_image_surface_create_for_data(
 		data, CAIRO_FORMAT_RGB24, w, hgt, (int)stride);
 	cairo_t *cr = cairo_create(cs);
+	memset(data, 0, stride * hgt);
 
 	/* translucent rounded background */
 	cairo_set_source_rgba(cr,

@@ -1000,6 +1000,7 @@ void topbar_render(struct guibux_output *o) {
 	cairo_surface_t *cs = cairo_image_surface_create_for_data(
 		data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
 	cairo_t *cr = cairo_create(cs);
+	memset(data, 0, stride * h);
 
 	topbar_bg_fill(cr, server, 0, 0, w, h);
 	/* subtle bottom border: 1px at 20% white for a clean separation */

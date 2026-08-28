@@ -123,6 +123,7 @@ static void power_panel_render(struct guibux_server *server) {
 	cairo_surface_t *cs = cairo_image_surface_create_for_data(
 		data, CAIRO_FORMAT_RGB24, w, hgt, (int)stride);
 	cairo_t *cr = cairo_create(cs);
+	memset(data, 0, stride * hgt);
 
 	/* translucent rounded background */
 	cairo_set_source_rgba(cr,
@@ -141,6 +142,37 @@ static void power_panel_render(struct guibux_server *server) {
 	FT_Face face = server->launcher.face;
 	int font_px = LAUNCHER_FONT_PX * p->box_scale;
 	FT_Set_Pixel_Sizes(face, 0, font_px);
+
+	if (p->confirming) {
+		/* confirmation overlay: dim the list, show a prompt */
+		cairo_set_source_rgba(cr, 0, 0, 0, 0.55);
+		cairo_rectangle(cr, 0, 0, w, hgt);
+		cairo_fill(cr);
+		char msg[96];
+		snprintf(msg, sizeof(msg), "Confirm %s?", power_labels[p->confirm_idx]);
+		int mw = guibux_text_width(face, msg) / p->box_scale;
+		uint32_t mc = server->color_highlight;
+		launcher_draw_text_on_surface(cs, face, msg,
+			(w - mw * p->box_scale) / 2,
+			(hgt / 2) * p->box_scale - font_px * p->box_scale / 2, mc);
+		char hint[64];
+		snprintf(hint, sizeof(hint), "Enter=yes  Esc=no");
+		int hw = guibux_text_width(face, hint) / p->box_scale;
+		uint32_t hc = server->color_text;
+		launcher_draw_text_on_surface(cs, face, hint,
+			(w - hw * p->box_scale) / 2,
+			(hgt / 2) * p->box_scale + font_px * p->box_scale / 2, hc);
+		cairo_destroy(cr);
+		cairo_surface_destroy(cs);
+		wlr_buffer_end_data_ptr_access(p->buffer);
+		if (p->scene_node != NULL) {
+			wlr_scene_buffer_set_buffer(p->scene_node, p->buffer);
+		}
+		if (p->output != NULL) {
+			wlr_output_schedule_frame(p->output);
+		}
+		return;
+	}
 
 	for (int i = 0; i < POWER_COUNT; i++) {
 		int ly = i * POWER_LINE_H * p->box_scale;
@@ -259,13 +291,30 @@ void power_panel_select(struct guibux_server *server, int idx) {
 	if (idx < 0 || idx >= POWER_COUNT || !power_avail[idx]) {
 		return;
 	}
-	power_panel_hide(server);
 	if (idx == POWER_LOCK) {
+		power_panel_hide(server);
 		/* in-process lock screen: PAM auth, no external helper */
 		lock_show(server);
 		return;
 	}
+	struct guibux_power_panel *p = &server->power_panel;
+	p->confirming = true;
+	p->confirm_idx = idx;
+	power_panel_render(server);
+}
+
+static void power_panel_confirm(struct guibux_server *server) {
+	struct guibux_power_panel *p = &server->power_panel;
+	int idx = p->confirm_idx;
+	power_panel_hide(server);
 	power_run(power_commands[idx]);
+}
+
+static void power_panel_cancel(struct guibux_server *server) {
+	struct guibux_power_panel *p = &server->power_panel;
+	p->confirming = false;
+	p->confirm_idx = 0;
+	power_panel_render(server);
 }
 
 /* move the selection by dir, skipping unavailable actions; wraps around */
@@ -285,6 +334,19 @@ bool power_panel_handle_key(struct guibux_server *server, xkb_keysym_t sym) {
 	struct guibux_power_panel *p = &server->power_panel;
 	if (!p->active) {
 		return false;
+	}
+	if (p->confirming) {
+		switch (sym) {
+		case XKB_KEY_Return:
+		case XKB_KEY_KP_Enter:
+			power_panel_confirm(server);
+			return true;
+		case XKB_KEY_Escape:
+			power_panel_cancel(server);
+			return true;
+		default:
+			return true;
+		}
 	}
 	switch (sym) {
 	case XKB_KEY_Escape:
