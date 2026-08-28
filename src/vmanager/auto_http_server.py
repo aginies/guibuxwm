@@ -368,6 +368,10 @@ class RemoteAutoHTTPServer:
                     timeout=10,
                 )
             if self.remote_dir:
+                # Safety check: only allow paths under /tmp/
+                if not self.remote_dir.startswith("/tmp/virtui_automation_remote_"):
+                    self.logger.error(f"Refusing to delete suspicious path: {self.remote_dir}")
+                    return
                 self._run_remote(f"rm -rf {self.remote_dir}", check=False, timeout=10)
         except Exception as e:
             self.logger.warning(f"Failed to cleanup remote HTTP server files: {e}")
