@@ -97,6 +97,24 @@ int workspace_test_run(void *data) {
 				mover->workspace, mover->scene_tree->node.enabled, ws);
 			return 0;
 		}
+		/* the focus border must follow the window's new workspace color */
+		if (server->overview.ws_colors_enabled &&
+				ws >= 1 && ws <= NUM_WORKSPACES &&
+				server->overview.ws_colors[ws - 1] != 0) {
+			if (mover->border_node == NULL || !mover->border_node->node.enabled) {
+				wlr_log(WLR_ERROR, "workspace-test: FAIL border not shown "
+					"on focused window after move (node=%p, enabled=%d)",
+					(void *)mover->border_node,
+					mover->border_node ? mover->border_node->node.enabled : -1);
+				return 0;
+			}
+			if (mover->border_color != server->overview.ws_colors[ws - 1]) {
+				wlr_log(WLR_ERROR, "workspace-test: FAIL border color after move "
+					"(got 0x%08x, want 0x%08x)",
+					mover->border_color, server->overview.ws_colors[ws - 1]);
+				return 0;
+			}
+		}
 		move_toplevel_to_workspace(mover, 1);
 		if (mover->workspace != 1 || mover->scene_tree->node.enabled) {
 			wlr_log(WLR_ERROR, "workspace-test: FAIL move away "

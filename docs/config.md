@@ -520,6 +520,77 @@ overview_ws_color4 = #c084fc
 
 ---
 
+### `color_accent`
+
+Accent color: focused window border (when `window_border_color` is unset),
+active workspace bar, topbar minimap accent.
+
+**Default:** `#7aa2f7`
+
+**Example:**
+
+```
+color_accent = #7aa2f7
+```
+
+---
+
+### `topbar_alpha`
+
+Topbar background opacity, 0-255.
+
+**Default:** `217`
+
+**Example:**
+
+```
+topbar_alpha = 180
+```
+
+---
+
+### `window_border_width`
+
+Focused window border width in pixels. `0` disables the border.
+
+**Default:** `2`
+
+**Example:**
+
+```
+window_border_width = 3
+```
+
+---
+
+### `window_border_color`
+
+Focused window border color. Defaults to `color_accent`.
+
+**Default:** `color_accent`
+
+**Example:**
+
+```
+window_border_color = #9ece6a
+```
+
+---
+
+### `overview_dim_alpha`
+
+Overview (F12) dim overlay opacity, 0-255.
+
+**Default:** `153`
+
+**Example:**
+
+```
+overview_dim_alpha = 100
+```
+
+---
+
 ### `effects`
 
 Master switch for animations (window open/close, notification panel slide).

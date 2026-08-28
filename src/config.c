@@ -444,15 +444,6 @@ void load_config(struct guibux_server *server, const char *path) {
 			} else {
 				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
 			}
-		} else if (!strcmp(key, "window_shadow")) {
-			server->window_shadow = (strcmp(val, "false") != 0 && strcmp(val, "0") != 0);
-			wlr_log(WLR_INFO, "config: window_shadow = %s", val);
-		} else if (!strcmp(key, "overview_radius")) {
-			server->overview_radius = atoi(val);
-			if (server->overview_radius < 0 || server->overview_radius > 48) {
-				server->overview_radius = 12;
-			}
-			wlr_log(WLR_INFO, "config: overview_radius = %d", server->overview_radius);
 		} else if (!strcmp(key, "overview_dim_alpha")) {
 			server->overview_dim_alpha = atoi(val);
 			if (server->overview_dim_alpha < 0 || server->overview_dim_alpha > 255) {

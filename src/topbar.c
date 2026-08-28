@@ -783,7 +783,9 @@ static void topbar_pills_draw(struct guibux_output *o, cairo_t *cr,
 				cell_h * scale,
 				10 * scale);
 			cairo_fill(cr);
-			uint32_t accent = server->overview.ws_colors[wins[i]->workspace - 1];
+			uint32_t accent = (wins[i]->workspace >= 1 &&
+				wins[i]->workspace <= NUM_WORKSPACES) ?
+				server->overview.ws_colors[wins[i]->workspace - 1] : 0;
 			if (accent == 0) {
 				accent = server->color_accent;
 			}
@@ -1028,6 +1030,8 @@ void topbar_render(struct guibux_output *o) {
 	int badge_pad = 5;
 	int badge_w = guibux_text_width(server->launcher.face, left) / scale
 		+ 2 * badge_pad;
+	o->topbar_badge_x = TOPBAR_PAD;
+	o->topbar_badge_w = badge_w;
 	topbar_rounded_rect(cr, TOPBAR_PAD * scale, cell_y * scale,
 		badge_w * scale, cell_h * scale, 6 * scale);
 	cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.08);
@@ -1286,6 +1290,25 @@ struct guibux_toplevel *topbar_win_at(struct guibux_output *o,
 			return o->topbar_wins[i];
 	}
 	return NULL;
+}
+
+bool topbar_badge_at(struct guibux_output *o, double lx, double ly) {
+	if (o == NULL || o->topbar_buffer == NULL || o->topbar_badge_w <= 0) {
+		return false;
+	}
+	struct guibux_server *server = o->server;
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, o->wlr_output, &box);
+	if (lx < box.x || lx >= box.x + box.width ||
+			ly < box.y || ly >= box.y + o->server->topbar_height) {
+		return false;
+	}
+	double rel = lx - box.x;
+	if (rel >= o->topbar_badge_x &&
+			rel < o->topbar_badge_x + o->topbar_badge_w) {
+		return true;
+	}
+	return false;
 }
 
 bool topbar_workspace_at(struct guibux_server *server, double lx,

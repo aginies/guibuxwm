@@ -762,6 +762,7 @@ static void overview_drop(struct guibux_server *server,
 		topbar_mark_dirty(guibux_output_for(server, target));
 	}
 	t->workspace = ws;
+	toplevel_border_refresh(t);
 
 	/* drag is over: clear the drop-target highlight */
 	ov->hover_output = NULL;

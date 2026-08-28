@@ -159,9 +159,6 @@ overview_ws_color2 = #9ece6a
 overview_ws_color3 = #e0af68
 overview_ws_color4 = #bb9af7
 
-# overview cell corner radius in pixels (default: 12)
-#overview_radius = 12
-
 # overview dim overlay opacity 0-255 (default: 153)
 #overview_dim_alpha = 153
 
@@ -170,9 +167,6 @@ overview_ws_color4 = #bb9af7
 
 # focused window border color (default: color_accent)
 #window_border_color = #7aa2f7
-
-# window shadow: subtle dark shadow around all windows (default: true)
-#window_shadow = true
 
 # animations: master switch (default: true) and duration in ms
 # (default: 200, 0 = off)

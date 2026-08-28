@@ -481,6 +481,8 @@ struct guibux_output {
     int topbar_bat_state;
     int topbar_notif_x;
     int topbar_notif_w;
+    int topbar_badge_x;
+    int topbar_badge_w;
     int topbar_ws_x[NUM_WORKSPACES + 1];
     int topbar_ws_cell_w;
     /* last full render's geometry (logical px): the focus-only fast
@@ -558,6 +560,9 @@ struct guibux_toplevel {
 	struct wlr_scene_buffer *border_node;
 	struct wlr_buffer *border_buffer;
 	int border_w, border_h;  /* last rendered size (logical px) */
+	int border_scale;        /* last rendered output scale */
+	uint32_t border_color;   /* last rendered stroke color */
+	bool border_valid;       /* buffer holds a complete stroke */
 };
 
 struct guibux_popup {
@@ -827,8 +832,6 @@ struct guibux_server {
 	int topbar_alpha;  /* 0-255, topbar background opacity */
 	int window_border_width;  /* focused window border, 0 = off */
 	uint32_t window_border_color;
-	bool window_shadow;
-	int overview_radius;  /* overview cell corner radius */
 	int overview_dim_alpha;  /* 0-255, overview dim opacity */
 	struct output_placement placements[MAX_OUTPUT_PLACEMENTS];
 	int num_placements;
@@ -969,6 +972,7 @@ void outputs_state_write(struct guibux_server *server);
 void outputs_apply_init(struct guibux_server *server);
 
 struct guibux_toplevel *topbar_win_at(struct guibux_output *o, double lx, double ly);
+bool topbar_badge_at(struct guibux_output *o, double lx, double ly);
 bool topbar_network_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
 int topbar_network_index_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
 bool topbar_battery_at(struct guibux_server *server, struct guibux_output *o, double lx, double ly);
@@ -979,6 +983,7 @@ int topbar_audio_at(struct guibux_server *server, struct guibux_output *o, doubl
 void focus_toplevel(struct guibux_toplevel *toplevel, bool raise);
 void toplevel_border_show(struct guibux_toplevel *toplevel);
 void toplevel_border_hide(struct guibux_toplevel *toplevel);
+void toplevel_border_refresh(struct guibux_toplevel *toplevel);
 void xdg_activation_handle_request(struct wl_listener *listener, void *data);
 void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen, struct wlr_output *output);
 void begin_interactive(struct guibux_toplevel *toplevel, enum guibux_cursor_mode mode, uint32_t edges);

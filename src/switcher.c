@@ -156,7 +156,9 @@ static void switcher_render(struct guibux_server *server) {
 			server->color_dim;
 		int tx = SWITCHER_PAD * s->box_scale;
 		/* workspace color bar left of the label, like the topbar pills */
-		uint32_t ws_color = server->overview.ws_colors[t->workspace - 1];
+		uint32_t ws_color = (t->workspace >= 1 &&
+			t->workspace <= NUM_WORKSPACES) ?
+			server->overview.ws_colors[t->workspace - 1] : 0;
 		if (server->overview.ws_colors_enabled && ws_color != 0) {
 			set_color(cr, ws_color);
 			cairo_rectangle(cr, (SWITCHER_PAD - 7) * s->box_scale,

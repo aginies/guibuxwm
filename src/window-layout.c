@@ -164,6 +164,16 @@ void ws_switch_immediate(struct guibux_output *output, int ws) {
 				t->workspace == ws);
 		}
 	}
+	/* the focused window's border is a child of its scene tree; when the
+	 * tree was disabled (hidden workspace) the border node was hidden too.
+	 * Re-show it now that the tree is visible again */
+	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (toplevel_get_surface(t) == focused) {
+			toplevel_border_show(t);
+			break;
+		}
+	}
 	retile_output(output);
 }
 
@@ -186,6 +196,7 @@ void move_toplevel_to_workspace(struct guibux_toplevel *toplevel, int ws) {
 	bool was_focused = focused == toplevel_get_surface(toplevel);
 	end_seat_grabs(server);
 	toplevel->workspace = ws;
+	toplevel_border_refresh(toplevel);
 	wlr_scene_node_set_enabled(&toplevel->scene_tree->node,
 		o != NULL && ws == o->current_workspace);
 	if (o != NULL) {
@@ -250,6 +261,7 @@ void move_toplevel_to_output(struct guibux_toplevel *toplevel, struct wlr_output
 	if (o != NULL) {
 		toplevel->output = o;
 		toplevel->workspace = o->current_workspace;
+		toplevel_border_refresh(toplevel);
 		topbar_mark_dirty(o);
 		if (o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
 			retile_output(o);

@@ -44,6 +44,7 @@ static void toplevel_border_render(struct guibux_toplevel *t) {
 	int bh_d = bh_l * scale;  /* buffer device height */
 
 	/* create or resize the buffer */
+	bool buffer_new = false;
 	if (t->border_buffer == NULL || t->border_w != bw_l || t->border_h != bh_l) {
 		if (t->border_node != NULL) {
 			wlr_scene_node_destroy(&t->border_node->node);
@@ -73,12 +74,33 @@ static void toplevel_border_render(struct guibux_toplevel *t) {
 			t->border_buffer = NULL;
 			t->border_w = 0;
 			t->border_h = 0;
+			t->border_valid = false;
 			return;
 		}
 		t->border_node->node.data = t;
 		t->border_node->point_accepts_input = border_point_accepts_input;
 		wlr_scene_buffer_set_dest_size(t->border_node, bw_l, bh_l);
+		buffer_new = true;
 	}
+
+	/* the stroke depends only on size, scale, and color; skip the cairo
+	 * redraw when none changed (commits during idle/focus churn). A
+	 * freshly created buffer is always blank and must be drawn */
+	uint32_t stroke_color = server->window_border_color;
+	if (server->overview.ws_colors_enabled &&
+			t->workspace >= 1 && t->workspace <= NUM_WORKSPACES &&
+			server->overview.ws_colors[t->workspace - 1] != 0) {
+		stroke_color = server->overview.ws_colors[t->workspace - 1];
+	}
+	if (!buffer_new && t->border_valid &&
+			t->border_w == bw_l && t->border_h == bh_l &&
+			t->border_scale == scale && t->border_color == stroke_color) {
+		wlr_scene_node_set_position(&t->border_node->node, off, off);
+		wlr_scene_node_set_enabled(&t->border_node->node, true);
+		return;
+	}
+	t->border_scale = scale;
+	t->border_color = stroke_color;
 
 	void *data;
 	uint32_t buf_format;
@@ -104,21 +126,16 @@ static void toplevel_border_render(struct guibux_toplevel *t) {
 		double inset = line_w / 2.0;
 		topbar_rounded_rect(cr, inset, inset,
 			bw_d - 2 * inset, bh_d - 2 * inset, radius);
-		/* workspace color when enabled, else the static border color */
-		uint32_t c = server->window_border_color;
-		if (server->overview.ws_colors_enabled &&
-				t->workspace >= 1 && t->workspace <= NUM_WORKSPACES &&
-				server->overview.ws_colors[t->workspace - 1] != 0) {
-			c = server->overview.ws_colors[t->workspace - 1];
-		}
-		cairo_set_source_rgb(cr, ((c >> 16) & 0xFF) / 255.0,
-			((c >> 8) & 0xFF) / 255.0, (c & 0xFF) / 255.0);
+		cairo_set_source_rgb(cr, ((stroke_color >> 16) & 0xFF) / 255.0,
+			((stroke_color >> 8) & 0xFF) / 255.0,
+			(stroke_color & 0xFF) / 255.0);
 		cairo_set_line_width(cr, line_w);
 		cairo_stroke(cr);
 		cairo_destroy(cr);
 		cairo_surface_destroy(cs);
 	}
 	wlr_buffer_end_data_ptr_access(t->border_buffer);
+	t->border_valid = true;
 
 	/* position the buffer relative to the scene tree (window origin) */
 	wlr_scene_node_set_position(&t->border_node->node, off, off);
@@ -137,6 +154,19 @@ void toplevel_border_hide(struct guibux_toplevel *t) {
 		return;
 	}
 	wlr_scene_node_set_enabled(&t->border_node->node, false);
+}
+
+/* the stroke color depends on the window's workspace (per-workspace
+ * colors); after a workspace move the cached color is stale and the
+ * border buffer must be re-drawn even though size/scale are unchanged.
+ * Also re-enables the border node: it may have been hidden when the
+ * window's scene tree was disabled (hidden workspace) */
+void toplevel_border_refresh(struct guibux_toplevel *t) {
+	if (t == NULL || t->border_node == NULL) {
+		return;
+	}
+	t->border_color = 0;
+	toplevel_border_render(t);
 }
 
 // ---------------------------------------------------------------------------
@@ -380,6 +410,7 @@ static void toplevel_scene_destroyed(struct wl_listener *listener, void *data) {
 	}
 	toplevel->border_w = 0;
 	toplevel->border_h = 0;
+	toplevel->border_valid = false;
 }
 
 void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
@@ -988,11 +1019,12 @@ static void xsurface_destroy(struct wl_listener *listener, void *data) {
 	wlr_log(WLR_INFO, "destroyed xwayland toplevel '%s'",
 		toplevel->xsurface->title ? toplevel->xsurface->title : "(untitled)");
 
-	if (toplevel->scene_tree != NULL) {
-		wl_list_remove(&toplevel->map.link);
-		wl_list_remove(&toplevel->unmap.link);
-		wl_list_remove(&toplevel->commit.link);
-	}
+	/* map/unmap/commit listeners are added at associate time and survive
+	 * dissociate (which only destroys the scene tree); removing them
+	 * conditionally on scene_tree leaks the list entries */
+	wl_list_remove(&toplevel->map.link);
+	wl_list_remove(&toplevel->unmap.link);
+	wl_list_remove(&toplevel->commit.link);
 	wl_list_remove(&toplevel->associate.link);
 	wl_list_remove(&toplevel->dissociate.link);
 	wl_list_remove(&toplevel->destroy.link);
@@ -1237,6 +1269,14 @@ struct guibux_toplevel *desktop_toplevel_at(
 		return NULL;
 	}
 	struct guibux_toplevel *t = tree->node.data;
+	if (scene_surface && scene_surface->surface != toplevel_get_surface(t)) {
+		/* hit a popup (xdg_popup is a separate scene surface with its
+		 * own local coord space): forward pointer events to the popup
+		 * surface directly; sx/sy from wlr_scene_node_at are already
+		 * popup-local */
+		*surface = scene_surface->surface;
+		return t;
+	}
 	*surface = toplevel_get_surface(t);
 	if (*surface == NULL) {
 		return NULL;
@@ -1245,6 +1285,9 @@ struct guibux_toplevel *desktop_toplevel_at(
 		/* hit a subsurface (X11 clients render content into subsurfaces):
 		 * convert the coords from the subsurface's local space to the root
 		 * surface's space so pointer events land under the cursor */
+		if (t->scene_tree == NULL) {
+			return NULL;
+		}
 		int nx, ny, tx, ty;
 		wlr_scene_node_coords(node, &nx, &ny);
 		wlr_scene_node_coords(&t->scene_tree->node, &tx, &ty);

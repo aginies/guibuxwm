@@ -7,6 +7,7 @@
 #include <wlr/render/drm_format_set.h>
 #include <drm_fourcc.h>
 #include <cairo.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -28,7 +29,11 @@ static bool capture_output_frame(struct guibux_server *server,
 	if (output == NULL || !output->enabled) {
 		return false;
 	}
-	if (!wlr_output_configure_primary_swapchain(output, NULL, &output->swapchain)) {
+	if (output->swapchain == NULL &&
+			!wlr_output_configure_primary_swapchain(output, NULL, &output->swapchain)) {
+		return false;
+	}
+	if (output->swapchain == NULL) {
 		return false;
 	}
 	struct wlr_buffer *buffer = wlr_swapchain_acquire(output->swapchain);
@@ -340,14 +345,8 @@ void screenshot_region_update(struct guibux_server *server, double lx, double ly
 	}
 	ss->sel_x = (int)(x0 < x1 ? x0 : x1) - box.x;
 	ss->sel_y = (int)(y0 < y1 ? y0 : y1) - box.y;
-	ss->sel_w = (int)(x1 - x0);
-	ss->sel_h = (int)(y1 - y0);
-	if (ss->sel_w < 0) {
-		ss->sel_w = 0;
-	}
-	if (ss->sel_h < 0) {
-		ss->sel_h = 0;
-	}
+	ss->sel_w = (int)fabs(x1 - x0);
+	ss->sel_h = (int)fabs(y1 - y0);
 	screenshot_render_border(server, ss);
 }
 

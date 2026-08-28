@@ -70,6 +70,12 @@ static struct guibux_effects_anim *effects_start(struct guibux_server *server,
 	if (a == NULL) {
 		return NULL;
 	}
+	/* a reused slot may still be listening on a previous node's destroy
+	 * signal: detach before zeroing, or the memset wipes the link while
+	 * it is still in the list and the old node's death walks freed memory */
+	if (a->node_destroy.link.next != NULL) {
+		wl_list_remove(&a->node_destroy.link);
+	}
 	memset(a, 0, sizeof(*a));
 	a->used = true;
 	a->kind = kind;
@@ -179,6 +185,7 @@ static void effects_kill(struct guibux_effects_anim *a) {
 	a->used = false;
 	if (a->node_destroy.link.next != NULL) {
 		wl_list_remove(&a->node_destroy.link);
+		wl_list_init(&a->node_destroy.link);
 	}
 }
 

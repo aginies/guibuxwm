@@ -87,6 +87,20 @@ static void process_cursor_resize(struct guibux_server *server) {
 		screenshot_region_update(server, server->cursor->x, server->cursor->y);
 		return;
 	}
+	/* hot corner: touching the top-left corner of any monitor opens the
+	 * launcher (GNOME-style); launcher_show no-ops while already active */
+	if (!server->launcher.active && !server->overview.active &&
+			!server->power_panel.active && !server->topbar_items_panel.active) {
+		struct wlr_output *hc_out = output_at_cursor(server);
+		if (hc_out != NULL) {
+			struct wlr_box hc_box;
+			wlr_output_layout_get_box(server->output_layout, hc_out, &hc_box);
+			if (server->cursor->x - hc_box.x <= 8 &&
+					server->cursor->y - hc_box.y <= 8) {
+				launcher_show(server);
+			}
+		}
+	}
 	if (server->overview.active && server->overview.drag_toplevel != NULL &&
 			!server->overview.drag_active) {
 		double dx = server->cursor->x - server->overview.drag_press_x;
@@ -149,6 +163,9 @@ static void process_cursor_resize(struct guibux_server *server) {
 			server->cursor->y)) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
 	} else if (in_topbar && topbar_notif_at(server, o, server->cursor->x,
+			server->cursor->y)) {
+		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
+	} else if (in_topbar && topbar_badge_at(o, server->cursor->x,
 			server->cursor->y)) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "pointer");
 	} else if (in_topbar && topbar_win_at(o, server->cursor->x,
@@ -284,7 +301,11 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 	if (server->power_panel.active) {
 		if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
 			if (server->power_panel.confirming) {
-				power_panel_handle_key(server, XKB_KEY_Return);
+				if (event->button == 272) { /* BTN_LEFT: confirm */
+					power_panel_handle_key(server, XKB_KEY_Return);
+				} else {
+					power_panel_hide(server);
+				}
 			} else {
 				int idx = power_panel_action_at(server, server->cursor->x,
 					server->cursor->y);
@@ -408,6 +429,13 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 				notify_panel_show(server, o->wlr_output);
 				return;
 			}
+			/* monitor badge (A/B/...): left click opens the launcher */
+			if (event->button == 272 &&
+					topbar_badge_at(o, server->cursor->x,
+						server->cursor->y)) {
+				launcher_show(server);
+				return;
+			}
 			if (win) {
 				/* the list is global (own + other monitors): switch to
 				 * the window's own monitor's workspace when it differs
@@ -493,6 +521,7 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 				struct guibux_output *old_o = t->output;
 				t->output = new_o;
 				t->workspace = new_o->current_workspace;
+				toplevel_border_refresh(t);
 				/* the window list changed on both bars */
 				topbar_mark_dirty(old_o);
 				topbar_mark_dirty(new_o);

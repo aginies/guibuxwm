@@ -117,8 +117,6 @@ int main(int argc, char *argv[]) {
 	server.topbar_alpha = 217;
 	server.window_border_width = 2;
 	server.window_border_color = DEFAULT_COLOR_ACCENT;
-	server.window_shadow = true;
-	server.overview_radius = 12;
 	server.overview_dim_alpha = 153;
 	server.topbar_height = DEFAULT_TOPBAR_H;
 	server.topbar_font_size = DEFAULT_TOPBAR_FONT_SIZE;
@@ -773,6 +771,9 @@ int main(int argc, char *argv[]) {
 	}
 	if (server.global_topbar_test_timer != NULL) {
 		wl_event_source_remove(server.global_topbar_test_timer);
+	}
+	if (server.screenshot_test_timer != NULL) {
+		wl_event_source_remove(server.screenshot_test_timer);
 	}
 
 	launcher_hide(&server);

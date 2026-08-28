@@ -27,10 +27,11 @@
 ## Command Box
 
 - **Command box** (`Mod+e`) with icon support: launch programs by typing, with `$PATH` suggestions, up to 6 configurable preferred apps (each with optional icons), and `.desktop` file icon resolution through the configured icon theme
+- **Command box triggers:** also opens by moving the mouse into the top-left corner of any monitor (hot corner, 8px) or by left-clicking the monitor letter badge (A, B, ...) on the topbar
 
 ## Topbar
 
-- **Topbar** on each monitor: monitor letter (A, B, C, ...) on the left, workspace mini-map cells (click to switch; the active cell is highlighted, no numbers), window pill list (click to focus, drag to move to a workspace), network status, audio and battery indicators, notification bell, and date/time on the right (updates every second); tiled windows are laid out below it
+- **Topbar** on each monitor: monitor letter (A, B, C, ...) on the left (left-click opens the command box), workspace mini-map cells (click to switch; the active cell is highlighted, no numbers), window pill list (click to focus, drag to move to a workspace), network status, audio and battery indicators, notification bell, and date/time on the right (updates every second); tiled windows are laid out below it
 - **Topbar styling:** a faint 1px highlight line along the top edge (raised look against the wallpaper) and a 1px `color_border` line along the bottom edge; groups (workspaces / mini-map / window pills / indicator items / clock) are divided by 3px vertical separators with a vertical alpha gradient (fading out at both ends) so they read as soft dividers; every item keeps a clear margin from its separators
 - **Window mini-map:** each workspace cell shows one small rect per own-monitor window on that workspace, positioned proportionally to the window's real on-screen position (left/right and over/below); fullscreen fills the whole cell; the focused window is highlighted (decorative — the clickable pills are in the window list); cells are divided by faint 1px vertical separators
 - **Window pills:** a global list — this monitor's windows first, then the windows of the other monitors after a separator (the `A2:` prefix, monitor letter + workspace number, disambiguates); click to focus (switches to the window's monitor and workspace first if needed), double-click to toggle fullscreen
