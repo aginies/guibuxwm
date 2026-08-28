@@ -113,16 +113,18 @@ void spawn_mixer(struct guibux_server *server) {
  *  - children we spawn (terminals, launcher apps) inherit our env, so
  *    fix it here: a WM started from a TTY has XDG_SESSION_TYPE=tty and
  *    no XDG_CURRENT_DESKTOP;
- *  - xdg-desktop-portal, its backends and gnome-terminal-server are
- *    systemd user services (D-Bus activated) started with the bare
- *    user-manager env (no DISPLAY / WAYLAND_DISPLAY). A URL click in
- *    such an app forks the browser with that env: no WAYLAND_DISPLAY
- *    means the browser assumes an X11 session, no DISPLAY means it
- *    dies with "no DISPLAY environment variable specified". Set the
- *    display variables on the user manager (SetEnvironment via
- *    busctl; the `systemd` binary is not always installed) and
- *    restart the affected services so the running ones pick them up.
- *    Best effort: never fail startup.
+ *  - xdg-desktop-portal, its backends, xdg-document-portal and
+ *    gnome-terminal-server are systemd user services (D-Bus activated)
+ *    started with the bare user-manager env (no DISPLAY /
+ *    WAYLAND_DISPLAY). A URL click in such an app forks the browser
+ *    with that env: no WAYLAND_DISPLAY means the browser assumes an
+ *    X11 session, no DISPLAY means it dies with "no DISPLAY
+ *    environment variable specified". The document portal must also
+ *    be restarted so it recreates /run/user/$UID/doc/by-app/ for
+ *    flatpak apps. Set the display variables on the user manager
+ *    (SetEnvironment via busctl; the `systemd` binary is not always
+ *    installed) and restart the affected services so the running ones
+ *    pick them up. Best effort: never fail startup.
  */
 void setup_session_environment(struct guibux_server *server) {
 	setenv("XDG_SESSION_TYPE", "wayland", true);
@@ -157,8 +159,8 @@ void setup_session_environment(struct guibux_server *server) {
 			"XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP='%s' "
 			"XDG_SESSION_DESKTOP='%s' 2>/dev/null && "
 			"systemctl --user restart 'xdg-desktop-portal*' "
-			"2>/dev/null; systemctl --user try-restart "
-			"gnome-terminal-server 2>/dev/null",
+			"xdg-document-portal 2>/dev/null; systemctl --user "
+			"try-restart gnome-terminal-server 2>/dev/null",
 			display, wl_socket, desktop, desktop);
 	} else {
 		snprintf(cmd, sizeof(cmd),
@@ -169,8 +171,8 @@ void setup_session_environment(struct guibux_server *server) {
 			"XDG_CURRENT_DESKTOP='%s' XDG_SESSION_DESKTOP='%s' "
 			"2>/dev/null && "
 			"systemctl --user restart 'xdg-desktop-portal*' "
-			"2>/dev/null; systemctl --user try-restart "
-			"gnome-terminal-server 2>/dev/null",
+			"xdg-document-portal 2>/dev/null; systemctl --user "
+			"try-restart gnome-terminal-server 2>/dev/null",
 			wl_socket, desktop, desktop);
 	}
 	spawn_cmd(cmd);
