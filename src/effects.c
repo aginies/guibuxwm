@@ -275,30 +275,43 @@ void effects_cancel_output(struct guibux_server *server,
 
 /* the toplevel's main scene buffer. the xdg/xwayland scene tree nests the
  * real surface one level down (outer tree -> subsurface tree -> scene
- * surface), so search the subtree depth-first; the main surface is added
- * first, so it is found before any sub-surface */
-static struct wlr_scene_buffer *find_inner_buffer(struct wlr_scene_node *node) {
+ * surface). some clients (Firefox, Chromium) commit a dummy 1x1 buffer to
+ * the main surface and render into a subsurface, so pick the buffer with
+ * the largest area instead of the first one found */
+static struct wlr_scene_buffer *find_largest_buffer(struct wlr_scene_node *node,
+		int *max_area) {
+	struct wlr_scene_buffer *best = NULL;
 	if (node->type == WLR_SCENE_NODE_BUFFER) {
-		return wlr_scene_buffer_from_node(node);
+		struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
+		if (sb->buffer == NULL) {
+			return NULL;
+		}
+		int area = sb->buffer->width * sb->buffer->height;
+		if (area > *max_area) {
+			*max_area = area;
+			best = sb;
+		}
+		return best;
 	}
 	if (node->type != WLR_SCENE_NODE_TREE) {
 		return NULL;
 	}
 	struct wlr_scene_node *child;
 	wl_list_for_each(child, &((struct wlr_scene_tree *)node)->children, link) {
-		struct wlr_scene_buffer *sb = find_inner_buffer(child);
+		struct wlr_scene_buffer *sb = find_largest_buffer(child, max_area);
 		if (sb != NULL) {
-			return sb;
+			best = sb;
 		}
 	}
-	return NULL;
+	return best;
 }
 
 struct wlr_scene_buffer *toplevel_inner_buffer(struct guibux_toplevel *toplevel) {
 	if (toplevel->scene_tree == NULL) {
 		return NULL;
 	}
-	return find_inner_buffer(&toplevel->scene_tree->node);
+	int max_area = 0;
+	return find_largest_buffer(&toplevel->scene_tree->node, &max_area);
 }
 
 // ---------------------------------------------------------------------------
