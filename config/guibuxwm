@@ -162,7 +162,7 @@ overview_ws_color4 = #bb9af7
 # overview dim overlay opacity 0-255 (default: 153)
 #overview_dim_alpha = 153
 
-# focused window border width in pixels (0 = off, default: 2)
+# focused window border width in pixels (0 = off, default: 4)
 #window_border_width = 2
 
 # focused window border color (default: color_accent)

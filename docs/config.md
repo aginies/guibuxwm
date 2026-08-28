@@ -553,7 +553,7 @@ topbar_alpha = 180
 
 Focused window border width in pixels. `0` disables the border.
 
-**Default:** `2`
+**Default:** `4`
 
 **Example:**
 

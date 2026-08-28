@@ -115,7 +115,7 @@ int main(int argc, char *argv[]) {
 	server.color_accent = DEFAULT_COLOR_ACCENT;
 	server.topbar_gradient = 0;
 	server.topbar_alpha = 217;
-	server.window_border_width = 2;
+	server.window_border_width = 4;
 	server.window_border_color = DEFAULT_COLOR_ACCENT;
 	server.overview_dim_alpha = 153;
 	server.topbar_height = DEFAULT_TOPBAR_H;
