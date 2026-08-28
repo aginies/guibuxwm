@@ -8,6 +8,13 @@
 // Focus border
 // ---------------------------------------------------------------------------
 
+/* the border buffer is a visual overlay; it must not intercept pointer
+ * input so clicks pass through to the client surface underneath */
+static bool border_point_accepts_input(struct wlr_scene_buffer *buffer,
+		double *sx, double *sy) {
+	return false;
+}
+
 /* draw a rounded-rect outline into the border buffer; the outline is
  * centered on the window edge (offset -bw/2) so it matches the client's
  * rounded corners. The buffer is created on first use and reused (only
@@ -68,6 +75,8 @@ static void toplevel_border_render(struct guibux_toplevel *t) {
 			t->border_h = 0;
 			return;
 		}
+		t->border_node->node.data = t;
+		t->border_node->point_accepts_input = border_point_accepts_input;
 		wlr_scene_buffer_set_dest_size(t->border_node, bw_l, bh_l);
 	}
 
@@ -95,7 +104,13 @@ static void toplevel_border_render(struct guibux_toplevel *t) {
 		double inset = line_w / 2.0;
 		topbar_rounded_rect(cr, inset, inset,
 			bw_d - 2 * inset, bh_d - 2 * inset, radius);
+		/* workspace color when enabled, else the static border color */
 		uint32_t c = server->window_border_color;
+		if (server->overview.ws_colors_enabled &&
+				t->workspace >= 1 && t->workspace <= NUM_WORKSPACES &&
+				server->overview.ws_colors[t->workspace - 1] != 0) {
+			c = server->overview.ws_colors[t->workspace - 1];
+		}
 		cairo_set_source_rgb(cr, ((c >> 16) & 0xFF) / 255.0,
 			((c >> 8) & 0xFF) / 255.0, (c & 0xFF) / 255.0);
 		cairo_set_line_width(cr, line_w);
@@ -1214,11 +1229,6 @@ struct guibux_toplevel *desktop_toplevel_at(
 	struct wlr_scene_buffer *scene_buffer = wlr_scene_buffer_from_node(node);
 	struct wlr_scene_surface *scene_surface =
 		wlr_scene_surface_try_from_buffer(scene_buffer);
-	if (!scene_surface) {
-		return NULL;
-	}
-
-	*surface = scene_surface->surface;
 	struct wlr_scene_tree *tree = node->parent;
 	while (tree != NULL && tree->node.data == NULL) {
 		tree = tree->node.parent;
@@ -1226,5 +1236,20 @@ struct guibux_toplevel *desktop_toplevel_at(
 	if (tree == NULL) {
 		return NULL;
 	}
-	return tree->node.data;
+	struct guibux_toplevel *t = tree->node.data;
+	*surface = toplevel_get_surface(t);
+	if (*surface == NULL) {
+		return NULL;
+	}
+	if (scene_surface && scene_surface->surface != *surface) {
+		/* hit a subsurface (X11 clients render content into subsurfaces):
+		 * convert the coords from the subsurface's local space to the root
+		 * surface's space so pointer events land under the cursor */
+		int nx, ny, tx, ty;
+		wlr_scene_node_coords(node, &nx, &ny);
+		wlr_scene_node_coords(&t->scene_tree->node, &tx, &ty);
+		*sx += (nx - tx);
+		*sy += (ny - ty);
+	}
+	return t;
 }
