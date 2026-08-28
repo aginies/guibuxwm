@@ -613,6 +613,14 @@ void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 		 * so hit testing and effects anims never dereference freed state */
 		toplevel->scene_tree->node.data = NULL;
 	}
+	/* the scene_destroy listener is detached above, so the border buffer
+	 * (normally dropped in toplevel_scene_destroyed) must be dropped here;
+	 * the border scene node still holds its own reference until wlroots
+	 * destroys the tree */
+	if (toplevel->border_buffer != NULL) {
+		wlr_buffer_drop(toplevel->border_buffer);
+		toplevel->border_buffer = NULL;
+	}
 
 	struct guibux_output *fo = guibux_output_for(toplevel->server,
 		toplevel_output_for(toplevel));
@@ -1052,6 +1060,13 @@ static void xsurface_destroy(struct wl_listener *listener, void *data) {
 	if (toplevel->scene_tree != NULL) {
 		effects_cancel_node(toplevel->server, &toplevel->scene_tree->node);
 		toplevel->scene_tree->node.data = NULL;
+		/* never-associated case: the scene tree (and the border buffer
+		 * dropped by toplevel_scene_destroyed) outlives the toplevel;
+		 * drop our reference here, the border node keeps its own */
+		if (toplevel->border_buffer != NULL) {
+			wlr_buffer_drop(toplevel->border_buffer);
+			toplevel->border_buffer = NULL;
+		}
 	}
 
 	struct guibux_output *fo = guibux_output_for(toplevel->server,

@@ -232,6 +232,8 @@ void power_panel_show(struct guibux_server *server) {
 
 	/* start on the first available action */
 	p->selected = 0;
+	p->confirming = false;
+	p->confirm_idx = 0;
 	for (int i = 0; i < POWER_COUNT; i++) {
 		if (power_avail[i]) {
 			p->selected = i;
