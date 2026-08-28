@@ -62,7 +62,7 @@ class TestRemoteAutoHTTPServer:
             server.start()
             # The kill-existing call is the 2nd call (index 1)
             kill_call = mock_run.call_args_list[1]
-            cmd = kill_call[0][0][2]
+            cmd = kill_call[0][0][8]
             assert "pkill" in cmd
             assert "virtui_auto_http" in cmd
 
@@ -82,7 +82,7 @@ class TestRemoteAutoHTTPServer:
             server.start()
             # The start command is the 5th call (index 4)
             start_call = mock_run.call_args_list[4]
-            cmd = start_call[0][0][2]
+            cmd = start_call[0][0][8]
             # Subshell pattern: (nohup ... & echo $! > pid)
             assert "(nohup" in cmd
             assert "</dev/null" in cmd
@@ -185,6 +185,7 @@ class TestRemoteAutoHTTPServer:
                 _mock_completed(),  # verify
                 _mock_completed(),  # stop: kill
                 _mock_completed(),  # stop: rm -rf
+                _mock_completed(),  # stop: ssh ControlMaster exit
             ])
             server = RemoteAutoHTTPServer(serve_dir, port=8000, remote_host="user@host")
             server.start()
@@ -221,6 +222,7 @@ class TestRemoteAutoHTTPServer:
                 _mock_completed(),  # verify
                 _mock_completed(),  # stop: kill
                 _mock_completed(),  # stop: rm -rf
+                _mock_completed(),  # stop: ssh ControlMaster exit
             ])
             with RemoteAutoHTTPServer(serve_dir, port=8000, remote_host="user@host") as server:
                 assert server.actual_port == 8000
