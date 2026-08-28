@@ -89,16 +89,20 @@ keybind = Mod+Ctrl+Print: screenshot-window
 #keybind = Mod+Next: brightness-down
 
 # colors (#rrggbb)
-color_bg = #1e1e2e
-color_border = #45475a
-color_highlight = #3a3c55
-color_text = #ffffff
-color_dim = #8888aa
-# topbar (dark blue)
-topbar_bg = #0f1b3d
-topbar_text = #ffffff
+color_bg = #1a1b26
+color_border = #2a2b3d
+color_highlight = #2e2f40
+color_text = #c0caf5
+color_dim = #565f89
+# accent color: focused window border, active workspace bar
+color_accent = #7aa2f7
+# topbar (translucent dark)
+topbar_bg = #16161e
+topbar_text = #c0caf5
+# topbar background opacity 0-255 (default: 217)
+#topbar_alpha = 217
 # topbar gradient (left to right): end color + enable flag
-#topbar_bg2 = #6a2fd8
+#topbar_bg2 = #1e1e2e
 #topbar_gradient = 1
 
 # topbar height in pixels (default: 24)
@@ -150,10 +154,25 @@ focus_follow_mouse = true
 overview_workspace_colors = true
 
 # per-workspace overview colors (#rrggbb)
-overview_ws_color1 = #3a86ff
-overview_ws_color2 = #86efac
-overview_ws_color3 = #ffb703
-overview_ws_color4 = #c084fc
+overview_ws_color1 = #7aa2f7
+overview_ws_color2 = #9ece6a
+overview_ws_color3 = #e0af68
+overview_ws_color4 = #bb9af7
+
+# overview cell corner radius in pixels (default: 12)
+#overview_radius = 12
+
+# overview dim overlay opacity 0-255 (default: 153)
+#overview_dim_alpha = 153
+
+# focused window border width in pixels (0 = off, default: 2)
+#window_border_width = 2
+
+# focused window border color (default: color_accent)
+#window_border_color = #7aa2f7
+
+# window shadow: subtle dark shadow around all windows (default: true)
+#window_shadow = true
 
 # animations: master switch (default: true) and duration in ms
 # (default: 200, 0 = off)

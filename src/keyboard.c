@@ -892,12 +892,25 @@ void text_input_handle_new(struct wl_listener *listener, void *data) {
 }
 
 /* route the active text inputs to the surface under pointer focus; called
- * on every pointer enter/clear so the IME follows the focused window */
+ * on every pointer enter/clear so the IME follows the focused window.
+ * a text input may only be entered on a surface owned by the same client
+ * (wlroots asserts this), so skip foreign text inputs — e.g. an IME text
+ * input must not be entered on an XWayland surface */
 void text_input_set_focus(struct guibux_server *server,
 		struct wlr_surface *surface) {
+	struct wl_client *client = surface != NULL
+		? wl_resource_get_client(surface->resource) : NULL;
 	struct wlr_text_input_v3 *text_input;
 	wl_list_for_each(text_input, &server->text_input_manager->text_inputs,
 			link) {
+		/* a foreign client owns this text input: it can never take
+		 * focus here, but it may still hold an old focus that must
+		 * be released before the next matching enter */
+		if (text_input->focused_surface != NULL &&
+				wl_resource_get_client(text_input->resource) != client) {
+			wlr_text_input_v3_send_leave(text_input);
+			continue;
+		}
 		if (surface != NULL && text_input->current_enabled &&
 				text_input->focused_surface != surface) {
 			if (text_input->focused_surface != NULL) {

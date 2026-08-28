@@ -52,12 +52,18 @@ static void topbar_items_panel_render(struct guibux_server *server) {
 		data, CAIRO_FORMAT_RGB24, w, hgt, (int)stride);
 	cairo_t *cr = cairo_create(cs);
 
-	set_color(cr, server->color_bg);
-	cairo_paint(cr);
-	set_color(cr, server->color_border);
+	/* translucent rounded background */
+	cairo_set_source_rgba(cr,
+		((server->color_bg >> 16) & 0xFF) / 255.0,
+		((server->color_bg >> 8) & 0xFF) / 255.0,
+		(server->color_bg & 0xFF) / 255.0, 0.88);
+	topbar_rounded_rect(cr, 0, 0, w, hgt, 12 * p->box_scale);
+	cairo_fill(cr);
+	/* subtle border */
+	cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12);
 	cairo_set_line_width(cr, p->box_scale);
-	cairo_rectangle(cr, p->box_scale / 2.0, p->box_scale / 2.0,
-		w - p->box_scale, hgt - p->box_scale);
+	topbar_rounded_rect(cr, p->box_scale / 2.0, p->box_scale / 2.0,
+		w - p->box_scale, hgt - p->box_scale, 11 * p->box_scale);
 	cairo_stroke(cr);
 
 	FT_Face face = server->launcher.face;

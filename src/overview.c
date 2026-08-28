@@ -7,6 +7,8 @@
 
 #define OVERVIEW_LABEL_FONT 60
 #define OVERVIEW_LABEL_PAD 6
+/* gap between window cells and from the row edges, in logical px */
+#define OVERVIEW_CELL_GAP 8
 
 /*
  * GNOME-style overview: every output shows its 4 workspaces as rows
@@ -39,25 +41,34 @@ static void overview_render_label(struct guibux_server *server, int idx) {
 		data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
 	cairo_t *cr = cairo_create(cs);
 
-	/* label background: workspace color pill if enabled, else dark */
-	uint32_t bg = 0x1e1e2e;
+	/* label background: translucent dark rounded pill; a workspace
+	 * color accent bar on the left edge when colors are enabled */
+	cairo_set_source_rgba(cr, 0.1, 0.1, 0.15, 0.75);
+	topbar_rounded_rect(cr, 0, 0, w, h, 12 * sc);
+	cairo_fill(cr);
+
+	uint32_t ws_color = 0;
 	if (ov->ws_colors_enabled) {
 		struct guibux_toplevel *t = ov->wins[idx];
 		if (t && t->workspace >= 1 && t->workspace <= NUM_WORKSPACES &&
 				ov->ws_colors[t->workspace - 1] != 0) {
-			bg = ov->ws_colors[t->workspace - 1];
+			ws_color = ov->ws_colors[t->workspace - 1];
 		}
 	}
-	set_color(cr, bg);
-	cairo_paint(cr);
+	if (ws_color != 0) {
+		set_color(cr, ws_color);
+		cairo_rectangle(cr, 0, 0, 3 * sc, h);
+		cairo_fill(cr);
+	}
 
 	FT_Face face = server->launcher.face;
 	int font_px = OVERVIEW_LABEL_FONT * sc;
 	FT_Set_Pixel_Sizes(face, 0, font_px);
 
 	int mb = h / 2 + font_px * 35 / 100;
+	int tx = (ws_color != 0) ? (OVERVIEW_LABEL_PAD + 4) * sc : OVERVIEW_LABEL_PAD * sc;
 	launcher_draw_text_on_surface(cs, face, ov->label_text[idx],
-		OVERVIEW_LABEL_PAD * sc, mb, 0xffffff);
+		tx, mb, 0xe0e0e0);
 
 	cairo_destroy(cr);
 	cairo_surface_destroy(cs);
@@ -272,7 +283,7 @@ static void overview_cell_size(struct guibux_server *server, int i,
 	if (n <= 0) {
 		n = 1;
 	}
-	*cell_w = area_w / n;
+	*cell_w = (area_w - (n + 1) * OVERVIEW_CELL_GAP) / n;
 	if (*cell_w <= 0) {
 		*cell_w = 1;
 	}
@@ -416,11 +427,12 @@ static void overview_layout(struct guibux_server *server) {
 			if (n == 0) {
 				continue;
 			}
-			int cell_w = area_w / n;
+			/* cells with gaps: n cells + (n+1) gaps fill the row */
+			int cell_w = (area_w - (n + 1) * OVERVIEW_CELL_GAP) / n;
 			if (cell_w <= 0) {
 				cell_w = 1;
 			}
-			int x = box.x + OVERVIEW_WS_COL_W;
+			int x = box.x + OVERVIEW_WS_COL_W + OVERVIEW_CELL_GAP;
 			for (int i = 0; i < ov->num_wins; i++) {
 				struct guibux_toplevel *t = ov->wins[i];
 				if (t->workspace == ws &&
@@ -438,7 +450,7 @@ static void overview_layout(struct guibux_server *server) {
 							x_off, y_off);
 					}
 
-					x += cell_w;
+					x += cell_w + OVERVIEW_CELL_GAP;
 				}
 			}
 		}
@@ -493,7 +505,8 @@ void overview_show(struct guibux_server *server) {
 
 	overview_layout(server);
 
-	/* uniform dim over each whole output, above windows and labels */
+	/* uniform dim over each whole output, above windows and labels;
+	 * opacity is configurable via overview_dim_alpha */
 	struct guibux_output *o;
 	wl_list_for_each(o, &server->outputs, link) {
 		struct wlr_box box;
@@ -502,7 +515,8 @@ void overview_show(struct guibux_server *server) {
 		if (box.width <= 0 || box.height <= 0) {
 			continue;
 		}
-		float color[4] = { 0, 0, 0, 0.4f };
+		float a = server->overview_dim_alpha / 255.0f;
+		float color[4] = { 0, 0, 0, a };
 		o->overview_dim = wlr_scene_rect_create(&server->scene->tree,
 			box.width, box.height, color);
 		if (o->overview_dim) {

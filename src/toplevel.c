@@ -4,6 +4,79 @@
 #include <strings.h>
 
 // ---------------------------------------------------------------------------
+// Focus border
+// ---------------------------------------------------------------------------
+
+/* update the focus border rect to match the window's current geometry;
+ * the border is a 2px outline slightly larger than the window */
+static void toplevel_border_update(struct guibux_toplevel *t) {
+	if (t->border_node == NULL || t->scene_tree == NULL) {
+		return;
+	}
+	struct guibux_server *server = t->server;
+	int bw = server->window_border_width;
+	if (bw <= 0 || t->is_fullscreen) {
+		wlr_scene_node_set_enabled(&t->border_node->node, false);
+		return;
+	}
+	struct wlr_box geo;
+	toplevel_get_geometry(t, &geo);
+	if (geo.width <= 0 || geo.height <= 0) {
+		wlr_scene_node_set_enabled(&t->border_node->node, false);
+		return;
+	}
+	/* border is centered on the window edge: offset by -bw/2 */
+	int off = -bw / 2;
+	wlr_scene_node_set_position(&t->border_node->node,
+		t->scene_tree->node.x + off,
+		t->scene_tree->node.y + off);
+	wlr_scene_rect_set_size(t->border_node,
+		geo.width + bw, geo.height + bw);
+	uint32_t c = server->window_border_color;
+	float color[4] = {
+		((c >> 16) & 0xFF) / 255.0f,
+		((c >> 8) & 0xFF) / 255.0f,
+		(c & 0xFF) / 255.0f,
+		1.0f,
+	};
+	wlr_scene_rect_set_color(t->border_node, color);
+	wlr_scene_node_set_enabled(&t->border_node->node, true);
+}
+
+/* create the border rect if it doesn't exist; it starts disabled */
+static void toplevel_border_ensure(struct guibux_toplevel *t) {
+	if (t->border_node != NULL || t->scene_tree == NULL) {
+		return;
+	}
+	uint32_t c = t->server->window_border_color;
+	float color[4] = {
+		((c >> 16) & 0xFF) / 255.0f,
+		((c >> 8) & 0xFF) / 255.0f,
+		(c & 0xFF) / 255.0f,
+		1.0f,
+	};
+	t->border_node = wlr_scene_rect_create(t->scene_tree, 0, 0, color);
+	if (t->border_node != NULL) {
+		wlr_scene_node_set_enabled(&t->border_node->node, false);
+	}
+}
+
+void toplevel_border_show(struct guibux_toplevel *t) {
+	if (t == NULL || t->scene_tree == NULL) {
+		return;
+	}
+	toplevel_border_ensure(t);
+	toplevel_border_update(t);
+}
+
+void toplevel_border_hide(struct guibux_toplevel *t) {
+	if (t == NULL || t->border_node == NULL) {
+		return;
+	}
+	wlr_scene_node_set_enabled(&t->border_node->node, false);
+}
+
+// ---------------------------------------------------------------------------
 // Focus
 // ---------------------------------------------------------------------------
 
@@ -87,6 +160,14 @@ void focus_toplevel(struct guibux_toplevel *toplevel, bool raise) {
 				wlr_xwayland_surface_activate(prev_xs, false);
 			}
 		}
+		/* hide the previous window's focus border */
+		struct guibux_toplevel *prev_t;
+		wl_list_for_each(prev_t, &server->toplevels, link) {
+			if (toplevel_get_surface(prev_t) == prev_surface) {
+				toplevel_border_hide(prev_t);
+				break;
+			}
+		}
 	}
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
 	if (raise) {
@@ -98,6 +179,7 @@ void focus_toplevel(struct guibux_toplevel *toplevel, bool raise) {
 		wl_list_insert(&server->toplevels, &toplevel->link);
 	}
 	toplevel_set_activated(toplevel, true);
+	toplevel_border_show(toplevel);
 	if (keyboard != NULL) {
 		wlr_seat_keyboard_notify_enter(seat, surface,
 			keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
@@ -108,12 +190,15 @@ void focus_toplevel(struct guibux_toplevel *toplevel, bool raise) {
 		/* only the active pill moved: the fast path redraws just the
 		 * window-pill region, no full-bar repaint */
 		fo->topbar_focus_dirty = true;
-		/* the pill list is global: a window mapping on one monitor
-		 * must appear on every bar, not just its own */
+		/* the pill list is global: a focus change on one monitor must
+		 * update the pill highlight on every bar. The fast path redraws
+		 * only the pill + minimap region, so other monitors stay cheap
+		 * (a full repaint per hover would burn CPU with
+		 * focus_follow_mouse) */
 		struct guibux_output *bo;
 		wl_list_for_each(bo, &server->outputs, link) {
 			if (bo != fo) {
-				topbar_mark_dirty(bo);
+				bo->topbar_focus_dirty = true;
 			}
 		}
 	}
@@ -225,6 +310,7 @@ static void toplevel_scene_destroyed(struct wl_listener *listener, void *data) {
 	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, scene_destroy);
 	wl_list_remove(&toplevel->scene_destroy.link);
 	toplevel->scene_tree = NULL;
+	toplevel->border_node = NULL;
 }
 
 void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
@@ -386,6 +472,11 @@ void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 		} else {
 			wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, 0, 0);
 		}
+	}
+	/* keep the focus border in sync with the window geometry */
+	if (toplevel->border_node != NULL &&
+			toplevel->border_node->node.enabled) {
+		toplevel_border_update(toplevel);
 	}
 }
 

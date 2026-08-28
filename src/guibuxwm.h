@@ -61,13 +61,14 @@ enum topbar_item_id {
 #define OVERVIEW_WS_COL_W 72
 #define NUM_KEYBINDS 64
 #define MAX_WINDOWS 128
-#define DEFAULT_COLOR_BG 0x1e1e2e
-#define DEFAULT_COLOR_BORDER 0x45475a
-#define DEFAULT_COLOR_HIGHLIGHT 0x3a3c55
-#define DEFAULT_COLOR_TEXT 0xffffff
-#define DEFAULT_COLOR_DIM 0x8888aa
-#define DEFAULT_COLOR_TOPBAR_BG 0x8839ef
-#define DEFAULT_COLOR_TOPBAR_TEXT 0x1e1e2e
+#define DEFAULT_COLOR_BG 0x1a1b26
+#define DEFAULT_COLOR_BORDER 0x2a2b3d
+#define DEFAULT_COLOR_HIGHLIGHT 0x2e2f40
+#define DEFAULT_COLOR_TEXT 0xc0caf5
+#define DEFAULT_COLOR_DIM 0x565f89
+#define DEFAULT_COLOR_TOPBAR_BG 0x16161e
+#define DEFAULT_COLOR_TOPBAR_TEXT 0xc0caf5
+#define DEFAULT_COLOR_ACCENT 0x7aa2f7
 
 #define LAUNCHER_BOX_W 480
 #define LAUNCHER_BOX_H 40
@@ -552,6 +553,9 @@ struct guibux_toplevel {
 	struct wl_listener request_configure;
 	struct wl_listener set_title;
 	struct wl_listener ping_timeout;
+	/* focus border: a wlr_scene_rect slightly larger than the window,
+	 * shown only when the window has keyboard focus */
+	struct wlr_scene_rect *border_node;
 };
 
 struct guibux_popup {
@@ -586,6 +590,10 @@ struct guibux_switcher {
 	struct wlr_scene_buffer *scene_node;
 	struct wlr_buffer *buffer;
 	int box_w, box_h, box_scale;
+	/* live preview of the selected window, shown right of the list */
+	struct wlr_scene_buffer *preview_node;
+	struct wlr_buffer *preview_buf;
+	int preview_w, preview_h;
 };
 
 struct guibux_overview {
@@ -810,7 +818,14 @@ struct guibux_server {
 	uint32_t color_bg, color_border, color_highlight, color_text, color_dim;
 	uint32_t color_topbar_bg, color_topbar_text;
 	uint32_t color_topbar_bg2;
+	uint32_t color_accent;
 	int topbar_gradient;
+	int topbar_alpha;  /* 0-255, topbar background opacity */
+	int window_border_width;  /* focused window border, 0 = off */
+	uint32_t window_border_color;
+	bool window_shadow;
+	int overview_radius;  /* overview cell corner radius */
+	int overview_dim_alpha;  /* 0-255, overview dim opacity */
 	struct output_placement placements[MAX_OUTPUT_PLACEMENTS];
 	int num_placements;
 	char *outputs_spec;  /* config `outputs` key; NULL = GUIBUX_OUTPUTS env */
@@ -958,6 +973,8 @@ int topbar_audio_at(struct guibux_server *server, struct guibux_output *o, doubl
 
 /* toplevel.c */
 void focus_toplevel(struct guibux_toplevel *toplevel, bool raise);
+void toplevel_border_show(struct guibux_toplevel *toplevel);
+void toplevel_border_hide(struct guibux_toplevel *toplevel);
 void xdg_activation_handle_request(struct wl_listener *listener, void *data);
 void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen, struct wlr_output *output);
 void begin_interactive(struct guibux_toplevel *toplevel, enum guibux_cursor_mode mode, uint32_t edges);
@@ -1077,6 +1094,11 @@ void preview_tick(struct guibux_server *server);
 /* hide the preview if it shows the given window (window unmap) */
 void preview_on_unmap(struct guibux_server *server, struct guibux_toplevel *toplevel);
 void preview_destroy(struct guibux_server *server);
+/* read a surface buffer into an XRGB8888 destination buffer,
+ * downscaled to fit (centered when smaller) */
+bool snapshot_to_buffer(struct guibux_server *server,
+	struct wlr_scene_buffer *sb, struct wlr_buffer *dst,
+	int dst_w, int dst_h);
 
 /* osd.c */
 void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,

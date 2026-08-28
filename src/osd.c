@@ -153,11 +153,18 @@ void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
 			cairo_surface_t *cs = cairo_image_surface_create_for_data(
 				data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
 			cairo_t *cr = cairo_create(cs);
-			set_color(cr, server->color_bg);
-			cairo_paint(cr);
-			set_color(cr, server->color_border);
+			/* translucent rounded background */
+			cairo_set_source_rgba(cr,
+				((server->color_bg >> 16) & 0xFF) / 255.0,
+				((server->color_bg >> 8) & 0xFF) / 255.0,
+				(server->color_bg & 0xFF) / 255.0, 0.85);
+			topbar_rounded_rect(cr, 0, 0, w, h, 12 * scale);
+			cairo_fill(cr);
+			/* subtle border */
+			cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.15);
 			cairo_set_line_width(cr, scale);
-			cairo_rectangle(cr, scale / 2.0, scale / 2.0, w - scale, h - scale);
+			topbar_rounded_rect(cr, scale / 2.0, scale / 2.0,
+				w - scale, h - scale, 11 * scale);
 			cairo_stroke(cr);
 			int baseline = OSD_PAD * scale + text_h * scale / 2 +
 				font_px * 35 / 100;
@@ -166,8 +173,9 @@ void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
 			if (kind != OSD_SHOT && kind != OSD_WS) {
 				int bar_y = (OSD_PAD + OSD_TEXT_H + OSD_TEXT_BAR_GAP) * scale;
 				int bar_w = (w - 2 * OSD_PAD * scale);
-				set_color(cr, server->color_border);
-				cairo_rectangle(cr, OSD_PAD * scale, bar_y, bar_w, OSD_BAR_H * scale);
+				cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12);
+				topbar_rounded_rect(cr, OSD_PAD * scale, bar_y,
+					bar_w, OSD_BAR_H * scale, (OSD_BAR_H / 2) * scale);
 				cairo_fill(cr);
 				int fill_w = muted ? 0 : (bar_w * value) / 100;
 				if (fill_w > bar_w)
@@ -175,8 +183,9 @@ void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
 				if (fill_w < 0)
 					fill_w = 0;
 				if (fill_w > 0) {
-					set_color(cr, server->color_text);
-					cairo_rectangle(cr, OSD_PAD * scale, bar_y, fill_w, OSD_BAR_H * scale);
+					set_color(cr, server->color_accent);
+					topbar_rounded_rect(cr, OSD_PAD * scale, bar_y,
+						fill_w, OSD_BAR_H * scale, (OSD_BAR_H / 2) * scale);
 					cairo_fill(cr);
 				}
 			}

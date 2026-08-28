@@ -8,6 +8,8 @@
 #define SWITCHER_LINE_H 28
 #define SWITCHER_PAD 12
 #define SWITCHER_MAX_LINES 16
+#define SWITCHER_PREVIEW_W 480
+#define SWITCHER_PREVIEW_H 300
 
 static void switcher_warp_to_selection(struct guibux_server *server) {
 	struct guibux_switcher *s = &server->switcher;
@@ -19,6 +21,76 @@ static void switcher_warp_to_selection(struct guibux_server *server) {
 	double cy = t->scene_tree->node.y + geo.height / 2.0;
 	wlr_cursor_warp(server->cursor, NULL, cx, cy);
 	process_cursor_motion(server, guibux_now_msec());
+}
+
+/* snapshot the selected window into the preview buffer and show it
+ * right of the list (vertically centered), falling back to below the
+ * list when there is not enough horizontal room */
+static void switcher_preview(struct guibux_server *server) {
+	struct guibux_switcher *s = &server->switcher;
+	if (s->selection >= s->num_wins || s->output == NULL) return;
+	struct guibux_toplevel *t = s->wins[s->selection];
+	struct wlr_scene_buffer *sb = toplevel_inner_buffer(t);
+	if (sb == NULL || sb->buffer == NULL) return;
+
+	if (s->preview_buf == NULL) {
+		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
+		struct wlr_drm_format format = {
+			.format = DRM_FORMAT_XRGB8888,
+			.len = 1,
+			.modifiers = mods,
+		};
+		s->preview_buf = wlr_allocator_create_buffer(
+			server->launcher.shm_alloc, SWITCHER_PREVIEW_W,
+			SWITCHER_PREVIEW_H, &format);
+		if (s->preview_buf == NULL) return;
+		s->preview_w = SWITCHER_PREVIEW_W;
+		s->preview_h = SWITCHER_PREVIEW_H;
+	}
+	if (!snapshot_to_buffer(server, sb, s->preview_buf,
+			s->preview_w, s->preview_h)) {
+		return;
+	}
+
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, s->output, &box);
+	int ew, eh;
+	wlr_output_effective_resolution(s->output, &ew, &eh);
+
+	/* list position (same as switcher_show) */
+	int lx = (ew - s->box_w) / 2;
+	int ly = (eh - s->box_h) / 2;
+	int px, py;
+	if (lx + s->box_w + 8 + s->preview_w <= ew - 4) {
+		/* right of the list, vertically centered on it */
+		px = lx + s->box_w + 8;
+		py = ly + (s->box_h - s->preview_h) / 2;
+	} else {
+		/* not enough room: below the list, centered on it */
+		px = lx + (s->box_w - s->preview_w) / 2;
+		py = ly + s->box_h + 8;
+	}
+	if (px < 4) px = 4;
+	if (py < 4) py = 4;
+	if (px + s->preview_w > ew - 4) px = ew - 4 - s->preview_w;
+	if (py + s->preview_h > eh - 4) py = eh - 4 - s->preview_h;
+	if (px < 4) px = 4;
+	if (py < 4) py = 4;
+
+	if (s->preview_node == NULL) {
+		s->preview_node = wlr_scene_buffer_create(&server->scene->tree,
+			s->preview_buf);
+		if (s->preview_node == NULL) return;
+	} else {
+		wlr_scene_buffer_set_buffer(s->preview_node, s->preview_buf);
+	}
+	wlr_scene_buffer_set_dest_size(s->preview_node, s->preview_w,
+		s->preview_h);
+	wlr_scene_node_set_position(&s->preview_node->node, box.x + px,
+		box.y + py);
+	wlr_scene_node_raise_to_top(&s->preview_node->node);
+	topbar_raise_all(server);
+	wlr_output_schedule_frame(s->output);
 }
 
 static void switcher_render(struct guibux_server *server) {
@@ -155,6 +227,7 @@ void switcher_show(struct guibux_server *server) {
 
 	s->active = true;
 	switcher_render(server);
+	switcher_preview(server);
 	switcher_warp_to_selection(server);
 }
 
@@ -179,6 +252,7 @@ void switcher_on_unmap(struct guibux_server *server,
 			s->selection = s->num_wins - 1;
 		}
 		switcher_render(server);
+		switcher_preview(server);
 		switcher_warp_to_selection(server);
 		return;
 	}
@@ -200,6 +274,15 @@ void switcher_hide(struct guibux_server *server) {
 		wlr_buffer_drop(s->buffer);
 		s->buffer = NULL;
 	}
+	if (s->preview_node != NULL) {
+		wlr_scene_node_destroy(&s->preview_node->node);
+		s->preview_node = NULL;
+	}
+	if (s->preview_buf != NULL) {
+		wlr_buffer_drop(s->preview_buf);
+		s->preview_buf = NULL;
+	}
+	s->preview_w = s->preview_h = 0;
 	process_cursor_motion(server, guibux_now_msec());
 }
 
@@ -238,6 +321,7 @@ bool switcher_handle_key(struct guibux_server *server, xkb_keysym_t sym) {
 		if (s->num_wins > 0) {
 			s->selection = (s->selection + 1) % s->num_wins;
 			switcher_render(server);
+			switcher_preview(server);
 			switcher_warp_to_selection(server);
 		}
 		return true;

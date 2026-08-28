@@ -63,42 +63,93 @@ static void downscale_xrgb(const uint8_t *src, uint32_t sw, uint32_t sh,
 	}
 }
 
-/* read the window's current buffer into the persistent preview buffer.
- * wrapping the live buffer directly would hold a lock that blocks
- * xwayland client buffer damage updates, so copy the pixels into the
- * shm buffer instead; the copy is downscaled to the buffer size so a
- * 1080p window does not read back 8MB */
-static bool preview_snapshot(struct guibux_server *server,
-		struct wlr_scene_buffer *sb) {
-	struct guibux_window_preview *pv = &server->window_preview;
-	struct wlr_texture *tex = wlr_texture_from_buffer(server->renderer,
-		sb->buffer);
+/* read a surface buffer into an XRGB8888 destination buffer,
+ * downscaled to fit (centered when smaller). wrapping the live buffer
+ * directly would hold a lock that blocks xwayland client buffer damage
+ * updates, so copy the pixels into the shm buffer instead; the copy is
+ * downscaled to the buffer size so a 1080p window does not read back
+ * 8MB */
+bool snapshot_to_buffer(struct guibux_server *server,
+		struct wlr_scene_buffer *sb, struct wlr_buffer *dst,
+		int dst_w, int dst_h) {
+	/* prefer the cached texture the scene graph already uses for
+	 * rendering: for SHM buffers the source memory may be zeroed after
+	 * upload, so a fresh wlr_texture_from_buffer() would read empty
+	 * data (black box). the cached texture holds the rendered content */
+	struct wlr_client_buffer *cb = wlr_client_buffer_get(sb->buffer);
+	struct wlr_texture *tex = NULL;
+	bool own_tex = false;
+	if (cb != NULL && cb->texture != NULL) {
+		tex = cb->texture;
+	} else {
+		tex = wlr_texture_from_buffer(server->renderer, sb->buffer);
+		own_tex = true;
+	}
 	if (tex == NULL) {
+		wlr_log(WLR_DEBUG, "preview: no texture for buffer %dx%d",
+			sb->buffer->width, sb->buffer->height);
 		return false;
 	}
-	uint32_t fmt = wlr_texture_preferred_read_format(tex);
-	if (fmt == DRM_FORMAT_INVALID) {
-		wlr_texture_destroy(tex);
-		return false;
-	}
+	/* always read back as XRGB8888: the copy/downscale below assumes
+	 * that byte layout. XWayland surfaces may use ARGB8888/ABGR8888,
+	 * and reading in the texture's preferred format would produce
+	 * swapped or black pixels */
 	uint32_t w = tex->width, h = tex->height;
 	uint32_t stride = w * 4;
 	uint8_t *data = malloc((size_t)stride * h);
 	if (data == NULL) {
-		wlr_texture_destroy(tex);
+		if (own_tex) {
+			wlr_texture_destroy(tex);
+		}
 		return false;
 	}
 	bool ok = wlr_texture_read_pixels(tex, &(struct wlr_texture_read_pixels_options){
 		.data = data,
-		.format = fmt,
+		.format = DRM_FORMAT_XRGB8888,
 		.stride = stride,
 	});
-	wlr_texture_destroy(tex);
+	if (own_tex) {
+		wlr_texture_destroy(tex);
+	}
 	if (!ok) {
+		wlr_log(WLR_DEBUG, "preview: wlr_texture_read_pixels failed (%ux%u)",
+			w, h);
 		free(data);
 		return false;
 	}
 
+	void *bdata;
+	uint32_t bfmt;
+	size_t bstride;
+	if (!wlr_buffer_begin_data_ptr_access(dst,
+			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &bdata, &bfmt, &bstride)) {
+		free(data);
+		return false;
+	}
+	if (bfmt == DRM_FORMAT_XRGB8888) {
+		if (w <= (uint32_t)dst_w && h <= (uint32_t)dst_h) {
+			/* center the smaller window in the buffer */
+			uint32_t ox = (dst_w - w) / 2;
+			uint32_t oy = (dst_h - h) / 2;
+			for (uint32_t y = 0; y < h; y++) {
+				memcpy((uint8_t *)bdata + (size_t)(oy + y) * bstride +
+					(size_t)ox * 4,
+					data + (size_t)y * stride, (size_t)w * 4);
+			}
+		} else {
+			downscale_xrgb(data, w, h, stride, bdata,
+				(uint32_t)dst_w, (uint32_t)dst_h, (uint32_t)bstride);
+		}
+	}
+	wlr_buffer_end_data_ptr_access(dst);
+	free(data);
+	return true;
+}
+
+/* read the window's current buffer into the persistent preview buffer */
+static bool preview_snapshot(struct guibux_server *server,
+		struct wlr_scene_buffer *sb) {
+	struct guibux_window_preview *pv = &server->window_preview;
 	if (pv->buffer == NULL || pv->buffer_w < PREVIEW_W ||
 			pv->buffer_h < PREVIEW_H) {
 		if (pv->buffer != NULL) {
@@ -116,39 +167,12 @@ static bool preview_snapshot(struct guibux_server *server,
 		pv->buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
 			PREVIEW_W, PREVIEW_H, &drm_fmt);
 		if (pv->buffer == NULL) {
-			free(data);
 			return false;
 		}
 		pv->buffer_w = PREVIEW_W;
 		pv->buffer_h = PREVIEW_H;
 	}
-
-	void *bdata;
-	uint32_t bfmt;
-	size_t bstride;
-	if (!wlr_buffer_begin_data_ptr_access(pv->buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &bdata, &bfmt, &bstride)) {
-		free(data);
-		return false;
-	}
-	if (bfmt == DRM_FORMAT_XRGB8888) {
-		if (w <= PREVIEW_W && h <= PREVIEW_H) {
-			/* center the smaller window in the buffer */
-			uint32_t ox = (PREVIEW_W - w) / 2;
-			uint32_t oy = (PREVIEW_H - h) / 2;
-			for (uint32_t y = 0; y < h; y++) {
-				memcpy((uint8_t *)bdata + (size_t)(oy + y) * bstride +
-					(size_t)ox * 4,
-					data + (size_t)y * stride, (size_t)w * 4);
-			}
-		} else {
-			downscale_xrgb(data, w, h, stride, bdata,
-				PREVIEW_W, PREVIEW_H, (uint32_t)bstride);
-		}
-	}
-	wlr_buffer_end_data_ptr_access(pv->buffer);
-	free(data);
-	return true;
+	return snapshot_to_buffer(server, sb, pv->buffer, PREVIEW_W, PREVIEW_H);
 }
 
 static void preview_show(struct guibux_server *server,
@@ -159,6 +183,8 @@ static void preview_show(struct guibux_server *server,
 	}
 	struct wlr_scene_buffer *sb = toplevel_inner_buffer(t);
 	if (sb == NULL || sb->buffer == NULL) {
+		wlr_log(WLR_DEBUG, "preview: no buffer for toplevel (sb=%p, buf=%p)",
+			(void *)sb, sb ? (void *)sb->buffer : NULL);
 		return;
 	}
 	if (!preview_snapshot(server, sb)) {

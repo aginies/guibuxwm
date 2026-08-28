@@ -23,8 +23,8 @@ static int64_t effects_now_ms(void) {
 	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-/* ease-out cubic: fast start, gentle landing */
-static double effects_ease(double t) {
+/* ease-out cubic: fast start, gentle landing (open/close) */
+static double effects_ease_out(double t) {
 	if (t < 0) {
 		t = 0;
 	}
@@ -33,6 +33,17 @@ static double effects_ease(double t) {
 	}
 	double u = 1.0 - t;
 	return 1.0 - u * u * u;
+}
+
+/* ease-in-out cubic: gentle start and end (window moves, retile) */
+static double effects_ease_in_out(double t) {
+	if (t < 0) {
+		t = 0;
+	}
+	if (t > 1) {
+		t = 1;
+	}
+	return t < 0.5 ? 4.0 * t * t * t : 1.0 - pow(-2.0 * t + 2.0, 3) / 2.0;
 }
 
 static void effects_on_node_destroy(struct wl_listener *listener, void *data) {
@@ -71,7 +82,11 @@ static struct guibux_effects_anim *effects_start(struct guibux_server *server,
 }
 
 static void effects_apply(struct guibux_effects_anim *a, double t) {
-	double v = effects_ease(t);
+	/* position moves use ease-in-out (gentle start and end); scale
+	 * animations (open/close) use ease-out (fast start, gentle landing) */
+	double v = (a->kind == EFFECT_POS)
+		? effects_ease_in_out(t)
+		: effects_ease_out(t);
 	switch (a->kind) {
 	case EFFECT_POS:
 		wlr_scene_node_set_position(a->node,

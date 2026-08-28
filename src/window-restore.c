@@ -101,16 +101,46 @@ void restore_derive_terminal_id(struct guibux_server *server) {
 		server->terminal_app_id);
 }
 
-static bool restore_is_terminal(struct guibux_server *server,
+/* app_id prefixes that are always excluded from position restore,
+ * in addition to the configured terminal: terminals are short-lived
+ * and their position is not meaningful to persist */
+static const char *restore_excluded_ids[] = {
+	"kgx",
+	"org.gnome.Console",
+	"org.kde.konsole",
+	"gnome-terminal",
+	"org.gnome.Terminal",
+	"foot",
+	"alacritty",
+	"org.alacritty.Alacritty",
+	"kitty",
+	"st",
+	"xfce4-terminal",
+	"org.xfce.Terminal",
+};
+#define RESTORE_EXCLUDED_COUNT \
+	(sizeof(restore_excluded_ids) / sizeof(restore_excluded_ids[0]))
+
+static bool restore_is_excluded(struct guibux_server *server,
 		const char *app_id) {
-	if (server->terminal_app_id == NULL || app_id == NULL ||
-			app_id[0] == '\0') {
+	if (app_id == NULL || app_id[0] == '\0') {
 		return false;
 	}
-	/* exact or prefix match, like toplevel_for_app: the terminal's
-	 * app_id may carry a suffix (gnome-terminal vs gnome-terminal-server) */
-	size_t len = strlen(server->terminal_app_id);
-	return strncasecmp(app_id, server->terminal_app_id, len) == 0;
+	/* the configured terminal */
+	if (server->terminal_app_id != NULL) {
+		size_t len = strlen(server->terminal_app_id);
+		if (strncasecmp(app_id, server->terminal_app_id, len) == 0) {
+			return true;
+		}
+	}
+	/* known terminal app_ids */
+	for (size_t i = 0; i < RESTORE_EXCLUDED_COUNT; i++) {
+		size_t len = strlen(restore_excluded_ids[i]);
+		if (strncasecmp(app_id, restore_excluded_ids[i], len) == 0) {
+			return true;
+		}
+	}
+	return false;
 }
 
 void restore_load(struct guibux_server *server) {
@@ -156,7 +186,7 @@ void restore_load(struct guibux_server *server) {
 			wlr_log(WLR_ERROR, "restore: bad values in '%s'", line);
 			continue;
 		}
-		if (restore_is_terminal(server, app_id)) {
+		if (restore_is_excluded(server, app_id)) {
 			/* the terminal is excluded: also purges stale entries
 			 * saved before the exclusion (or a term_app_id change) */
 			wlr_log(WLR_INFO, "restore: skipping terminal entry '%s'",
@@ -211,7 +241,7 @@ static bool restore_update_entry(struct guibux_server *server,
 		struct guibux_toplevel *toplevel) {
 	const char *app_id = toplevel_app_id(toplevel);
 	if (app_id == NULL || app_id[0] == '\0' ||
-			restore_is_terminal(server, app_id)) {
+			restore_is_excluded(server, app_id)) {
 		return false;
 	}
 	/* a fullscreen window's geometry is the whole output: keep the
@@ -308,7 +338,7 @@ enum restore_result restore_apply(struct guibux_server *server,
 	}
 	const char *app_id = toplevel_app_id(toplevel);
 	if (app_id == NULL || app_id[0] == '\0' ||
-			restore_is_terminal(server, app_id)) {
+			restore_is_excluded(server, app_id)) {
 		return RESTORE_NONE;
 	}
 	struct guibux_window_pos pos;

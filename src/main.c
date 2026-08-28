@@ -112,7 +112,14 @@ int main(int argc, char *argv[]) {
 	server.color_topbar_bg = DEFAULT_COLOR_TOPBAR_BG;
 	server.color_topbar_bg2 = DEFAULT_COLOR_TOPBAR_BG;
 	server.color_topbar_text = DEFAULT_COLOR_TOPBAR_TEXT;
+	server.color_accent = DEFAULT_COLOR_ACCENT;
 	server.topbar_gradient = 0;
+	server.topbar_alpha = 217;
+	server.window_border_width = 2;
+	server.window_border_color = DEFAULT_COLOR_ACCENT;
+	server.window_shadow = true;
+	server.overview_radius = 12;
+	server.overview_dim_alpha = 153;
 	server.topbar_height = DEFAULT_TOPBAR_H;
 	server.topbar_font_size = DEFAULT_TOPBAR_FONT_SIZE;
 	server.topbar_win_pad = DEFAULT_TOPBAR_WIN_PAD;

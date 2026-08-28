@@ -420,6 +420,45 @@ void load_config(struct guibux_server *server, const char *path) {
 		} else if (!strcmp(key, "topbar_gradient")) {
 			server->topbar_gradient = atoi(val);
 			wlr_log(WLR_INFO, "config: topbar_gradient = %d", server->topbar_gradient);
+		} else if (!strcmp(key, "topbar_alpha")) {
+			server->topbar_alpha = atoi(val);
+			if (server->topbar_alpha < 0 || server->topbar_alpha > 255) {
+				server->topbar_alpha = 217;
+			}
+			wlr_log(WLR_INFO, "config: topbar_alpha = %d", server->topbar_alpha);
+		} else if (!strcmp(key, "color_accent")) {
+			if (parse_color(val, &server->color_accent)) {
+				wlr_log(WLR_INFO, "config: color_accent = %s", val);
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
+			}
+		} else if (!strcmp(key, "window_border_width")) {
+			server->window_border_width = atoi(val);
+			if (server->window_border_width < 0 || server->window_border_width > 8) {
+				server->window_border_width = 2;
+			}
+			wlr_log(WLR_INFO, "config: window_border_width = %d", server->window_border_width);
+		} else if (!strcmp(key, "window_border_color")) {
+			if (parse_color(val, &server->window_border_color)) {
+				wlr_log(WLR_INFO, "config: window_border_color = %s", val);
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
+			}
+		} else if (!strcmp(key, "window_shadow")) {
+			server->window_shadow = (strcmp(val, "false") != 0 && strcmp(val, "0") != 0);
+			wlr_log(WLR_INFO, "config: window_shadow = %s", val);
+		} else if (!strcmp(key, "overview_radius")) {
+			server->overview_radius = atoi(val);
+			if (server->overview_radius < 0 || server->overview_radius > 48) {
+				server->overview_radius = 12;
+			}
+			wlr_log(WLR_INFO, "config: overview_radius = %d", server->overview_radius);
+		} else if (!strcmp(key, "overview_dim_alpha")) {
+			server->overview_dim_alpha = atoi(val);
+			if (server->overview_dim_alpha < 0 || server->overview_dim_alpha > 255) {
+				server->overview_dim_alpha = 153;
+			}
+			wlr_log(WLR_INFO, "config: overview_dim_alpha = %d", server->overview_dim_alpha);
 		} else if (!strcmp(key, "topbar_height")) {
 			server->topbar_height = atoi(val);
 			/* an absurd height would push the fullscreen height to

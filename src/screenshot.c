@@ -389,8 +389,17 @@ void screenshot_window(struct guibux_server *server, struct guibux_toplevel *t) 
 	if (sb == NULL || sb->buffer == NULL) {
 		return;
 	}
-	/* read back the window's own buffer (same pattern as preview_snapshot) */
-	struct wlr_texture *tex = wlr_texture_from_buffer(server->renderer, sb->buffer);
+	/* read back the window's own buffer (same pattern as preview_snapshot);
+	 * prefer the cached texture since SHM source memory may be zeroed */
+	struct wlr_client_buffer *cb = wlr_client_buffer_get(sb->buffer);
+	struct wlr_texture *tex = NULL;
+	bool own_tex = false;
+	if (cb != NULL && cb->texture != NULL) {
+		tex = cb->texture;
+	} else {
+		tex = wlr_texture_from_buffer(server->renderer, sb->buffer);
+		own_tex = true;
+	}
 	if (tex == NULL) {
 		return;
 	}
@@ -398,7 +407,9 @@ void screenshot_window(struct guibux_server *server, struct guibux_toplevel *t) 
 	uint32_t stride = w * 4;
 	uint8_t *data = malloc((size_t)stride * h);
 	if (data == NULL) {
-		wlr_texture_destroy(tex);
+		if (own_tex) {
+			wlr_texture_destroy(tex);
+		}
 		return;
 	}
 	bool ok = wlr_texture_read_pixels(tex, &(struct wlr_texture_read_pixels_options){
@@ -406,7 +417,9 @@ void screenshot_window(struct guibux_server *server, struct guibux_toplevel *t) 
 		.format = DRM_FORMAT_XRGB8888,
 		.stride = stride,
 	});
-	wlr_texture_destroy(tex);
+	if (own_tex) {
+		wlr_texture_destroy(tex);
+	}
 	if (!ok) {
 		free(data);
 		return;

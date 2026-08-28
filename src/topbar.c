@@ -118,20 +118,27 @@ static void set_color_alpha(cairo_t *cr, uint32_t c, double a) {
 
 static void topbar_bg_fill(cairo_t *cr, struct guibux_server *server,
 		int x, int y, int w, int h) {
+	double a = server->topbar_alpha / 255.0;
+	if (a >= 1.0) {
+		a = 1.0;
+	}
 	if (server->topbar_gradient) {
 		cairo_pattern_t *g = cairo_pattern_create_linear(x, y, x + w, y);
-		cairo_pattern_add_color_stop_rgb(g, 0,
+		cairo_pattern_add_color_stop_rgba(g, 0,
 			((server->color_topbar_bg >> 16) & 0xFF) / 255.0,
 			((server->color_topbar_bg >> 8) & 0xFF) / 255.0,
-			(server->color_topbar_bg & 0xFF) / 255.0);
-		cairo_pattern_add_color_stop_rgb(g, 1,
+			(server->color_topbar_bg & 0xFF) / 255.0, a);
+		cairo_pattern_add_color_stop_rgba(g, 1,
 			((server->color_topbar_bg2 >> 16) & 0xFF) / 255.0,
 			((server->color_topbar_bg2 >> 8) & 0xFF) / 255.0,
-			(server->color_topbar_bg2 & 0xFF) / 255.0);
+			(server->color_topbar_bg2 & 0xFF) / 255.0, a);
 		cairo_set_source(cr, g);
 		cairo_pattern_destroy(g);
 	} else {
-		set_color(cr, server->color_topbar_bg);
+		cairo_set_source_rgba(cr,
+			((server->color_topbar_bg >> 16) & 0xFF) / 255.0,
+			((server->color_topbar_bg >> 8) & 0xFF) / 255.0,
+			(server->color_topbar_bg & 0xFF) / 255.0, a);
 	}
 	cairo_rectangle(cr, x, y, w, h);
 	cairo_fill(cr);
@@ -620,6 +627,18 @@ static void topbar_minimap_draw(struct guibux_output *o, cairo_t *cr,
 				if (rh < 1)
 					rh = 1;
 			}
+			/* inset each rect by 1px so adjacent windows keep a
+			 * visible gap in the mini-map */
+			if (rw > 2)
+				rw -= 2;
+			if (rh > 2)
+				rh -= 2;
+			if (rw < 1)
+				rw = 1;
+			if (rh < 1)
+				rh = 1;
+			rx += 1;
+			ry += 1;
 			if (t == kb_focus_t) {
 				set_color(cr, server->color_highlight);
 			} else {
@@ -756,43 +775,50 @@ static void topbar_pills_draw(struct guibux_output *o, cairo_t *cr,
 		o->topbar_win_w[rendered] = pill_w;
 
 		if (wins[i] == kb_focus_t) {
-			set_color(cr, server->color_highlight);
+			/* focused: subtle fill + 3px accent left border */
+			cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.10);
 			topbar_rounded_rect(cr, win_x * scale,
 				cell_y * scale,
 				pill_w * scale,
 				cell_h * scale,
-				6 * scale);
-			cairo_fill_preserve(cr);
-			set_color(cr, server->color_text);
-			cairo_set_line_width(cr, 1.0 * scale);
-			cairo_stroke(cr);
+				10 * scale);
+			cairo_fill(cr);
+			uint32_t accent = server->overview.ws_colors[wins[i]->workspace - 1];
+			if (accent == 0) {
+				accent = server->color_accent;
+			}
+			set_color(cr, accent);
+			cairo_rectangle(cr, win_x * scale,
+				cell_y * scale,
+				3 * scale, cell_h * scale);
+			cairo_fill(cr);
 			launcher_draw_text_on_surface(cs,
 				server->launcher.face, buf,
-				(win_x + 8) * scale, baseline,
+				(win_x + 10) * scale, baseline,
 				server->color_text);
 		} else {
-			set_color_alpha(cr, server->color_topbar_text, 0.22);
+			/* unfocused: very subtle fill, no border */
+			cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.04);
 			topbar_rounded_rect(cr, win_x * scale,
 				cell_y * scale,
 				pill_w * scale,
 				cell_h * scale,
-				6 * scale);
-			cairo_fill_preserve(cr);
-			set_color_alpha(cr, server->color_topbar_text, 0.50);
-			cairo_set_line_width(cr, 1.0 * scale);
-			cairo_stroke(cr);
+				10 * scale);
+			cairo_fill(cr);
 			launcher_draw_text_on_surface(cs,
 				server->launcher.face, buf,
-				(win_x + 8) * scale, baseline,
-				server->color_topbar_text);
+				(win_x + 10) * scale, baseline,
+				server->color_dim);
 		}
 		win_x += pill_w + TOPBAR_WIN_GAP;
 		rendered++;
 		if (rendered == own_count && own_count < nwins &&
 				win_x < win_end) {
-			int cx = win_x + 7;
-			topbar_draw_separator(cr, cx, cell_y, cell_h, scale,
-				server->color_border);
+			/* 1px separator at 15% white */
+			cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.15);
+			cairo_rectangle(cr, (win_x + 7) * scale, cell_y * scale,
+				scale, cell_h * scale);
+			cairo_fill(cr);
 			win_x += 14;
 		}
 	}
@@ -970,11 +996,8 @@ void topbar_render(struct guibux_output *o) {
 	cairo_t *cr = cairo_create(cs);
 
 	topbar_bg_fill(cr, server, 0, 0, w, h);
-	/* faint inner top highlight: a raised edge against the wallpaper */
-	cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.06);
-	cairo_rectangle(cr, 0, 0, w, scale);
-	cairo_fill(cr);
-	set_color(cr, server->color_border);
+	/* subtle bottom border: 1px at 20% white for a clean separation */
+	cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.2);
 	cairo_rectangle(cr, 0, h - scale, w, scale);
 	cairo_fill(cr);
 
@@ -994,23 +1017,19 @@ void topbar_render(struct guibux_output *o) {
 
 	char left[16];
 	snprintf(left, sizeof(left), "%c", 'A' + (o->topbar_number - 1));
-	/* monitor badge: outlined rounded rect around the letter so the
-	 * monitor is visually distinct from the workspace numbers */
-	int badge_pad = 4;
+	/* monitor badge: rounded rect with subtle fill behind the letter */
+	int badge_pad = 5;
 	int badge_w = guibux_text_width(server->launcher.face, left) / scale
 		+ 2 * badge_pad;
 	topbar_rounded_rect(cr, TOPBAR_PAD * scale, cell_y * scale,
-		badge_w * scale, cell_h * scale, 4 * scale);
-	set_color(cr, server->color_border);
-	cairo_set_line_width(cr, 1.0 * scale);
-	cairo_stroke(cr);
+		badge_w * scale, cell_h * scale, 6 * scale);
+	cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.08);
+	cairo_fill(cr);
 	launcher_draw_text_on_surface(cs, server->launcher.face, left,
 		(TOPBAR_PAD + badge_pad) * scale, baseline,
 		server->color_topbar_text);
 
-	/* workspace mini-map cells: no numbers, the mini-map rects carry the
-	 * information; a wider cell gives each window rect room to show its
-	 * on-screen position (left/right and over/below) */
+	/* workspace mini-map cells: rounded, active cell gets an accent bar */
 	int cell_w = 40;
 	o->topbar_ws_cell_w = cell_w;
 	int x = TOPBAR_PAD + badge_w + 12;
@@ -1020,18 +1039,30 @@ void topbar_render(struct guibux_output *o) {
 			server->ws_drag.target_output == o &&
 			server->ws_drag.target_ws == ws;
 		if (ws == o->current_workspace || drag_target) {
-			set_color(cr, server->color_highlight);
+			/* subtle fill + 2px accent bar at the bottom */
+			cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.06);
 			topbar_rounded_rect(cr, x * scale, cell_y * scale,
-				cell_w * scale, cell_h * scale, 4 * scale);
+				cell_w * scale, cell_h * scale, 8 * scale);
+			cairo_fill(cr);
+			uint32_t accent = server->overview.ws_colors[ws - 1];
+			if (accent == 0) {
+				accent = server->color_accent;
+			}
+			set_color(cr, accent);
+			cairo_rectangle(cr, x * scale,
+				(cell_y + cell_h - 2) * scale,
+				cell_w * scale, 2 * scale);
 			cairo_fill(cr);
 		}
 		x += cell_w;
 	}
 
-	/* vertical separator after workspaces */
+	/* 1px vertical separator at 15% white */
 	int sep_gap = 12;
-	topbar_draw_separator(cr, x + sep_gap / 2, cell_y, cell_h, scale,
-		server->color_border);
+	cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.15);
+	cairo_rectangle(cr, (x + sep_gap / 2) * scale, cell_y * scale,
+		scale, cell_h * scale);
+	cairo_fill(cr);
 
 	time_t now = time(NULL);
 	struct tm tm;
