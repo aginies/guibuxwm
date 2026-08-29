@@ -293,8 +293,11 @@ void output_frame(struct wl_listener *listener, void *data) {
 	effects_tick(server);
 
 	/* keep producing frames while an animation is in flight: without
-	 * this the output would go idle and the animation would stall */
-	if (effects_active(server)) {
+	 * this the output would go idle and the animation would stall.
+	 * effects_in_flight() is stricter than effects_active(): it is false
+	 * once every anim has reached its end state, so a slot that fails to
+	 * clear its used flag cannot keep the output committing frames forever */
+	if (effects_active(server) && effects_in_flight(server)) {
 		wlr_output_schedule_frame(output->wlr_output);
 	}
 

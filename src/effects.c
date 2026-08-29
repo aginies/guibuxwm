@@ -187,18 +187,23 @@ static void effects_kill(struct guibux_effects_anim *a) {
 		wl_list_remove(&a->node_destroy.link);
 		wl_list_init(&a->node_destroy.link);
 	}
+	/* the node may still be alive (settle path): drop the back-pointer so a
+	 * later destroy or a slot reuse cannot walk a stale node */
+	a->node = NULL;
 }
 
-/* jump the anim to its final state and run the completion callback */
+/* jump the anim to its final state and run the completion callback.
+ * The callback runs before the slot is killed: it may still need the
+ * node pointer (the open-slide snap), which effects_kill clears */
 static void effects_settle(struct guibux_server *server,
 		struct guibux_effects_anim *a) {
 	effects_apply(a, 1.0);
 	void (*cb)(void *) = a->done;
 	void *cb_data = a->done_data;
-	effects_kill(a);
 	if (cb != NULL) {
 		cb(cb_data);
 	}
+	effects_kill(a);
 }
 
 void effects_init(struct guibux_server *server) {
@@ -226,6 +231,14 @@ void effects_tick(struct guibux_server *server) {
 		double t = (double)(now - a->start_ms) / (double)a->duration_ms;
 		if (t >= 1.0) {
 			effects_settle(server, a);
+		} else if (now - a->start_ms > (int64_t)a->duration_ms + 1000) {
+			/* watchdog: an anim well past its end that has not settled would
+			 * keep effects_active() true forever and the output would keep
+			 * committing full frames at idle; force it to its final state */
+			wlr_log(WLR_ERROR,
+				"effects: anim %d stuck (kind=%d age=%lldms), forcing settle",
+				i, (int)a->kind, (long long)(now - a->start_ms));
+			effects_settle(server, a);
 		} else {
 			effects_apply(a, t);
 		}
@@ -236,6 +249,22 @@ bool effects_active(struct guibux_server *server) {
 	struct guibux_effects *e = &server->effects;
 	for (int i = 0; i < EFFECTS_MAX_ANIMS; i++) {
 		if (e->anims[i].used) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/* true only while at least one anim is still within its duration.
+ * effects_active() can stay true a frame after the last settle is
+ * scheduled; this stricter check stops the output from rescheduling
+ * frames once every anim has reached its end state */
+bool effects_in_flight(struct guibux_server *server) {
+	int64_t now = effects_now_ms();
+	struct guibux_effects *e = &server->effects;
+	for (int i = 0; i < EFFECTS_MAX_ANIMS; i++) {
+		struct guibux_effects_anim *a = &e->anims[i];
+		if (a->used && (now - a->start_ms) < (int64_t)a->duration_ms) {
 			return true;
 		}
 	}
@@ -334,10 +363,13 @@ void effects_window_open(struct guibux_toplevel *toplevel) {
 
 /* completion of the open slide: snap the node to its target so a killed
  * or settled anim never leaves it at the slide start (a ghost on a
- * neighbouring monitor) */
+ * neighbouring monitor). The node is captured in effects_settle before
+ * the slot is killed, so the pointer is still valid when this runs */
 static void effects_slide_done(void *data) {
 	struct guibux_effects_anim *a = data;
-	wlr_scene_node_set_position(a->node, (int)a->tx, (int)a->ty);
+	if (a->node != NULL) {
+		wlr_scene_node_set_position(a->node, (int)a->tx, (int)a->ty);
+	}
 }
 
 /* called on every commit while pending; starts the effect once the

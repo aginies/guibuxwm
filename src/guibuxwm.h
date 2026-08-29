@@ -1035,6 +1035,7 @@ void snap_toplevel_bottom(struct guibux_toplevel *toplevel);
 void effects_init(struct guibux_server *server);
 void effects_tick(struct guibux_server *server);
 bool effects_active(struct guibux_server *server);
+bool effects_in_flight(struct guibux_server *server);
 void effects_flush(struct guibux_server *server);
 void effects_cancel_node(struct guibux_server *server, struct wlr_scene_node *node);
 void effects_cancel_output(struct guibux_server *server, struct guibux_output *o);
