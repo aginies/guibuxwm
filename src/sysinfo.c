@@ -1350,14 +1350,11 @@ sysinfo_worker(void *data)
 
     /* dedicated private connection: the shared session bus is also
      * driven by the notify thread (main loop), and libdbus is not
-     * thread-safe on one connection */
-    const char *addr = getenv("DBUS_SESSION_BUS_ADDRESS");
-    if (addr && addr[0] != '\0') {
-        si->session_bus = dbus_connection_open(addr, &err);
-        if (si->session_bus) {
-            dbus_bus_register(si->session_bus, &err);
-        }
-    }
+     * thread-safe on one connection. dbus_bus_get_private guarantees a
+     * private connection safe to dbus_connection_close; the shared
+     * dbus_bus_get / dbus_connection_open on the well-known bus address
+     * return a cached shared connection that aborts on close. */
+    si->session_bus = dbus_bus_get_private(DBUS_BUS_SESSION, &err);
     if (!si->session_bus) {
         if (dbus_error_is_set(&err)) {
             wlr_log(WLR_INFO, "sysinfo: cannot open session bus: %s",
