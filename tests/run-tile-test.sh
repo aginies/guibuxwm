@@ -13,7 +13,7 @@ log=$(mktemp)
 cfg=$(mktemp)
 echo "term = true" >"$cfg"
 GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_TILE_MODE=$mode GUIBUX_TERM=true \
-  WLR_RENDERER=gles2 "$COMP" -c "$cfg" >"$log" 2>&1 &
+  WLR_RENDERER=vulkan "$COMP" -c "$cfg" >"$log" 2>&1 &
 comp=$!
 wd=""
 for i in $(seq 1 50); do

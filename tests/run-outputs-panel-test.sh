@@ -20,7 +20,7 @@ case_run() {
   log=$(mktemp)
   state_home=$(mktemp -d)
   env GUIBUX_TEST_EXTRA_OUTPUTS=$n GUIBUX_TEST_OUTPUTS_PANEL=1 \
-      WLR_RENDERER=gles2 XDG_STATE_HOME=$state_home GUIBUX_CONFIG=$cfg \
+      WLR_RENDERER=vulkan XDG_STATE_HOME=$state_home GUIBUX_CONFIG=$cfg \
       "$COMP" >"$log" 2>&1 &
   comp=$!
   sleep 6

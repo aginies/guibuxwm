@@ -3,6 +3,7 @@
 ## Window Management
 
 - **xdg-shell windows:** focus, close, move, resize, fullscreen (fullscreen renders below the topbar, so the bar stays visible)
+- **Always on top** (`Mod+o`): pin the focused window above all other windows (below the topbar); it stays on top even when other windows gain focus. Toggle again to unpin. Visible in the free tile mode, where windows can overlap
 - **X11 via XWayland:** X11 windows (e.g. flatpak apps) map as regular toplevels with focus, tiling, fullscreen, workspaces and topbar entries; `DISPLAY` is set automatically for spawned clients, `Mod+drag` moves an X11 window (it has no titlebar)
 - **Interactive move/resize:** drag a window's titlebar to move it, drag its edges to resize it; dragging or resizing a fullscreen window leaves fullscreen
 - **`Alt`+left-drag** moves any window (GNOME-style); the window stays where it is dropped. Works on Wayland and X11 windows

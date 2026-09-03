@@ -8,7 +8,7 @@ ROOT="$SCRIPT_DIR/.."
 COMP="$ROOT/build/guibuxwm"
 log=$(mktemp)
 GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_XWAYLAND=1 GUIBUX_TERM=true \
-  WLR_RENDERER=gles2 "$COMP" >"$log" 2>&1 &
+  WLR_RENDERER=vulkan "$COMP" >"$log" 2>&1 &
 comp=$!
 disp=""
 for i in $(seq 1 50); do

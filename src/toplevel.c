@@ -235,6 +235,19 @@ bool toplevel_covered(struct guibux_toplevel *t) {
 	return false;
 }
 
+void toplevel_raise_pinned(struct guibux_server *server) {
+	/* raise least-recently-focused first so the newest pinned window ends
+	 * on top (the toplevels list head is the most recently focused) */
+	struct guibux_toplevel *t;
+	wl_list_for_each_reverse(t, &server->toplevels, link) {
+		if (t->always_on_top && t->scene_tree != NULL &&
+				t->scene_tree->node.enabled) {
+			wlr_scene_node_raise_to_top(&t->scene_tree->node);
+		}
+	}
+	topbar_raise_all(server);
+}
+
 void focus_toplevel(struct guibux_toplevel *toplevel, bool raise) {
 	if (toplevel == NULL || toplevel->scene_tree == NULL) {
 		return;
@@ -271,6 +284,7 @@ void focus_toplevel(struct guibux_toplevel *toplevel, bool raise) {
 	if (raise) {
 		wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
 		topbar_raise_all(server);
+		toplevel_raise_pinned(server);
 	}
 	if (toplevel->managed) {
 		wl_list_remove(&toplevel->link);
@@ -343,6 +357,7 @@ void set_fullscreen(struct guibux_toplevel *toplevel, bool fullscreen,
 		}
 		wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
 		topbar_raise_all(server);
+		toplevel_raise_pinned(server);
 	} else {
 		wlr_scene_node_set_position(&toplevel->scene_tree->node,
 			toplevel->saved_x, toplevel->saved_y);

@@ -29,6 +29,7 @@ At least one modifier is required:
 | `terminal` | Start a new terminal |
 | `close` | Close the focused window |
 | `fullscreen` | Toggle fullscreen of the focused window (`Mod+f` or `Mod+Up`) |
+| `always-on-top` | Toggle "always on top" (pin) of the focused window (`Mod+o`): the window stays above all other windows even when they gain focus; press again to unpin. Only visible in the free tile mode, where windows can overlap |
 | `tile` | Cycle tile mode of the focused window's monitor (free → split → main+stack) |
 | `launcher` | Open the command box (`Mod+e`) |
 | `focus-next` | Cycle window focus |
@@ -70,6 +71,7 @@ At least one modifier is required:
 | `Mod+e` | Command box: type a command, Enter runs it via `sh -c` |
 | `Mod+q` | Close focused window |
 | `Mod+f` | Toggle fullscreen |
+| `Mod+o` | Toggle "always on top" (pin) of the focused window |
 | `Mod+t` | Cycle tile mode of the focused window's monitor (free / split / main+stack) |
 | `Alt+Tab` | Cycle window focus |
 | `F12` | Toggle GNOME-style overview (all workspaces + windows) |

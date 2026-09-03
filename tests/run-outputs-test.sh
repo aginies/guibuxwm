@@ -27,7 +27,7 @@ case_run() {
     cfg=$(mktemp)
     echo "term = true" >"$cfg"
   fi
-  envs=(GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_OUTPUTS=$hook GUIBUX_TERM=true WLR_RENDERER=gles2 XDG_STATE_HOME=$state_home GUIBUX_CONFIG=$cfg)
+  envs=(GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_OUTPUTS=$hook GUIBUX_TERM=true WLR_RENDERER=vulkan XDG_STATE_HOME=$state_home GUIBUX_CONFIG=$cfg)
   if [ "$outputs_val" != "-" ]; then
     envs+=(GUIBUX_OUTPUTS=$outputs_val)
   fi

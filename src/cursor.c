@@ -113,6 +113,7 @@ static void process_cursor_resize(struct guibux_server *server) {
 			/* keep the dragged window above the dim rect */
 			wlr_scene_node_raise_to_top(&t->scene_tree->node);
 			topbar_raise_all(server);
+			toplevel_raise_pinned(server);
 		}
 	}
 	if (server->overview.active) {

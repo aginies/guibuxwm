@@ -36,7 +36,7 @@ trap 'rm -rf "$state_home" "$cfg" "$cfg_term" "$log1" "$log2" "$log3" "$log4" "$
 start_comp() {
   local log=$1
   GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TERM=true \
-    XDG_STATE_HOME="$state_home" WLR_RENDERER=gles2 \
+    XDG_STATE_HOME="$state_home" WLR_RENDERER=vulkan \
     "$COMP" -c "$cfg" >"$log" 2>&1 &
   local comp=$!
   local wd=""
@@ -118,7 +118,7 @@ echo "=== phase 3: clean exit saves still-mapped windows ==="
 # clean-exit save (the client stays mapped and never unmaps)
 rm -f "$state_file"
 GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TERM=true \
-  GUIBUX_TEST_QUIT=3000 XDG_STATE_HOME="$state_home" WLR_RENDERER=gles2 \
+  GUIBUX_TEST_QUIT=3000 XDG_STATE_HOME="$state_home" WLR_RENDERER=vulkan \
   "$COMP" -c "$cfg" >"$log3" 2>&1 &
 comp3=$!
 wd=""
@@ -222,7 +222,7 @@ rm -f "$state_file"
 echo "term = some-other-terminal" >"$cfg_term"
 echo "term_app_id = $APP" >>"$cfg_term"
 GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TERM=true \
-  XDG_STATE_HOME="$state_home" WLR_RENDERER=gles2 \
+  XDG_STATE_HOME="$state_home" WLR_RENDERER=vulkan \
   "$COMP" -c "$cfg_term" >"$log6" 2>&1 &
 comp6=$!
 wd=""
@@ -267,7 +267,7 @@ echo "PHASE6 OK: terminal excluded from restore"
 echo "=== phase 7: known terminal app_id (terminator) is not saved ==="
 rm -f "$state_file"
 GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TERM=true \
-  XDG_STATE_HOME="$state_home" WLR_RENDERER=gles2 \
+  XDG_STATE_HOME="$state_home" WLR_RENDERER=vulkan \
   "$COMP" -c "$cfg" >"$log7" 2>&1 &
 comp7=$!
 wd=""
@@ -312,7 +312,7 @@ echo "PHASE7 OK: terminator excluded from restore"
 echo "=== phase 8: 'st' prefix does not match 'steam' ==="
 rm -f "$state_file"
 GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TERM=true \
-  XDG_STATE_HOME="$state_home" WLR_RENDERER=gles2 \
+  XDG_STATE_HOME="$state_home" WLR_RENDERER=vulkan \
   "$COMP" -c "$cfg" >"$log8" 2>&1 &
 comp8=$!
 wd=""
@@ -352,7 +352,7 @@ echo "PHASE8 OK: 'steam' not matched by 'st' prefix"
 echo "=== phase 9: 'st' itself is still excluded ==="
 rm -f "$state_file"
 GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TERM=true \
-  XDG_STATE_HOME="$state_home" WLR_RENDERER=gles2 \
+  XDG_STATE_HOME="$state_home" WLR_RENDERER=vulkan \
   "$COMP" -c "$cfg" >"$log9" 2>&1 &
 comp9=$!
 wd=""

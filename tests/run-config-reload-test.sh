@@ -14,7 +14,7 @@ color_bg = #010203
 topbar_bg = #040506
 renderer = pixman
 EOF
-GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TERM=true WLR_RENDERER=gles2 "$COMP" -c "$cfg" >"$log" 2>&1 &
+GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TERM=true WLR_RENDERER=vulkan "$COMP" -c "$cfg" >"$log" 2>&1 &
 comp=$!
 sleep 3
 # edit the config: new color + a new keybind

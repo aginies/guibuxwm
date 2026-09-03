@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$SCRIPT_DIR/.."
 COMP="$ROOT/build/guibuxwm"
 log=$(mktemp)
-GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_TOPBAR=1 GUIBUX_TERM=true WLR_RENDERER=gles2 "$COMP" >"$log" 2>&1 &
+GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_TOPBAR=1 GUIBUX_TERM=true WLR_RENDERER=vulkan "$COMP" >"$log" 2>&1 &
 comp=$!
 sleep 4
 kill $comp 2>/dev/null
@@ -31,7 +31,7 @@ EOF
 log=$(mktemp)
 GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_TOPBAR=1 \
   GUIBUX_TEST_TOPBAR_DISABLED=network,volume,mic GUIBUX_TERM=true \
-  WLR_RENDERER=gles2 "$COMP" -c "$cfg" >"$log" 2>&1 &
+  WLR_RENDERER=vulkan "$COMP" -c "$cfg" >"$log" 2>&1 &
 comp=$!
 sleep 4
 kill $comp 2>/dev/null
@@ -44,7 +44,7 @@ if grep -q "topbar-test: OK" "$log"; then
   log=$(mktemp)
   GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_TOPBAR=1 \
     GUIBUX_TEST_WS_RECTS_SEED=2:3 GUIBUX_TEST_WS_RECTS=2:3 \
-    GUIBUX_TERM=true WLR_RENDERER=gles2 "$COMP" >"$log" 2>&1 &
+    GUIBUX_TERM=true WLR_RENDERER=vulkan "$COMP" >"$log" 2>&1 &
   comp=$!
   sleep 4
   kill $comp 2>/dev/null

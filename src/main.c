@@ -575,6 +575,14 @@ int main(int argc, char *argv[]) {
 		wl_event_source_timer_update(server.xmondrag_test_timer, 2000);
 	}
 
+	const char *always_on_top_test = getenv("GUIBUX_TEST_ALWAYS_ON_TOP");
+	if (always_on_top_test != NULL) {
+		server.always_on_top_test_timer = wl_event_loop_add_timer(
+			wl_display_get_event_loop(server.wl_display),
+			always_on_top_test_run, &server);
+		wl_event_source_timer_update(server.always_on_top_test_timer, 2000);
+	}
+
 	const char *psel_test = getenv("GUIBUX_TEST_PRIMARY_SELECTION");
 	if (psel_test != NULL) {
 		server.psel_test_timer = wl_event_loop_add_timer(
@@ -741,6 +749,9 @@ int main(int argc, char *argv[]) {
 	}
 	if (server.xmondrag_test_timer != NULL) {
 		wl_event_source_remove(server.xmondrag_test_timer);
+	}
+	if (server.always_on_top_test_timer != NULL) {
+		wl_event_source_remove(server.always_on_top_test_timer);
 	}
 	if (server.workspace_test_timer != NULL) {
 		wl_event_source_remove(server.workspace_test_timer);

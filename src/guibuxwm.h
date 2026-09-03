@@ -152,6 +152,7 @@ enum guibux_action {
 	GUIBUX_ACT_TERMINAL,
 	GUIBUX_ACT_CLOSE,
 	GUIBUX_ACT_FULLSCREEN,
+	GUIBUX_ACT_ALWAYS_ON_TOP,
 	GUIBUX_ACT_TILE,
 	GUIBUX_ACT_LAUNCHER,
 	GUIBUX_ACT_FOCUS_NEXT,
@@ -526,6 +527,9 @@ struct guibux_toplevel {
 	struct wlr_scene_tree *scene_tree;
 	struct wl_listener scene_destroy;
 	bool is_fullscreen;
+	/* pinned above every other window (below topbars); re-asserted after
+	 * each focus/fullscreen raise so it survives focus changes */
+	bool always_on_top;
 	bool managed;
 	bool initial_commit;
 	/* open animation not started yet: the window has no buffer content
@@ -858,6 +862,7 @@ struct guibux_server {
 	struct wl_event_source *psel_test_timer;
 	struct wl_event_source *resize_test_timer;
 	struct wl_event_source *xmondrag_test_timer;
+	struct wl_event_source *always_on_top_test_timer;
 	struct wl_event_source *notify_test_timer;
 	struct wl_event_source *tooltip_test_timer;
 	struct wl_event_source *osd_test_timer;
@@ -982,6 +987,10 @@ int topbar_audio_at(struct guibux_server *server, struct guibux_output *o, doubl
 
 /* toplevel.c */
 void focus_toplevel(struct guibux_toplevel *toplevel, bool raise);
+/* re-raise every pinned (always-on-top) window above the non-pinned ones,
+ * then the topbars; call after any focus/fullscreen raise so a pinned
+ * window stays on top */
+void toplevel_raise_pinned(struct guibux_server *server);
 void toplevel_border_show(struct guibux_toplevel *toplevel);
 void toplevel_border_hide(struct guibux_toplevel *toplevel);
 void toplevel_border_refresh(struct guibux_toplevel *toplevel);
@@ -1071,6 +1080,7 @@ int audio_test_run(void *data);
 int battery_test_run(void *data);
 int scroll_test_run(void *data);
 int alt_drag_test_run(void *data);
+int always_on_top_test_run(void *data);
 int xmondrag_test_run(void *data);
 int resize_test_run(void *data);
 int guibux_text_width(FT_Face face, const char *text);

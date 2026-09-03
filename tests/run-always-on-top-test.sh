@@ -1,16 +1,14 @@
 #!/bin/bash
-# Effects test: start the compositor with GUIBUX_TEST_EFFECTS, run the
-# effects-test client (maps 2 windows, destroys one on the compositor's
-# close request, maps a third late), and let the compositor's hook
-# verify the close retile and the open scale-in.
-# The compositor log is the verdict.
+# Always-on-top test: start the compositor with GUIBUX_TEST_ALWAYS_ON_TOP,
+# map 2 toplevels with the ws-test client, and let the ~2s hook pin one
+# window, focus the other, and verify the pinned window stays on top.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$SCRIPT_DIR/.."
 COMP="$ROOT/build/guibuxwm"
-CLIENT="$ROOT/build/tests/effects-test"
+CLIENT="$ROOT/build/tests/ws-test"
 log=$(mktemp)
-GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_EFFECTS=1 GUIBUX_TERM=true \
+GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_ALWAYS_ON_TOP=1 GUIBUX_TERM=true \
   WLR_RENDERER=vulkan "$COMP" >"$log" 2>&1 &
 comp=$!
 wd=""
@@ -22,16 +20,16 @@ done
 if [ -z "$wd" ]; then echo "NO WAYLAND_DISPLAY"; kill $comp; cat "$log"; rm -f "$log"; exit 2; fi
 WAYLAND_DISPLAY=$wd "$CLIENT" &
 client=$!
-sleep 8
+sleep 6
 kill $client $comp 2>/dev/null
 wait $client 2>/dev/null
 wait $comp 2>/dev/null
-grep -E "effects-test" "$log"
-if grep -q "effects-test: OK" "$log"; then
+grep -E "always-on-top-test" "$log"
+if grep -q "always-on-top-test: OK" "$log"; then
   rm -f "$log"
   exit 0
 fi
-echo "effects-test: FAILED"
+echo "always-on-top-test: FAILED"
 cat "$log"
 rm -f "$log"
 exit 1

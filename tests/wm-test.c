@@ -691,6 +691,75 @@ int alt_drag_test_run(void *data) {
 	return 0;
 }
 
+/* index of a node within its parent's children list (higher = on top) */
+static int aot_node_index(struct wlr_scene_node *target) {
+	struct wlr_scene_node *n;
+	int i = 0;
+	wl_list_for_each(n, &target->parent->children, link) {
+		if (n == target) {
+			return i;
+		}
+		i++;
+	}
+	return -1;
+}
+
+/* A pinned (always-on-top) window must stay above a non-pinned window even
+ * after the non-pinned one is focused (which raises it to the top). */
+int always_on_top_test_run(void *data) {
+	struct guibux_server *server = data;
+	struct guibux_toplevel *t;
+	struct guibux_toplevel *a = NULL, *b = NULL;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (!t->managed) {
+			continue;
+		}
+		if (a == NULL) {
+			a = t;
+		} else {
+			b = t;
+			break;
+		}
+	}
+	if (a == NULL || b == NULL) {
+		wlr_log(WLR_ERROR,
+			"always-on-top-test: FAIL need two managed toplevels "
+			"(a=%s b=%s)", a ? "yes" : "no", b ? "yes" : "no");
+		return 0;
+	}
+	if (a->scene_tree == NULL || !a->scene_tree->node.enabled ||
+			b->scene_tree == NULL || !b->scene_tree->node.enabled) {
+		wlr_log(WLR_ERROR, "always-on-top-test: FAIL scene trees not ready");
+		return 0;
+	}
+
+	/* pin A, then make A the focused window so the next focus is a real
+	 * A -> B transition (focus_toplevel skips the raise for the window that
+	 * already has focus) */
+	a->always_on_top = true;
+	focus_toplevel(a, true);
+	focus_toplevel(b, true);
+
+	int ia = aot_node_index(&a->scene_tree->node);
+	int ib = aot_node_index(&b->scene_tree->node);
+	if (ia < 0 || ib < 0) {
+		wlr_log(WLR_ERROR,
+			"always-on-top-test: FAIL node not in parent (a=%d b=%d)",
+			ia, ib);
+		return 0;
+	}
+	if (ia <= ib) {
+		wlr_log(WLR_ERROR,
+			"always-on-top-test: FAIL pinned window not on top after focus "
+			"(a=%d b=%d, want a > b)", ia, ib);
+		return 0;
+	}
+	wlr_log(WLR_INFO,
+		"always-on-top-test: OK (pinned a stays above focused b: a=%d b=%d)",
+		ia, ib);
+	return 0;
+}
+
 /* Dragging a window onto another monitor must reassign its stored
  * output: the original bar must drop it, the new bar must list it.
  * Regression: the release handler asked toplevel_output_for(), which

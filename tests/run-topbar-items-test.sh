@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$SCRIPT_DIR/.."
 COMP="$ROOT/build/guibuxwm"
 log=$(mktemp)
-GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_TOPBAR_ITEMS=1 GUIBUX_TERM=true WLR_RENDERER=gles2 "$COMP" >"$log" 2>&1 &
+GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=0 GUIBUX_TEST_TOPBAR_ITEMS=1 GUIBUX_TERM=true WLR_RENDERER=vulkan "$COMP" >"$log" 2>&1 &
 comp=$!
 sleep 4
 kill $comp 2>/dev/null

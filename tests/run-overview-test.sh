@@ -10,7 +10,7 @@ COMP="$ROOT/build/guibuxwm"
 CLIENT="$ROOT/build/tests/ws-test"
 log=$(mktemp)
 GUIBUX_OUTPUTS= GUIBUX_TEST_EXTRA_OUTPUTS=1 GUIBUX_TEST_OVERVIEW=1 GUIBUX_TERM=true \
-  WLR_RENDERER=gles2 "$COMP" >"$log" 2>&1 &
+  WLR_RENDERER=vulkan "$COMP" >"$log" 2>&1 &
 comp=$!
 wd=""
 for i in $(seq 1 50); do

@@ -34,7 +34,7 @@ xkb_layout = fr
 
 # keybinds: MODS+key: action
 # modifiers: Mod (Super), Shift, Alt, Ctrl
-# actions: terminal, close, fullscreen, tile, launcher, focus-next,
+# actions: terminal, close, fullscreen, always-on-top, tile, launcher, focus-next,
 #          quit, workspace:N, move-workspace:N,
 #          move-monitor-left, move-monitor-right,
 #          snap-left, snap-right, snap-top, snap-bottom,
@@ -45,6 +45,7 @@ xkb_layout = fr
 keybind = Mod+Return: terminal
 keybind = Mod+q: close
 keybind = Mod+f: fullscreen
+keybind = Mod+o: always-on-top
 keybind = Mod+t: tile
 keybind = Mod+e: launcher
 keybind = Alt+Tab: focus-next

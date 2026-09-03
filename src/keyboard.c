@@ -327,6 +327,18 @@ void do_action(struct guibux_server *server, enum guibux_action action,
 			set_fullscreen(toplevel, !toplevel->is_fullscreen, NULL);
 		}
 		break;
+	case GUIBUX_ACT_ALWAYS_ON_TOP:
+		if (toplevel != NULL && toplevel->scene_tree != NULL) {
+			toplevel->always_on_top = !toplevel->always_on_top;
+			if (toplevel->always_on_top) {
+				wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
+				topbar_raise_all(server);
+			}
+			wlr_log(WLR_INFO, "always-on-top: %s '%s'",
+				toplevel->always_on_top ? "pinned" : "unpinned",
+				toplevel_get_title(toplevel) ? toplevel_get_title(toplevel) : "(untitled)");
+		}
+		break;
 	case GUIBUX_ACT_TILE:
 		if (toplevel != NULL) {
 			struct guibux_output *o = guibux_output_for(server,
@@ -533,6 +545,7 @@ void keybinds_defaults(struct guibux_server *server) {
 	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_q, GUIBUX_ACT_CLOSE, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_f, GUIBUX_ACT_FULLSCREEN, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_t, GUIBUX_ACT_TILE, 0);
+	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_o, GUIBUX_ACT_ALWAYS_ON_TOP, 0);
 	keybind_add(server, WLR_MODIFIER_LOGO, XKB_KEY_e, GUIBUX_ACT_LAUNCHER, 0);
 	keybind_add(server, WLR_MODIFIER_ALT, XKB_KEY_Tab, GUIBUX_ACT_FOCUS_NEXT, 0);
 	for (int ws = 1; ws <= NUM_WORKSPACES; ws++) {

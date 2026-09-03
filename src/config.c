@@ -154,6 +154,8 @@ bool parse_keybind(struct guibux_server *server, const char *value) {
 		action = GUIBUX_ACT_CLOSE;
 	} else if (!strcmp(action_str, "fullscreen")) {
 		action = GUIBUX_ACT_FULLSCREEN;
+	} else if (!strcmp(action_str, "always-on-top")) {
+		action = GUIBUX_ACT_ALWAYS_ON_TOP;
 	} else if (!strcmp(action_str, "tile")) {
 		action = GUIBUX_ACT_TILE;
 	} else if (!strcmp(action_str, "launcher")) {

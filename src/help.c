@@ -36,6 +36,7 @@ static enum help_section action_section(enum guibux_action action) {
 	case GUIBUX_ACT_TERMINAL:
 	case GUIBUX_ACT_CLOSE:
 	case GUIBUX_ACT_FULLSCREEN:
+	case GUIBUX_ACT_ALWAYS_ON_TOP:
 	case GUIBUX_ACT_TILE:
 	case GUIBUX_ACT_FOCUS_NEXT:
 	case GUIBUX_ACT_LAUNCHER:
@@ -73,6 +74,7 @@ static const char *action_label(enum guibux_action action, int arg) {
 	case GUIBUX_ACT_TERMINAL:      return "new terminal";
 	case GUIBUX_ACT_CLOSE:         return "close window";
 	case GUIBUX_ACT_FULLSCREEN:    return "toggle fullscreen";
+	case GUIBUX_ACT_ALWAYS_ON_TOP: return "always on top";
 	case GUIBUX_ACT_TILE:          return "cycle tile mode";
 	case GUIBUX_ACT_LAUNCHER:      return "command box";
 	case GUIBUX_ACT_FOCUS_NEXT:    return "cycle focus";
