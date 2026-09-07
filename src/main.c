@@ -59,6 +59,20 @@
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/types/wlr_primary_selection_v1.h>
 
+/* SIGTERM/SIGINT: drain the signalfd and terminate the display so the event
+ * loop returns and the clean-exit path (window-position save, client teardown)
+ * runs instead of an abrupt process death */
+static int shutdown_signal_readable(int fd, uint32_t mask, void *data) {
+	struct guibux_server *server = data;
+	struct signalfd_siginfo info;
+	while (read(fd, &info, sizeof(info)) == (ssize_t)sizeof(info)) {
+		wlr_log(WLR_INFO, "shutdown: signal %d, exiting cleanly",
+			info.ssi_signo);
+		wl_display_terminate(server->wl_display);
+	}
+	return 1;
+}
+
 int main(int argc, char *argv[]) {
 	wlr_log_init(WLR_INFO, NULL);
 	/* SIGUSR1 (guibuxwm-output live re-apply) and SIGHUP (config
@@ -71,6 +85,10 @@ int main(int argc, char *argv[]) {
 	sigaddset(&usr1_mask, SIGUSR1);
 	sigaddset(&usr1_mask, SIGHUP);
 	sigaddset(&usr1_mask, SIGUSR2);
+	/* SIGTERM/SIGINT are read via signalfd so a `kill` or Ctrl+C triggers a
+	 * clean exit (saving window positions) instead of an abrupt terminate */
+	sigaddset(&usr1_mask, SIGTERM);
+	sigaddset(&usr1_mask, SIGINT);
 	pthread_sigmask(SIG_BLOCK, &usr1_mask, NULL);
 	/* spawned children (terminals, launcher commands) are reaped by a
 	 * targeted SIGCHLD handler instead of accumulating as zombies;
@@ -388,6 +406,23 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
+	/* SIGTERM/SIGINT: clean exit so debounced saves and window positions are
+	 * written before the clients (and windows) are destroyed */
+	{
+		sigset_t term_mask;
+		sigemptyset(&term_mask);
+		sigaddset(&term_mask, SIGTERM);
+		sigaddset(&term_mask, SIGINT);
+		int sfd = signalfd(-1, &term_mask, SFD_NONBLOCK | SFD_CLOEXEC);
+		if (sfd < 0) {
+			wlr_log(WLR_ERROR, "shutdown: signalfd(SIGTERM) failed: %m");
+		} else {
+			server.shutdown_signal_source = wl_event_loop_add_fd(
+				wl_display_get_event_loop(server.wl_display), sfd,
+				WL_EVENT_READABLE, shutdown_signal_readable, &server);
+		}
+	}
+
 	if (!wlr_backend_start(server.backend)) {
 		wlr_backend_destroy(server.backend);
 		wl_display_destroy(server.wl_display);
@@ -692,6 +727,9 @@ int main(int argc, char *argv[]) {
 	}
 	if (server.config_signal_source != NULL) {
 		wl_event_source_remove(server.config_signal_source);
+	}
+	if (server.shutdown_signal_source != NULL) {
+		wl_event_source_remove(server.shutdown_signal_source);
 	}
 	if (server.notify_pipe[0] >= 0) {
 		close(server.notify_pipe[0]);

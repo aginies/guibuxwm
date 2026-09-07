@@ -877,6 +877,7 @@ struct guibux_server {
 	char *renderer_name;  /* config `renderer`: auto|gles2|vulkan|pixman */
 	struct wl_event_source *outputs_signal_source;  /* SIGUSR1 = re-apply */
 	struct wl_event_source *config_signal_source;   /* SIGHUP = reload config */
+	struct wl_event_source *shutdown_signal_source; /* SIGTERM/SIGINT = clean exit */
 
 	struct wl_event_source *tile_test_timer;
 	struct wl_event_source *topbar_timer;
