@@ -84,30 +84,25 @@ static void lock_render_output(struct guibux_server *server,
 
 	int w = lo->w * lo->scale;
 	int hgt = lo->h * lo->scale;
+
+	/* blit the cached background (scaled + dimmed once on lock_show) so a
+	 * keystroke or the per-second lockout tick does not re-scale the full
+	 * wallpaper. The cached pixels are contiguous (stride = w*4); copy row
+	 * by row if the buffer stride differs. */
+	if (lo->bg_pixels != NULL) {
+		if ((size_t)w * 4 == stride) {
+			memcpy(data, lo->bg_pixels, (size_t)w * hgt * 4);
+		} else {
+			for (int y = 0; y < hgt; y++) {
+				memcpy((uint8_t *)data + (size_t)y * stride,
+					lo->bg_pixels + (size_t)y * w * 4, (size_t)w * 4);
+			}
+		}
+	}
+
 	cairo_surface_t *cs = cairo_image_surface_create_for_data(
 		data, CAIRO_FORMAT_RGB24, w, hgt, (int)stride);
 	cairo_t *cr = cairo_create(cs);
-
-	/* desktop background, so the lock screen matches the wallpaper */
-	cairo_surface_t *img = server->bg_surfaces[lo->o->current_workspace - 1];
-	if (img != NULL) {
-		double iw = cairo_image_surface_get_width(img);
-		double ih = cairo_image_surface_get_height(img);
-		if (iw > 0 && ih > 0) {
-			double s = w / iw;
-			if (hgt / ih < s) {
-				s = hgt / ih;
-			}
-			cairo_translate(cr, (w - iw * s) / 2, (hgt - ih * s) / 2);
-			cairo_scale(cr, s, s);
-			cairo_set_source_surface(cr, img, 0, 0);
-			cairo_paint(cr);
-			cairo_identity_matrix(cr);
-		}
-	}
-	/* dim: hides the desktop content, keeps the wallpaper visible */
-	cairo_set_source_rgba(cr, 0, 0, 0, 0.55);
-	cairo_paint(cr);
 
 	struct guibux_lock *lk = &server->lock;
 	FT_Face face = server->launcher.face;
@@ -192,6 +187,10 @@ static void lock_free_outputs(struct guibux_server *server) {
 			wlr_buffer_drop(lo->buffer);
 			lo->buffer = NULL;
 		}
+		if (lo->bg_pixels != NULL) {
+			free(lo->bg_pixels);
+			lo->bg_pixels = NULL;
+		}
 		lo->o = NULL;
 	}
 	lk->num_outs = 0;
@@ -270,6 +269,39 @@ void lock_show(struct guibux_server *server) {
 		if (lo->buffer == NULL) {
 			lk->num_outs--;
 			continue;
+		}
+		/* scale + dim the wallpaper once; lock_render_output blits this
+		 * instead of re-scaling on every keystroke / second tick */
+		lo->bg_pixels = malloc((size_t)box.width * box.height * scale * 4);
+		if (lo->bg_pixels != NULL) {
+			cairo_surface_t *cs = cairo_image_surface_create_for_data(
+				lo->bg_pixels, CAIRO_FORMAT_RGB24,
+				box.width * scale, box.height * scale,
+				box.width * scale * 4);
+			cairo_t *cr = cairo_create(cs);
+			cairo_surface_t *img = server->bg_surfaces[lo->o->current_workspace - 1];
+			if (img != NULL) {
+				double iw = cairo_image_surface_get_width(img);
+				double ih = cairo_image_surface_get_height(img);
+				int bw = box.width * scale;
+				int bh = box.height * scale;
+				if (iw > 0 && ih > 0) {
+					double s = bw / iw;
+					if (bh / ih < s) {
+						s = bh / ih;
+					}
+					cairo_translate(cr, (bw - iw * s) / 2, (bh - ih * s) / 2);
+					cairo_scale(cr, s, s);
+					cairo_set_source_surface(cr, img, 0, 0);
+					cairo_paint(cr);
+					cairo_identity_matrix(cr);
+				}
+			}
+			/* dim: hides the desktop content, keeps the wallpaper visible */
+			cairo_set_source_rgba(cr, 0, 0, 0, 0.55);
+			cairo_paint(cr);
+			cairo_destroy(cr);
+			cairo_surface_destroy(cs);
 		}
 		lo->scene_node = wlr_scene_buffer_create(&server->scene->tree,
 			lo->buffer);

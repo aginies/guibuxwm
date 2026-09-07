@@ -717,6 +717,10 @@ struct guibux_lock_output {
 	struct wlr_scene_buffer *scene_node;
 	struct wlr_buffer *buffer;
 	int w, h, scale;
+	/* scaled+dimmed background, rendered once on lock_show and blitted
+	 * into the buffer on every redraw (avoids re-scaling the wallpaper
+	 * per keystroke / per second). BGRA in memory, stride = w*scale*4 */
+	uint8_t *bg_pixels;
 };
 
 struct guibux_lock {
