@@ -8,6 +8,10 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+/* restore_save is called on every window close; the file write is debounced
+ * this long so a burst of closes does not rewrite the file each time */
+#define RESTORE_SAVE_DEBOUNCE_MS 500
+
 // ---------------------------------------------------------------------------
 // State file: app_id|output|box_x|box_y|workspace|x|y|w|h per line, under
 // XDG_STATE_HOME (or ~/.local/state). box_x/box_y is the output's position
@@ -251,6 +255,11 @@ void restore_load(struct guibux_server *server) {
 }
 
 void restore_free(struct guibux_server *server) {
+	if (server->window_restore.save_timer != NULL) {
+		wl_event_source_remove(server->window_restore.save_timer);
+		server->window_restore.save_timer = NULL;
+	}
+	server->window_restore.save_pending = false;
 	server->window_restore.count = 0;
 }
 
@@ -334,8 +343,34 @@ void restore_save(struct guibux_server *server, struct guibux_toplevel *toplevel
 		return;
 	}
 	if (restore_update_entry(server, toplevel)) {
+		/* debounce: a burst of window closes coalesces into one file write
+		 * instead of rewriting on every unmap */
+		if (server->window_restore.save_timer != NULL) {
+			server->window_restore.save_pending = true;
+			wl_event_source_timer_update(server->window_restore.save_timer,
+				RESTORE_SAVE_DEBOUNCE_MS);
+		} else {
+			/* no timer (e.g. headless test mode): write immediately */
+			restore_write_file(server);
+		}
+	}
+}
+
+/* fire the debounced write: coalesces a burst of restore_save calls into a
+ * single file write RESTORE_SAVE_DEBOUNCE_MS after the last one */
+static int restore_save_timer_run(void *data) {
+	struct guibux_server *server = data;
+	if (server->window_restore.save_pending) {
+		server->window_restore.save_pending = false;
 		restore_write_file(server);
 	}
+	return 0;
+}
+
+void restore_init(struct guibux_server *server) {
+	server->window_restore.save_timer = wl_event_loop_add_timer(
+		wl_display_get_event_loop(server->wl_display),
+		restore_save_timer_run, server);
 }
 
 /* save every mapped window: called on a clean WM exit, before the
@@ -351,7 +386,9 @@ void restore_save_all(struct guibux_server *server) {
 			saved++;
 		}
 	}
-	if (saved > 0) {
+	/* a clean exit must not lose a pending debounced write: flush it */
+	if (saved > 0 || server->window_restore.save_pending) {
+		server->window_restore.save_pending = false;
 		restore_write_file(server);
 		wlr_log(WLR_INFO, "restore: saved %d positions on exit", saved);
 	}

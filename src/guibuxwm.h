@@ -445,6 +445,10 @@ struct guibux_window_restore_entry {
 struct guibux_window_restore {
 	struct guibux_window_restore_entry entries[RESTORE_MAX_ENTRIES];
 	int count;
+	/* restore_save is called on every window close; the file write is
+	 * debounced so a burst of closes does not rewrite the file each time */
+	struct wl_event_source *save_timer;
+	bool save_pending;
 };
 
 enum restore_result {
@@ -1346,6 +1350,7 @@ void guibux_state_path(char *path, size_t path_size, const char *file);
 void guibux_state_mkdir(const char *path);
 void restore_derive_terminal_id(struct guibux_server *server);
 void restore_load(struct guibux_server *server);
+void restore_init(struct guibux_server *server);
 void restore_save(struct guibux_server *server, struct guibux_toplevel *toplevel);
 void restore_save_all(struct guibux_server *server);
 enum restore_result restore_apply(struct guibux_server *server, struct guibux_toplevel *toplevel);

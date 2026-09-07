@@ -350,6 +350,8 @@ int main(int argc, char *argv[]) {
 	}
 
 	sysinfo_init(&server);
+	/* debounced window-position save timer (needs the event loop) */
+	restore_init(&server);
 	/* the D-Bus worker may wake the main loop as soon as it starts, so
 	 * the pipe must exist before the worker thread does */
 	server.notify_pipe[0] = server.notify_pipe[1] = -1;
