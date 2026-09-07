@@ -362,6 +362,10 @@ int main(int argc, char *argv[]) {
 	}
 	notify_init(&server);
 
+	/* screenshot encode worker: the pipe must exist before the worker
+	 * thread starts so a fast capture cannot wake a missing fd */
+	screenshot_init(&server);
+
 	/* SIGUSR1 (sent by the guibuxwm-output tool): re-apply the outputs
 	 * config live */
 	outputs_apply_init(&server);

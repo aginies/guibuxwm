@@ -405,6 +405,21 @@ struct guibux_screenshot {
 	uint8_t *clean_data;
 	uint32_t clean_w, clean_h, clean_stride;
 	char last_path[2048];
+
+	/* PNG encode + write runs on a worker thread so a 4K capture does not
+	 * block the compositor. The main loop reads screenshot_pipe to learn
+	 * when a job finished, then frees its pixels and shows the OSD */
+	pthread_t worker;
+	bool worker_started;
+	pthread_mutex_t job_lock;
+	pthread_cond_t job_cond;
+	bool job_pending;
+	uint8_t *job_data;      /* XRGB8888, owned by the worker once submitted */
+	uint32_t job_w, job_h, job_stride;
+	char job_path[2048];
+	bool job_ok;           /* set by the worker; read by the main loop */
+	int job_pipe[2];
+	struct wl_event_source *job_pipe_source;
 };
 
 /* window-restore.c: last known position per app, persisted across
@@ -1254,6 +1269,7 @@ int lock_tick(void *data);
 int lock_test_run(void *data);
 
 /* screenshot.c */
+void screenshot_init(struct guibux_server *server);
 void screenshot_region_begin(struct guibux_server *server);
 void screenshot_region_update(struct guibux_server *server, double lx, double ly);
 void screenshot_region_end(struct guibux_server *server);
@@ -1262,6 +1278,7 @@ void screenshot_window(struct guibux_server *server, struct guibux_toplevel *t);
 void screenshot_fullscreen(struct guibux_server *server);
 void screenshot_destroy(struct guibux_server *server);
 int screenshot_test_run(void *data);
+int screenshot_job_done(int fd, uint32_t mask, void *data);
 
 /* keyboard.c */
 void server_new_input(struct wl_listener *listener, void *data);

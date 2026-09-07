@@ -123,6 +123,98 @@ static bool save_png_xrgb(const uint8_t *xrgb, uint32_t w, uint32_t h,
 	return ok;
 }
 
+/* PNG encode + disk write for a 4K frame takes long enough to be visible as
+ * compositor jank, so it runs on a worker thread. The main thread captures
+ * the pixels (the GPU readback needs the renderer and is not thread-safe),
+ * hands the buffer to the worker, and returns. The worker writes a byte to
+ * job_pipe when done; the main loop's job_pipe_source reads it, shows the
+ * OSD, and records the path. */
+static void *screenshot_worker(void *data) {
+	struct guibux_server *server = data;
+	struct guibux_screenshot *ss = &server->screenshot;
+	for (;;) {
+		pthread_mutex_lock(&ss->job_lock);
+		while (!ss->job_pending && ss->worker_started) {
+			pthread_cond_wait(&ss->job_cond, &ss->job_lock);
+		}
+		if (!ss->worker_started) {
+			pthread_mutex_unlock(&ss->job_lock);
+			break;
+		}
+		uint8_t *job_data = ss->job_data;
+		uint32_t job_w = ss->job_w;
+		uint32_t job_h = ss->job_h;
+		uint32_t job_stride = ss->job_stride;
+		char job_path[2048];
+		snprintf(job_path, sizeof(job_path), "%s", ss->job_path);
+		ss->job_pending = false;
+		ss->job_data = NULL;
+		pthread_mutex_unlock(&ss->job_lock);
+
+		bool ok = save_png_xrgb(job_data, job_w, job_h, job_stride, job_path);
+		free(job_data);
+
+		pthread_mutex_lock(&ss->job_lock);
+		ss->job_ok = ok;
+		pthread_mutex_unlock(&ss->job_lock);
+		if (ss->job_pipe[1] >= 0) {
+			ssize_t rc = write(ss->job_pipe[1], "s", 1);
+			(void)rc;
+		}
+	}
+	return NULL;
+}
+
+/* submit a captured buffer to the worker; the worker takes ownership and
+ * frees it after encoding. Returns false if the worker is unavailable, in
+ * which case the caller keeps ownership and must free data itself. */
+static bool screenshot_submit_job(struct guibux_server *server,
+		uint8_t *data, uint32_t w, uint32_t h, uint32_t stride,
+		const char *path) {
+	struct guibux_screenshot *ss = &server->screenshot;
+	if (!ss->worker_started || data == NULL) {
+		return false;
+	}
+	pthread_mutex_lock(&ss->job_lock);
+	/* a previous job is still queued: process it first so the buffer is not
+	 * lost (screenshots are rare; this only matters for rapid repeats) */
+	if (ss->job_pending && ss->job_data != NULL) {
+		pthread_mutex_unlock(&ss->job_lock);
+		return false;
+	}
+	ss->job_data = data;
+	ss->job_w = w;
+	ss->job_h = h;
+	ss->job_stride = stride;
+	snprintf(ss->job_path, sizeof(ss->job_path), "%s", path);
+	ss->job_pending = true;
+	pthread_cond_signal(&ss->job_cond);
+	pthread_mutex_unlock(&ss->job_lock);
+	return true;
+}
+
+/* main-loop handler: a screenshot job finished; show the OSD and record
+ * the path. Runs on the main thread, so touching the scene is safe. */
+int screenshot_job_done(int fd, uint32_t mask, void *data) {
+	struct guibux_server *server = data;
+	struct guibux_screenshot *ss = &server->screenshot;
+	char buf[64];
+	while (read(fd, buf, sizeof buf) > 0) {
+	}
+	pthread_mutex_lock(&ss->job_lock);
+	bool ok = ss->job_ok;
+	char path[2048];
+	snprintf(path, sizeof(path), "%s", ss->job_path);
+	pthread_mutex_unlock(&ss->job_lock);
+	if (ok) {
+		snprintf(ss->last_path, sizeof(ss->last_path), "%s", path);
+		osd_shot(server, path);
+	} else {
+		osd_shot(server, "screenshot failed");
+	}
+	return 0;
+}
+
 /* draw a 1px selection outline around the current region; the border buffer
  * is sized to the region (device px) and repositioned over the selection */
 static void screenshot_render_border(struct guibux_server *server,
@@ -220,14 +312,13 @@ static bool save_region(struct guibux_server *server,
 			(size_t)dw * 4);
 	}
 	char path[2048];
-	bool ok = build_save_path(path, sizeof(path)) &&
-		save_png_xrgb(crop, dw, dh, dw * 4, path);
-	free(crop);
-	if (ok) {
-		snprintf(ss->last_path, sizeof(ss->last_path), "%s", path);
-		wlr_log(WLR_INFO, "screenshot: saved region %ux%u -> %s", dw, dh, path);
-		osd_shot(server, path);
+	bool ok = build_save_path(path, sizeof(path));
+	if (ok && screenshot_submit_job(server, crop, dw, dh, dw * 4, path)) {
+		/* the worker owns crop now and will show the OSD when done */
+		wlr_log(WLR_INFO, "screenshot: encoding region %ux%u -> %s",
+			dw, dh, path);
 	} else {
+		free(crop);
 		osd_shot(server, "screenshot failed");
 	}
 	return ok;
@@ -424,13 +515,14 @@ void screenshot_window(struct guibux_server *server, struct guibux_toplevel *t) 
 		return;
 	}
 	char path[2048];
-	if (build_save_path(path, sizeof(path)) && save_png_xrgb(data, w, h, stride, path)) {
-		wlr_log(WLR_INFO, "screenshot: saved window %ux%u -> %s", w, h, path);
-		osd_shot(server, path);
+	if (build_save_path(path, sizeof(path)) &&
+			screenshot_submit_job(server, data, w, h, stride, path)) {
+		/* the worker owns data now and will show the OSD when done */
+		wlr_log(WLR_INFO, "screenshot: encoding window %ux%u -> %s", w, h, path);
 	} else {
+		free(data);
 		osd_shot(server, "screenshot failed");
 	}
-	free(data);
 }
 
 void screenshot_fullscreen(struct guibux_server *server) {
@@ -447,13 +539,15 @@ void screenshot_fullscreen(struct guibux_server *server) {
 		return;
 	}
 	char path[2048];
-	if (build_save_path(path, sizeof(path)) && save_png_xrgb(data, w, h, stride, path)) {
-		wlr_log(WLR_INFO, "screenshot: saved fullscreen %ux%u -> %s", w, h, path);
-		osd_shot(server, path);
+	if (build_save_path(path, sizeof(path)) &&
+			screenshot_submit_job(server, data, w, h, stride, path)) {
+		/* the worker owns data now and will show the OSD when done */
+		wlr_log(WLR_INFO, "screenshot: encoding fullscreen %ux%u -> %s",
+			w, h, path);
 	} else {
+		free(data);
 		osd_shot(server, "screenshot failed");
 	}
-	free(data);
 }
 
 void screenshot_destroy(struct guibux_server *server) {
@@ -463,6 +557,49 @@ void screenshot_destroy(struct guibux_server *server) {
 	}
 	screenshot_free_clean(server);
 	screenshot_free_overlay(server);
+	/* stop the encode worker: it must not outlive the server */
+	if (ss->worker_started) {
+		pthread_mutex_lock(&ss->job_lock);
+		ss->worker_started = false;
+		pthread_cond_signal(&ss->job_cond);
+		pthread_mutex_unlock(&ss->job_lock);
+		pthread_join(ss->worker, NULL);
+		ss->worker_started = false;
+	}
+	if (ss->job_pipe[0] >= 0) {
+		close(ss->job_pipe[0]);
+		close(ss->job_pipe[1]);
+		ss->job_pipe[0] = ss->job_pipe[1] = -1;
+	}
+	if (ss->job_pipe_source != NULL) {
+		wl_event_source_remove(ss->job_pipe_source);
+		ss->job_pipe_source = NULL;
+	}
+}
+
+void screenshot_init(struct guibux_server *server) {
+	struct guibux_screenshot *ss = &server->screenshot;
+	ss->worker_started = false;
+	ss->job_pipe[0] = ss->job_pipe[1] = -1;
+	ss->job_pipe_source = NULL;
+	pthread_mutex_init(&ss->job_lock, NULL);
+	pthread_cond_init(&ss->job_cond, NULL);
+	if (pipe(ss->job_pipe) != 0) {
+		wlr_log(WLR_ERROR, "screenshot: failed to create job pipe: %m");
+		ss->job_pipe[0] = ss->job_pipe[1] = -1;
+		return;
+	}
+	if (pthread_create(&ss->worker, NULL, screenshot_worker, server) != 0) {
+		wlr_log(WLR_ERROR, "screenshot: failed to start worker thread");
+		close(ss->job_pipe[0]);
+		close(ss->job_pipe[1]);
+		ss->job_pipe[0] = ss->job_pipe[1] = -1;
+		return;
+	}
+	ss->worker_started = true;
+	ss->job_pipe_source = wl_event_loop_add_fd(
+		wl_display_get_event_loop(server->wl_display),
+		ss->job_pipe[0], WL_EVENT_READABLE, screenshot_job_done, server);
 }
 
 int screenshot_test_run(void *data) {
