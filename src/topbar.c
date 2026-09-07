@@ -944,6 +944,73 @@ static void topbar_render_focus(struct guibux_output *o) {
 	wlr_output_schedule_frame(o->wlr_output);
 }
 
+static void topbar_render_clock(struct guibux_output *o) {
+	/* minute rollover: redraw only the clock region. The background pixels
+	 * were cached on the last full render; restore them and repaint the
+	 * clock text. Avoids a full-bar cairo + FreeType pass once a minute. */
+	struct guibux_server *server = o->server;
+	if (o->topbar_buffer == NULL || o->topbar_clock_bg == NULL ||
+			server->launcher.face == NULL) {
+		/* no cached region yet: fall back to a full render */
+		o->topbar_clock_dirty = false;
+		o->topbar_dirty = true;
+		topbar_render(o);
+		return;
+	}
+	o->topbar_clock_dirty = false;
+
+	void *data;
+	uint32_t format;
+	size_t stride;
+	if (!wlr_buffer_begin_data_ptr_access(o->topbar_buffer,
+			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) {
+		return;
+	}
+	if (format != DRM_FORMAT_XRGB8888) {
+		wlr_buffer_end_data_ptr_access(o->topbar_buffer);
+		return;
+	}
+	int w = o->topbar_buffer_w;
+	int h = o->topbar_buffer_h;
+	int cx = o->topbar_clock_x;
+	int cw = o->topbar_clock_w;
+	if (cx < 0 || cx + cw > w || cw <= 0 || h <= 0) {
+		wlr_buffer_end_data_ptr_access(o->topbar_buffer);
+		return;
+	}
+	/* restore the cached background */
+	for (int y = 0; y < h && y < o->topbar_clock_bg_h; y++) {
+		memcpy((uint8_t *)data + (size_t)y * stride + (size_t)cx * 4,
+			o->topbar_clock_bg + (size_t)y * cw, (size_t)cw * 4);
+	}
+	cairo_surface_t *cs = cairo_image_surface_create_for_data(
+		data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
+	/* refresh the text (the minute has rolled over) */
+	time_t now = time(NULL);
+	struct tm tm;
+	localtime_r(&now, &tm);
+	strftime(o->topbar_right, sizeof(o->topbar_right),
+		"%a %d %b %Y  %H:%M", &tm);
+	int font_px = server->topbar_font_size * guibux_scale_round(o->wlr_output->scale);
+	FT_Set_Pixel_Sizes(server->launcher.face, 0, font_px);
+	/* right-align to match the full render: the text ends at the bar's right
+	 * edge minus the topbar padding (guibux_text_width is in device px at
+	 * the scaled font size) */
+	int text_w = guibux_text_width(server->launcher.face, o->topbar_right);
+	int text_x = w - TOPBAR_PAD * guibux_scale_round(o->wlr_output->scale) - text_w;
+	if (text_x < cx) {
+		text_x = cx;
+	}
+	launcher_draw_text_on_surface(cs, server->launcher.face, o->topbar_right,
+		text_x, o->topbar_clock_baseline, server->color_topbar_text);
+	cairo_surface_destroy(cs);
+	wlr_buffer_end_data_ptr_access(o->topbar_buffer);
+	if (o->topbar_node != NULL) {
+		wlr_scene_buffer_set_buffer(o->topbar_node, o->topbar_buffer);
+	}
+	wlr_output_schedule_frame(o->wlr_output);
+}
+
 void topbar_render(struct guibux_output *o) {
 	struct guibux_server *server = o->server;
 	if (server->launcher.face == NULL || server->launcher.shm_alloc == NULL) {
@@ -966,6 +1033,7 @@ void topbar_render(struct guibux_output *o) {
 	}
 	o->topbar_dirty = false;
 	o->topbar_focus_dirty = false;
+	o->topbar_clock_dirty = false;
 
 	/* buffer is in device pixels; the node stays at logical size via
 	 * the dest size, so the bar renders sharp on fractional/integer
@@ -1286,6 +1354,31 @@ void topbar_render(struct guibux_output *o) {
 		}
 
 		if (ctx.clock_enabled) {
+			/* cache the clock region's background pixels so a minute
+			 * rollover can restore them and redraw only the clock text
+			 * instead of the whole bar. The clock is the rightmost element,
+			 * so the region runs from the text start to the bar's right edge */
+			int cx = date_x * scale;
+			int cw = w - cx;
+			if (cw > 0) {
+				if (o->topbar_clock_bg != NULL) {
+					free(o->topbar_clock_bg);
+					o->topbar_clock_bg = NULL;
+				}
+				o->topbar_clock_bg = malloc((size_t)cw * h * 4);
+				if (o->topbar_clock_bg != NULL) {
+					for (int y = 0; y < h; y++) {
+						memcpy(o->topbar_clock_bg + (size_t)y * cw,
+							(uint8_t *)data + (size_t)y * stride + (size_t)cx * 4,
+							(size_t)cw * 4);
+					}
+					o->topbar_clock_bg_w = cw;
+					o->topbar_clock_bg_h = h;
+				}
+				o->topbar_clock_x = cx;
+				o->topbar_clock_w = cw;
+				o->topbar_clock_baseline = baseline;
+			}
 			launcher_draw_text_on_surface(cs, server->launcher.face, o->topbar_right,
 				date_x * scale,
 				baseline, server->color_topbar_text);
@@ -1656,6 +1749,11 @@ void topbar_destroy(struct guibux_output *o) {
 		wlr_buffer_drop(o->topbar_buffer);
 		o->topbar_buffer = NULL;
 	}
+	if (o->topbar_clock_bg != NULL) {
+		free(o->topbar_clock_bg);
+		o->topbar_clock_bg = NULL;
+	}
+	o->topbar_clock_dirty = false;
 }
 
 void topbar_renumber(struct guibux_server *server) {
@@ -1710,7 +1808,7 @@ int topbar_tick(void *data) {
 		if (o->topbar_minute != minute &&
 				topbar_item_enabled(server, TOPBAR_ITEM_CLOCK)) {
 			o->topbar_minute = minute;
-			o->topbar_dirty = true;
+			o->topbar_clock_dirty = true;
 		} else {
 			bool changed = false;
 			if (topbar_item_enabled(server, TOPBAR_ITEM_NETWORK) &&
@@ -1737,6 +1835,9 @@ int topbar_tick(void *data) {
 		}
 		if (o->topbar_dirty) {
 			topbar_render(o);
+		} else if (o->topbar_clock_dirty) {
+			/* only the clock changed: partial redraw, no full-bar pass */
+			topbar_render_clock(o);
 		}
 	}
 	/* the battery tooltip arms on pointer motion and shows once the

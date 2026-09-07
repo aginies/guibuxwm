@@ -529,6 +529,14 @@ struct guibux_output {
      * region instead of the whole surface */
     bool topbar_focus_dirty;
     time_t topbar_minute;
+	/* clock partial-redraw: the clock region's background pixels are cached
+	 * on a full render; a minute rollover restores them and redraws only the
+	 * clock text instead of the whole bar. Device px */
+	bool topbar_clock_dirty;
+	int topbar_clock_x, topbar_clock_w;
+	int topbar_clock_baseline;
+	uint8_t *topbar_clock_bg;
+	int topbar_clock_bg_w, topbar_clock_bg_h;
 	struct wl_listener frame;
 	struct wl_listener request_state;
 	struct wl_listener destroy;
