@@ -389,8 +389,8 @@ enum restore_result restore_apply(struct guibux_server *server,
 			break;
 		}
 	}
-	if (saved_o == NULL) {
-		wlr_log(WLR_INFO, "restore: '%s' was on missing output '%s', "
+	if (saved_o == NULL || saved_o->disabled) {
+		wlr_log(WLR_INFO, "restore: '%s' was on missing or disabled output '%s', "
 			"placing normally", app_id, pos.output_name);
 		return RESTORE_NONE;
 	}
