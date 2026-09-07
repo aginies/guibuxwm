@@ -366,6 +366,33 @@ static void topbar_items_prepare(struct topbar_items *ctx) {
 	o->topbar_mic_muted = ctx->snap.mic_muted;
 }
 
+static bool topbar_item_has_content(struct topbar_items *ctx, int id) {
+	if (!topbar_item_enabled(ctx->server, id)) {
+		return false;
+	}
+	switch (id) {
+	case TOPBAR_ITEM_NETWORK:
+		for (int j = 0; j < ctx->snap.net_iface_count; j++) {
+			if (ctx->snap.net_ifaces[j].label[0] != '\0') {
+				return true;
+			}
+		}
+		return false;
+	case TOPBAR_ITEM_VOLUME:
+		return ctx->vol[0] != '\0';
+	case TOPBAR_ITEM_MIC:
+		return ctx->mic[0] != '\0';
+	case TOPBAR_ITEM_BATTERY:
+		return ctx->batbuf[0] != '\0';
+	case TOPBAR_ITEM_NOTIFICATIONS:
+		return true; /* notifications indicator is fixed-width (always reserved) */
+	case TOPBAR_ITEM_CLOCK:
+		return ctx->clock_enabled;
+	default:
+		return false;
+	}
+}
+
 /* 3px vertical separator with a vertical alpha gradient (transparent at
  * both ends, solid in the middle) so it reads as a soft divider instead
  * of a hard line; x/y/h in logical units */
@@ -437,7 +464,7 @@ static int topbar_item_draw(struct topbar_items *ctx, const char *icon,
 static int topbar_item_render(struct topbar_items *ctx, int id) {
 	struct guibux_server *server = ctx->server;
 	struct guibux_output *o = ctx->o;
-	if (!topbar_item_enabled(server, id)) {
+	if (!topbar_item_has_content(ctx, id) || id == TOPBAR_ITEM_CLOCK) {
 		return ctx->ind_x;
 	}
 	int x = ctx->ind_x + TOPBAR_ITEM_PAD;
@@ -532,8 +559,10 @@ static int topbar_item_render(struct topbar_items *ctx, int id) {
 	for (int j = 0; j < server->topbar_item_count; j++) {
 		if (server->topbar_items[j] == id) {
 			for (int k = j + 1; k < server->topbar_item_count; k++) {
-				if (server->topbar_items[k] != TOPBAR_ITEM_CLOCK) {
+				if (topbar_item_has_content(ctx, server->topbar_items[k]) &&
+						server->topbar_items[k] != TOPBAR_ITEM_CLOCK) {
 					next_real = true;
+					break;
 				}
 			}
 			break;
@@ -733,12 +762,12 @@ static void topbar_pills_draw(struct guibux_output *o, cairo_t *cr,
 		char mon = wo != NULL ? 'A' + (wo->topbar_number - 1) : 'A';
 		char prefix[8];
 		snprintf(prefix, sizeof(prefix), "%c%d: ", mon, wins[i]->workspace);
-		int pw = guibux_text_width(server->launcher.face, prefix);
+		int pw = guibux_text_width(server->launcher.face, prefix) / scale;
 		int budget = max_w - 16 - pw;
 		if (budget < 0)
 			budget = 0;
 		char tbuf[64];
-		int tw = guibux_text_width(server->launcher.face, title);
+		int tw = guibux_text_width(server->launcher.face, title) / scale;
 		if (tw > budget) {
 			int cps = 0;
 			const char *p = title;
@@ -750,7 +779,7 @@ static void topbar_pills_draw(struct guibux_output *o, cairo_t *cr,
 				utf8_truncate(title, tbuf, sizeof(tbuf), trunc);
 				size_t n = strlen(tbuf);
 				snprintf(tbuf + n, sizeof(tbuf) - n, "...");
-				tw = guibux_text_width(server->launcher.face, tbuf);
+				tw = guibux_text_width(server->launcher.face, tbuf) / scale;
 				if (tw <= budget)
 					break;
 			}
@@ -764,7 +793,7 @@ static void topbar_pills_draw(struct guibux_output *o, cairo_t *cr,
 		}
 		char buf[72];
 		snprintf(buf, sizeof(buf), "%s%s", prefix, tbuf);
-		tw = guibux_text_width(server->launcher.face, buf);
+		tw = guibux_text_width(server->launcher.face, buf) / scale;
 		int pill_w = tw + 16;
 		if (pill_w > max_w)
 			pill_w = max_w;
@@ -900,6 +929,7 @@ static void topbar_render_focus(struct guibux_output *o) {
 		cairo_rectangle(cr, rx, 0, rw, h);
 		cairo_fill(cr);
 		int font_px = server->topbar_font_size * scale;
+		FT_Set_Pixel_Sizes(server->launcher.face, 0, font_px);
 		int baseline = o->server->topbar_height / 2 * scale + font_px * 35 / 100;
 		topbar_pills_draw(o, cr, cs, scale, baseline, cell_y, cell_h,
 			o->topbar_win_region_x, o->topbar_win_region_end, kb_focus_t);
@@ -1156,8 +1186,10 @@ void topbar_render(struct guibux_output *o) {
 			seg += TOPBAR_ITEM_PAD;
 			bool has_next = false;
 			for (int k = i + 1; k < server->topbar_item_count; k++) {
-				if (server->topbar_items[k] != TOPBAR_ITEM_CLOCK) {
+				if (topbar_item_has_content(&ctx, server->topbar_items[k]) &&
+						server->topbar_items[k] != TOPBAR_ITEM_CLOCK) {
 					has_next = true;
+					break;
 				}
 			}
 			if (!has_next) {
@@ -1171,11 +1203,12 @@ void topbar_render(struct guibux_output *o) {
 		}
 	}
 
-	int date_w = ctx.clock_enabled ?
+	bool draw_items = (server->topbar_items_output == 0 ||
+			server->topbar_items_output == o->topbar_number);
+	int date_w = (ctx.clock_enabled && draw_items) ?
 		guibux_text_width(server->launcher.face, o->topbar_right) / scale : 0;
 	/* topbar_items_output restricts indicators + clock to one monitor */
-	if (server->topbar_items_output != 0 &&
-			server->topbar_items_output != o->topbar_number) {
+	if (!draw_items) {
 		ind_w = 0;
 		date_w = 0;
 	}
@@ -1218,42 +1251,45 @@ void topbar_render(struct guibux_output *o) {
 	/* render the enabled indicator items in config order */
 	ctx.ind_x = date_x - date_gap - ind_w;
 
-	/* separator between indicators and the clock: centered in the gap so
-	 * both the last item and the date keep a clear margin */
-	if (date_gap > 0) {
-		topbar_item_draw_separator(&ctx, date_x - date_gap, date_gap);
-	}
-
-	for (int i = 0; i < server->topbar_item_count; i++) {
-		int id = server->topbar_items[i];
-		if (id == TOPBAR_ITEM_CLOCK) {
-			continue;
+	if (draw_items) {
+		/* separator between indicators and the clock: centered in the gap so
+		 * both the last item and the date keep a clear margin */
+		if (date_gap > 0) {
+			topbar_item_draw_separator(&ctx, date_x - date_gap, date_gap);
 		}
-		int before = ctx.ind_x;
-		topbar_item_render(&ctx, id);
-		/* separator only when the next entry is a real item: the clock
-		 * gets its own separator via date_gap, so a separator after the
-		 * last real item (the one before the clock) would double up */
-		bool next_real = false;
-		for (int j = i + 1; j < server->topbar_item_count; j++) {
-			if (server->topbar_items[j] != TOPBAR_ITEM_CLOCK) {
-				next_real = true;
-				break;
+
+		for (int i = 0; i < server->topbar_item_count; i++) {
+			int id = server->topbar_items[i];
+			if (id == TOPBAR_ITEM_CLOCK) {
+				continue;
+			}
+			int before = ctx.ind_x;
+			topbar_item_render(&ctx, id);
+			/* separator only when the next entry is a real item: the clock
+			 * gets its own separator via date_gap, so a separator after the
+			 * last real item (the one before the clock) would double up */
+			bool next_real = false;
+			for (int j = i + 1; j < server->topbar_item_count; j++) {
+				if (topbar_item_has_content(&ctx, server->topbar_items[j]) &&
+						server->topbar_items[j] != TOPBAR_ITEM_CLOCK) {
+					next_real = true;
+					break;
+				}
+			}
+			if (ctx.ind_x > before && next_real) {
+				/* the 20px gap starts at ctx.ind_x (item's right edge, no
+				 * trailing pad); the helper centers the 3px line in the gap,
+				 * so both the item and the next item keep a clear margin */
+				topbar_item_draw_separator(&ctx, ctx.ind_x, 20);
+				ctx.ind_x += 20;
 			}
 		}
-		if (ctx.ind_x > before && next_real) {
-			/* the 20px gap starts at ctx.ind_x (item's right edge, no
-			 * trailing pad); the helper centers the 3px line in the gap,
-			 * so both the item and the next item keep a clear margin */
-			topbar_item_draw_separator(&ctx, ctx.ind_x, 20);
-			ctx.ind_x += 20;
-		}
-	}
 
-	if (ctx.clock_enabled) {
-		launcher_draw_text_on_surface(cs, server->launcher.face, o->topbar_right,
-			date_x * scale,
-			baseline, server->color_topbar_text);
+		if (ctx.clock_enabled) {
+			launcher_draw_text_on_surface(cs, server->launcher.face, o->topbar_right,
+				date_x * scale,
+				baseline, server->color_topbar_text);
+		}
 	}
 
 	cairo_destroy(cr);
