@@ -395,7 +395,10 @@ struct guibux_osd {
 struct guibux_screenshot {
 	bool active;                 /* region-select mode in progress */
 	struct guibux_output *output;
-	struct wlr_scene_rect *dim;          /* dim overlay over the output */
+	struct wlr_scene_rect *dim_top;
+	struct wlr_scene_rect *dim_bottom;
+	struct wlr_scene_rect *dim_left;
+	struct wlr_scene_rect *dim_right;
 	struct wlr_scene_buffer *sel_node;   /* selection border */
 	struct wlr_buffer *sel_buf;
 	int sel_x, sel_y, sel_w, sel_h;      /* logical, output-local */
@@ -408,7 +411,11 @@ struct guibux_screenshot {
 
 	/* PNG encode + write runs on a worker thread so a 4K capture does not
 	 * block the compositor. The main loop reads screenshot_pipe to learn
-	 * when a job finished, then frees its pixels and shows the OSD */
+	 * when a job finished, then frees its pixels and shows the OSD.
+	 * Only the (pure-CPU) encode runs off the main thread: the swapchain
+	 * acquire + texture read-back must stay on the main thread, since the
+	 * output's swapchain slots are also touched by every frame commit and
+	 * are not thread-safe. */
 	pthread_t worker;
 	bool worker_started;
 	pthread_mutex_t job_lock;

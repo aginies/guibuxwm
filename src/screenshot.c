@@ -13,6 +13,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -79,10 +80,11 @@ static bool save_png_xrgb(const uint8_t *xrgb, uint32_t w, uint32_t h,
 
 /* PNG encode + disk write for a 4K frame takes long enough to be visible as
  * compositor jank, so it runs on a worker thread. The main thread captures
- * the pixels (the GPU readback needs the renderer and is not thread-safe),
- * hands the buffer to the worker, and returns. The worker writes a byte to
- * job_pipe when done; the main loop's job_pipe_source reads it, shows the
- * OSD, and records the path. */
+ * the pixels (the swapchain acquire + GPU readback must run on the main
+ * thread: the output's swapchain slots are also touched by every frame
+ * commit and are not thread-safe), hands the buffer to the worker, and
+ * returns. The worker writes a byte to job_pipe when done; the main loop's
+ * job_pipe_source reads it, shows the OSD, and records the path. */
 static void *screenshot_worker(void *data) {
 	struct guibux_server *server = data;
 	struct guibux_screenshot *ss = &server->screenshot;
@@ -111,6 +113,7 @@ static void *screenshot_worker(void *data) {
 		pthread_mutex_lock(&ss->job_lock);
 		ss->job_ok = ok;
 		pthread_mutex_unlock(&ss->job_lock);
+
 		if (ss->job_pipe[1] >= 0) {
 			ssize_t rc = write(ss->job_pipe[1], "s", 1);
 			(void)rc;
@@ -119,11 +122,15 @@ static void *screenshot_worker(void *data) {
 	return NULL;
 }
 
-/* capture the output's current frame into a malloc'd XRGB8888 buffer.
- * This runs on the worker thread so that wlr_swapchain_acquire() can
- * safely block without deadlocking the main loop (which must process
- * page-flip events to free swapchain buffers). */
-static bool capture_output_frame_worker(struct guibux_server *server,
+/* read the output's current frame into a malloc'd XRGB8888 buffer. Runs on
+ * the main thread: wlr_swapchain_acquire() touches the output's swapchain
+ * slots, which the per-frame commit path also touches, and wlroots does not
+ * synchronize them (a concurrent acquire from another thread corrupts the
+ * slot release listeners and deadlocks the main loop). The buffer stays
+ * locked until the read-back completes so no frame can be rendered into it
+ * mid-read. In steady state the swapchain pool (4 slots) always has a free
+ * slot; if not, the capture fails gracefully instead of blocking. */
+static bool capture_output_frame(struct guibux_server *server,
 	struct wlr_output *output, uint8_t **out_data,
 	uint32_t *out_w, uint32_t *out_h, uint32_t *out_stride) {
 	struct wlr_renderer *renderer = server->renderer;
@@ -142,8 +149,8 @@ static bool capture_output_frame_worker(struct guibux_server *server,
 		return false;
 	}
 	struct wlr_texture *tex = wlr_texture_from_buffer(renderer, buffer);
-	wlr_buffer_unlock(buffer);
 	if (tex == NULL) {
+		wlr_buffer_unlock(buffer);
 		return false;
 	}
 	uint32_t w = tex->width, h = tex->height;
@@ -151,6 +158,7 @@ static bool capture_output_frame_worker(struct guibux_server *server,
 	uint8_t *data = malloc((size_t)stride * h);
 	if (data == NULL) {
 		wlr_texture_destroy(tex);
+		wlr_buffer_unlock(buffer);
 		return false;
 	}
 	bool ok = wlr_texture_read_pixels(tex, &(struct wlr_texture_read_pixels_options){
@@ -159,6 +167,7 @@ static bool capture_output_frame_worker(struct guibux_server *server,
 		.stride = stride,
 	});
 	wlr_texture_destroy(tex);
+	wlr_buffer_unlock(buffer);
 	if (!ok) {
 		free(data);
 		return false;
@@ -183,7 +192,7 @@ static bool screenshot_submit_job(struct guibux_server *server,
 	pthread_mutex_lock(&ss->job_lock);
 	/* a previous job is still queued: process it first so the buffer is not
 	 * lost (screenshots are rare; this only matters for rapid repeats) */
-	if (ss->job_pending && ss->job_data != NULL) {
+	if (ss->job_pending) {
 		pthread_mutex_unlock(&ss->job_lock);
 		return false;
 	}
@@ -198,8 +207,70 @@ static bool screenshot_submit_job(struct guibux_server *server,
 	return true;
 }
 
-/* main-loop handler: a screenshot job finished; show the OSD and record
- * the path. Runs on the main thread, so touching the scene is safe. */
+/* dynamically adjust the four dimming rectangles to frame the selection box */
+static void screenshot_region_update_dims(struct guibux_server *server) {
+	struct guibux_screenshot *ss = &server->screenshot;
+	struct wlr_output *output = ss->output->wlr_output;
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, output, &box);
+
+	int sw = ss->sel_w;
+	int sh = ss->sel_h;
+	int sx = ss->sel_x;
+	int sy = ss->sel_y;
+
+	if (sw == 0 || sh == 0) {
+		sx = sy = sw = sh = 0;
+	}
+
+	/* dim_top: [0, 0] to [width, sy] */
+	if (ss->dim_top != NULL) {
+		wlr_scene_node_set_position(&ss->dim_top->node, box.x, box.y);
+		wlr_scene_rect_set_size(ss->dim_top, box.width, sy);
+	}
+
+	/* dim_bottom: [0, sy + sh] to [width, height - (sy + sh)] */
+	if (ss->dim_bottom != NULL) {
+		wlr_scene_node_set_position(&ss->dim_bottom->node, box.x, box.y + sy + sh);
+		wlr_scene_rect_set_size(ss->dim_bottom, box.width, box.height - (sy + sh));
+	}
+
+	/* dim_left: [0, sy] to [sx, sh] */
+	if (ss->dim_left != NULL) {
+		wlr_scene_node_set_position(&ss->dim_left->node, box.x, box.y + sy);
+		wlr_scene_rect_set_size(ss->dim_left, sx, sh);
+	}
+
+	/* dim_right: [sx + sw, sy] to [width - (sx + sw), sh] */
+	if (ss->dim_right != NULL) {
+		wlr_scene_node_set_position(&ss->dim_right->node, box.x + sx + sw, box.y + sy);
+		wlr_scene_rect_set_size(ss->dim_right, box.width - (sx + sw), sh);
+	}
+}
+
+/* set up the region-select dim overlay. Called on the main thread after the
+ * clean-desktop read-back completes, so the saved image never includes the
+ * selection UI. ss->active is already set (in screenshot_region_begin). */
+static void screenshot_region_setup_overlay(struct guibux_server *server) {
+	struct guibux_screenshot *ss = &server->screenshot;
+
+	/* dim the whole output (RGBA float, same as overview.c) */
+	float dim_color[4] = { 0, 0, 0, 0.4f };
+	ss->dim_top = wlr_scene_rect_create(&server->scene->tree, 0, 0, dim_color);
+	ss->dim_bottom = wlr_scene_rect_create(&server->scene->tree, 0, 0, dim_color);
+	ss->dim_left = wlr_scene_rect_create(&server->scene->tree, 0, 0, dim_color);
+	ss->dim_right = wlr_scene_rect_create(&server->scene->tree, 0, 0, dim_color);
+
+	if (ss->dim_top != NULL) wlr_scene_node_raise_to_top(&ss->dim_top->node);
+	if (ss->dim_bottom != NULL) wlr_scene_node_raise_to_top(&ss->dim_bottom->node);
+	if (ss->dim_left != NULL) wlr_scene_node_raise_to_top(&ss->dim_left->node);
+	if (ss->dim_right != NULL) wlr_scene_node_raise_to_top(&ss->dim_right->node);
+
+	screenshot_region_update_dims(server);
+}
+
+/* main-loop handler: the encode job finished; show the OSD and record the
+ * path. Runs on the main thread, so touching the scene is safe. */
 int screenshot_job_done(int fd, uint32_t mask, void *data) {
 	struct guibux_server *server = data;
 	struct guibux_screenshot *ss = &server->screenshot;
@@ -263,14 +334,22 @@ static void screenshot_render_border(struct guibux_server *server,
 		cairo_surface_t *cs = cairo_image_surface_create_for_data(
 			data, CAIRO_FORMAT_RGB24, bw, bh, (int)stride);
 		cairo_t *cr = cairo_create(cs);
-		/* transparent inside, white 1px outline */
+		/* clear cairo surface */
 		cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
 		cairo_paint(cr);
 		cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
-		cairo_set_source_rgb(cr, 1, 1, 1);
-		cairo_set_line_width(cr, 1);
+
+		/* 1. Subtle semi-transparent red fill inside selection */
+		cairo_set_source_rgba(cr, 1.0, 0.0, 0.0, 0.1);
+		cairo_rectangle(cr, 0, 0, bw, bh);
+		cairo_fill(cr);
+
+		/* 2. Solid red 1px border */
+		cairo_set_source_rgb(cr, 1.0, 0.0, 0.0);
+		cairo_set_line_width(cr, 1.0);
 		cairo_rectangle(cr, 0.5, 0.5, bw - 1, bh - 1);
 		cairo_stroke(cr);
+
 		cairo_destroy(cr);
 		cairo_surface_destroy(cs);
 	}
@@ -340,9 +419,21 @@ static void screenshot_free_clean(struct guibux_server *server) {
 
 static void screenshot_free_overlay(struct guibux_server *server) {
 	struct guibux_screenshot *ss = &server->screenshot;
-	if (ss->dim != NULL) {
-		wlr_scene_node_destroy(&ss->dim->node);
-		ss->dim = NULL;
+	if (ss->dim_top != NULL) {
+		wlr_scene_node_destroy(&ss->dim_top->node);
+		ss->dim_top = NULL;
+	}
+	if (ss->dim_bottom != NULL) {
+		wlr_scene_node_destroy(&ss->dim_bottom->node);
+		ss->dim_bottom = NULL;
+	}
+	if (ss->dim_left != NULL) {
+		wlr_scene_node_destroy(&ss->dim_left->node);
+		ss->dim_left = NULL;
+	}
+	if (ss->dim_right != NULL) {
+		wlr_scene_node_destroy(&ss->dim_right->node);
+		ss->dim_right = NULL;
 	}
 	if (ss->sel_node != NULL) {
 		wlr_scene_node_destroy(&ss->sel_node->node);
@@ -377,11 +468,11 @@ void screenshot_region_begin(struct guibux_server *server) {
 		help_hide(server);
 	}
 
-	/* capture the clean desktop on the worker thread so that
-	 * wlr_swapchain_acquire() can safely block without deadlocking
-	 * the main loop (which must process page-flip events to free
-	 * swapchain buffers). */
-	if (!capture_output_frame_worker(server, output, &ss->clean_data,
+	/* capture the clean desktop synchronously on the main thread (before the
+	 * dim overlay is committed) so the saved image never includes the
+	 * selection UI. The read-back takes a few ms; that one-time hitch is the
+	 * price of keeping the swapchain on a single thread. */
+	if (!capture_output_frame(server, output, &ss->clean_data,
 			&ss->clean_w, &ss->clean_h, &ss->clean_stride)) {
 		wlr_log(WLR_ERROR, "screenshot: failed to capture %s",
 			output->name ? output->name : "(unknown)");
@@ -393,18 +484,7 @@ void screenshot_region_begin(struct guibux_server *server) {
 	ss->active = true;
 	ss->dragging = false;
 	ss->sel_x = ss->sel_y = ss->sel_w = ss->sel_h = 0;
-
-	struct wlr_box box;
-	wlr_output_layout_get_box(server->output_layout, output, &box);
-
-	/* dim the whole output (RGBA float, same as overview.c) */
-	float dim_color[4] = { 0, 0, 0, 0.4f };
-	ss->dim = wlr_scene_rect_create(&server->scene->tree,
-		box.width, box.height, dim_color);
-	if (ss->dim != NULL) {
-		wlr_scene_node_set_position(&ss->dim->node, box.x, box.y);
-		wlr_scene_node_raise_to_top(&ss->dim->node);
-	}
+	screenshot_region_setup_overlay(server);
 }
 
 void screenshot_region_update(struct guibux_server *server, double lx, double ly) {
@@ -445,6 +525,7 @@ void screenshot_region_update(struct guibux_server *server, double lx, double ly
 	ss->sel_y = (int)(y0 < y1 ? y0 : y1) - box.y;
 	ss->sel_w = (int)fabs(x1 - x0);
 	ss->sel_h = (int)fabs(y1 - y0);
+	screenshot_region_update_dims(server);
 	screenshot_render_border(server, ss);
 }
 
@@ -537,17 +618,22 @@ void screenshot_fullscreen(struct guibux_server *server) {
 	if (output == NULL) {
 		return;
 	}
+	char path[2048];
+	if (!build_save_path(path, sizeof(path))) {
+		osd_shot(server, "screenshot failed");
+		return;
+	}
+	/* capture on the main thread (swapchain + GPU read-back are not
+	 * thread-safe); only the PNG encode runs on the worker */
 	uint8_t *data;
 	uint32_t w, h, stride;
-	if (!capture_output_frame_worker(server, output, &data, &w, &h, &stride)) {
+	if (!capture_output_frame(server, output, &data, &w, &h, &stride)) {
 		wlr_log(WLR_ERROR, "screenshot: failed to capture %s",
 			output->name ? output->name : "(unknown)");
 		osd_shot(server, "screenshot failed");
 		return;
 	}
-	char path[2048];
-	if (build_save_path(path, sizeof(path)) &&
-			screenshot_submit_job(server, data, w, h, stride, path)) {
+	if (screenshot_submit_job(server, data, w, h, stride, path)) {
 		/* the worker owns data now and will show the OSD when done */
 		wlr_log(WLR_INFO, "screenshot: encoding fullscreen %ux%u -> %s",
 			w, h, path);
@@ -595,6 +681,10 @@ void screenshot_init(struct guibux_server *server) {
 		wlr_log(WLR_ERROR, "screenshot: failed to create job pipe: %m");
 		ss->job_pipe[0] = ss->job_pipe[1] = -1;
 		return;
+	}
+	int flags = fcntl(ss->job_pipe[0], F_GETFL, 0);
+	if (flags >= 0) {
+		fcntl(ss->job_pipe[0], F_SETFL, flags | O_NONBLOCK);
 	}
 	if (pthread_create(&ss->worker, NULL, screenshot_worker, server) != 0) {
 		wlr_log(WLR_ERROR, "screenshot: failed to start worker thread");
