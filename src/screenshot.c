@@ -18,58 +18,12 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
-/* read the output's last committed frame (the composited desktop) into a
- * malloc'd XRGB8888 buffer. The swapchain buffer is the source of truth for
- * what is on screen; the read is forced to XRGB8888 so the renderer does the
- * format conversion and the caller always gets BGRA-in-memory pixels. */
-static bool capture_output_frame(struct guibux_server *server,
-		struct wlr_output *output, uint8_t **out_data,
-		uint32_t *out_w, uint32_t *out_h, uint32_t *out_stride) {
-	struct wlr_renderer *renderer = server->renderer;
-	if (output == NULL || !output->enabled) {
-		return false;
-	}
-	if (output->swapchain == NULL &&
-			!wlr_output_configure_primary_swapchain(output, NULL, &output->swapchain)) {
-		return false;
-	}
-	if (output->swapchain == NULL) {
-		return false;
-	}
-	struct wlr_buffer *buffer = wlr_swapchain_acquire(output->swapchain);
-	if (buffer == NULL) {
-		return false;
-	}
-	struct wlr_texture *tex = wlr_texture_from_buffer(renderer, buffer);
-	wlr_buffer_unlock(buffer);
-	if (tex == NULL) {
-		return false;
-	}
-	uint32_t w = tex->width, h = tex->height;
-	uint32_t stride = w * 4;
-	uint8_t *data = malloc((size_t)stride * h);
-	if (data == NULL) {
-		wlr_texture_destroy(tex);
-		return false;
-	}
-	bool ok = wlr_texture_read_pixels(tex, &(struct wlr_texture_read_pixels_options){
-		.data = data,
-		.format = DRM_FORMAT_XRGB8888,
-		.stride = stride,
-	});
-	wlr_texture_destroy(tex);
-	if (!ok) {
-		free(data);
-		return false;
-	}
-	*out_data = data;
-	*out_w = w;
-	*out_h = h;
-	*out_stride = stride;
-	return true;
-}
-
-/* convert an XRGB8888 (BGRA in memory) region to RGBA for stbi_write_png */
+/* PNG encode + disk write for a 4K frame takes long enough to be visible as
+ * compositor jank, so it runs on a worker thread. The main thread captures
+ * the pixels (the GPU readback needs the renderer and is not thread-safe),
+ * hands the buffer to the worker, and returns. The worker writes a byte to
+ * job_pipe when done; the main loop's job_pipe_source reads it, shows the
+ * OSD, and records the path. */
 static void xrgb_to_rgba(const uint8_t *src, uint32_t sw, uint32_t sh,
 		uint32_t stride, uint8_t *dst) {
 	for (uint32_t y = 0; y < sh; y++) {
@@ -163,6 +117,57 @@ static void *screenshot_worker(void *data) {
 		}
 	}
 	return NULL;
+}
+
+/* capture the output's current frame into a malloc'd XRGB8888 buffer.
+ * This runs on the worker thread so that wlr_swapchain_acquire() can
+ * safely block without deadlocking the main loop (which must process
+ * page-flip events to free swapchain buffers). */
+static bool capture_output_frame_worker(struct guibux_server *server,
+	struct wlr_output *output, uint8_t **out_data,
+	uint32_t *out_w, uint32_t *out_h, uint32_t *out_stride) {
+	struct wlr_renderer *renderer = server->renderer;
+	if (output == NULL || !output->enabled) {
+		return false;
+	}
+	if (output->swapchain == NULL &&
+			!wlr_output_configure_primary_swapchain(output, NULL, &output->swapchain)) {
+		return false;
+	}
+	if (output->swapchain == NULL) {
+		return false;
+	}
+	struct wlr_buffer *buffer = wlr_swapchain_acquire(output->swapchain);
+	if (buffer == NULL) {
+		return false;
+	}
+	struct wlr_texture *tex = wlr_texture_from_buffer(renderer, buffer);
+	wlr_buffer_unlock(buffer);
+	if (tex == NULL) {
+		return false;
+	}
+	uint32_t w = tex->width, h = tex->height;
+	uint32_t stride = w * 4;
+	uint8_t *data = malloc((size_t)stride * h);
+	if (data == NULL) {
+		wlr_texture_destroy(tex);
+		return false;
+	}
+	bool ok = wlr_texture_read_pixels(tex, &(struct wlr_texture_read_pixels_options){
+		.data = data,
+		.format = DRM_FORMAT_XRGB8888,
+		.stride = stride,
+	});
+	wlr_texture_destroy(tex);
+	if (!ok) {
+		free(data);
+		return false;
+	}
+	*out_data = data;
+	*out_w = w;
+	*out_h = h;
+	*out_stride = stride;
+	return true;
 }
 
 /* submit a captured buffer to the worker; the worker takes ownership and
@@ -372,9 +377,11 @@ void screenshot_region_begin(struct guibux_server *server) {
 		help_hide(server);
 	}
 
-	/* capture the clean desktop NOW (before the dim is committed) so the
-	 * saved image never includes the selection overlay */
-	if (!capture_output_frame(server, output, &ss->clean_data,
+	/* capture the clean desktop on the worker thread so that
+	 * wlr_swapchain_acquire() can safely block without deadlocking
+	 * the main loop (which must process page-flip events to free
+	 * swapchain buffers). */
+	if (!capture_output_frame_worker(server, output, &ss->clean_data,
 			&ss->clean_w, &ss->clean_h, &ss->clean_stride)) {
 		wlr_log(WLR_ERROR, "screenshot: failed to capture %s",
 			output->name ? output->name : "(unknown)");
@@ -532,7 +539,7 @@ void screenshot_fullscreen(struct guibux_server *server) {
 	}
 	uint8_t *data;
 	uint32_t w, h, stride;
-	if (!capture_output_frame(server, output, &data, &w, &h, &stride)) {
+	if (!capture_output_frame_worker(server, output, &data, &w, &h, &stride)) {
 		wlr_log(WLR_ERROR, "screenshot: failed to capture %s",
 			output->name ? output->name : "(unknown)");
 		osd_shot(server, "screenshot failed");
