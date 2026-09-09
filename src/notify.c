@@ -1245,6 +1245,6 @@ int notify_test_run(void *data) {
 		}
 		return 0;
 	}
-	wl_event_source_timer_update(server->notify_test_timer, 500);
+	wl_event_source_timer_update(server->tests.notify_test_timer, 500);
 	return 0;
 }

@@ -10,15 +10,11 @@
 // cache: open-addressing hash of the advance width per codepoint for
 // the current font size; cp 0 marks an empty slot (NUL is never
 // measured). A linear scan here is O(cps^2 * cache) for title
-// truncation
-#define CHAR_CACHE_SIZE 512
-static uint32_t char_cache_cp[CHAR_CACHE_SIZE];
-static int char_cache_w[CHAR_CACHE_SIZE];
-static int char_width_cache_size = -1;
+// truncation. The cache lives in the launcher struct (single-threaded).
 
-static void invalidate_char_width_cache(void) {
-	memset(char_cache_cp, 0, sizeof(char_cache_cp));
-	char_width_cache_size = -1;
+static void invalidate_char_width_cache(struct guibux_launcher *l) {
+	memset(l->char_cache_cp, 0, sizeof(l->char_cache_cp));
+	l->char_width_cache_size = -1;
 }
 
 // decode one UTF-8 codepoint, advance *p past it
@@ -65,21 +61,23 @@ void utf8_truncate(const char *src, char *dst, size_t dst_size, int max_cp) {
 	dst[n] = '\0';
 }
 
-static int char_advance_width(FT_Face face, uint32_t cp, int font_size) {
-	if (font_size != char_width_cache_size) {
-		invalidate_char_width_cache();
-		char_width_cache_size = font_size;
+static int char_advance_width(struct guibux_launcher *l, uint32_t cp,
+		int font_size) {
+	if (font_size != l->char_width_cache_size) {
+		invalidate_char_width_cache(l);
+		l->char_width_cache_size = font_size;
 	}
 	int i = (int)((uint32_t)cp * 2654435761u & (CHAR_CACHE_SIZE - 1));
 	for (int probe = 0; probe < 8; probe++) {
 		int slot = (i + probe) & (CHAR_CACHE_SIZE - 1);
-		if (char_cache_cp[slot] == cp) {
-			return char_cache_w[slot];
+		if (l->char_cache_cp[slot] == cp) {
+			return l->char_cache_w[slot];
 		}
-		if (char_cache_cp[slot] == 0) {
+		if (l->char_cache_cp[slot] == 0) {
 			break;
 		}
 	}
+	FT_Face face = l->face;
 	FT_UInt glyph = FT_Get_Char_Index(face, cp);
 	if (glyph == 0 || FT_Load_Glyph(face, glyph, FT_LOAD_RENDER) != 0) {
 		return 0;
@@ -87,9 +85,9 @@ static int char_advance_width(FT_Face face, uint32_t cp, int font_size) {
 	int w = face->glyph->advance.x / 64;
 	for (int probe = 0; probe < 8; probe++) {
 		int slot = (i + probe) & (CHAR_CACHE_SIZE - 1);
-		if (char_cache_cp[slot] == 0) {
-			char_cache_cp[slot] = cp;
-			char_cache_w[slot] = w;
+		if (l->char_cache_cp[slot] == 0) {
+			l->char_cache_cp[slot] = cp;
+			l->char_cache_w[slot] = w;
 			break;
 		}
 	}
@@ -98,10 +96,24 @@ static int char_advance_width(FT_Face face, uint32_t cp, int font_size) {
 
 int guibux_text_width(FT_Face face, const char *text) {
 	int w = 0;
-	int font_size = face->size->metrics.height / 64;
 	const char *p = text;
 	while (*p) {
-		w += char_advance_width(face, utf8_next(&p), font_size);
+		FT_UInt glyph = FT_Get_Char_Index(face, utf8_next(&p));
+		if (glyph != 0 && FT_Load_Glyph(face, glyph, FT_LOAD_RENDER) == 0) {
+			w += face->glyph->advance.x / 64;
+		}
+	}
+	return w;
+}
+
+/* cached variant: uses the launcher's char-width cache (single-threaded) */
+static int guibux_text_width_cached(struct guibux_launcher *l,
+		const char *text) {
+	int w = 0;
+	int font_size = l->face->size->metrics.height / 64;
+	const char *p = text;
+	while (*p) {
+		w += char_advance_width(l, utf8_next(&p), font_size);
 	}
 	return w;
 }
@@ -428,7 +440,7 @@ static void topbar_item_draw_separator(struct topbar_items *ctx, int x, int gap)
  * must use the same value so hit rects and layout stay in sync */
 static int topbar_item_width(struct topbar_items *ctx, const char *icon,
 		const char *text) {
-	int w = guibux_text_width(ctx->server->launcher.face, text) / ctx->scale;
+	int w = guibux_text_width_cached(&ctx->server->launcher, text) / ctx->scale;
 	if (icon != NULL) {
 		if (resolve_icon(icon) != NULL) {
 			w += ctx->icon_size + TOPBAR_ICON_GAP;
@@ -453,7 +465,7 @@ static int topbar_item_draw(struct topbar_items *ctx, const char *icon,
 	}
 	launcher_draw_text_on_surface(ctx->cs, ctx->server->launcher.face,
 		text, cx * ctx->scale, ctx->baseline, color);
-	return (cx - x) + guibux_text_width(ctx->server->launcher.face,
+	return (cx - x) + guibux_text_width_cached(&ctx->server->launcher,
 		text) / ctx->scale;
 }
 
@@ -762,12 +774,12 @@ static void topbar_pills_draw(struct guibux_output *o, cairo_t *cr,
 		char mon = wo != NULL ? 'A' + (wo->topbar_number - 1) : 'A';
 		char prefix[8];
 		snprintf(prefix, sizeof(prefix), "%c%d: ", mon, wins[i]->workspace);
-		int pw = guibux_text_width(server->launcher.face, prefix) / scale;
+		int pw = guibux_text_width_cached(&server->launcher, prefix) / scale;
 		int budget = max_w - 16 - pw;
 		if (budget < 0)
 			budget = 0;
 		char tbuf[64];
-		int tw = guibux_text_width(server->launcher.face, title) / scale;
+		int tw = guibux_text_width_cached(&server->launcher, title) / scale;
 		if (tw > budget) {
 			int cps = 0;
 			const char *p = title;
@@ -779,7 +791,7 @@ static void topbar_pills_draw(struct guibux_output *o, cairo_t *cr,
 				utf8_truncate(title, tbuf, sizeof(tbuf), trunc);
 				size_t n = strlen(tbuf);
 				snprintf(tbuf + n, sizeof(tbuf) - n, "...");
-				tw = guibux_text_width(server->launcher.face, tbuf) / scale;
+				tw = guibux_text_width_cached(&server->launcher, tbuf) / scale;
 				if (tw <= budget)
 					break;
 			}
@@ -793,7 +805,7 @@ static void topbar_pills_draw(struct guibux_output *o, cairo_t *cr,
 		}
 		char buf[72];
 		snprintf(buf, sizeof(buf), "%s%s", prefix, tbuf);
-		tw = guibux_text_width(server->launcher.face, buf) / scale;
+		tw = guibux_text_width_cached(&server->launcher, buf) / scale;
 		int pill_w = tw + 16;
 		if (pill_w > max_w)
 			pill_w = max_w;
@@ -996,7 +1008,7 @@ static void topbar_render_clock(struct guibux_output *o) {
 	/* right-align to match the full render: the text ends at the bar's right
 	 * edge minus the topbar padding (guibux_text_width is in device px at
 	 * the scaled font size) */
-	int text_w = guibux_text_width(server->launcher.face, o->topbar_right);
+	int text_w = guibux_text_width_cached(&server->launcher, o->topbar_right);
 	int text_x = w - TOPBAR_PAD * guibux_scale_round(o->wlr_output->scale) - text_w;
 	if (text_x < cx) {
 		text_x = cx;
@@ -1048,12 +1060,12 @@ void topbar_render(struct guibux_output *o) {
 			o->topbar_buffer_h != h) {
 		wlr_buffer_drop(o->topbar_buffer);
 		o->topbar_buffer = NULL;
-	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-	struct wlr_drm_format format = {
-		.format = DRM_FORMAT_XRGB8888,
-		.len = 1,
-		.modifiers = mods,
-	};
+		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
+		struct wlr_drm_format format = {
+			.format = DRM_FORMAT_XRGB8888,
+			.len = 1,
+			.modifiers = mods,
+		};
 		o->topbar_buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
 			w, h, &format);
 		if (o->topbar_buffer == NULL) {
@@ -1126,7 +1138,7 @@ void topbar_render(struct guibux_output *o) {
 	snprintf(left, sizeof(left), "%c", 'A' + (o->topbar_number - 1));
 	/* monitor badge: rounded rect with subtle fill behind the letter */
 	int badge_pad = 5;
-	int badge_w = guibux_text_width(server->launcher.face, left) / scale
+	int badge_w = guibux_text_width_cached(&server->launcher, left) / scale
 		+ 2 * badge_pad;
 	o->topbar_badge_x = TOPBAR_PAD;
 	o->topbar_badge_w = badge_w;
@@ -1274,7 +1286,7 @@ void topbar_render(struct guibux_output *o) {
 	bool draw_items = (server->topbar_items_output == 0 ||
 			server->topbar_items_output == o->topbar_number);
 	int date_w = (ctx.clock_enabled && draw_items) ?
-		guibux_text_width(server->launcher.face, o->topbar_right) / scale : 0;
+		guibux_text_width_cached(&server->launcher, o->topbar_right) / scale : 0;
 	/* topbar_items_output restricts indicators + clock to one monitor */
 	if (!draw_items) {
 		ind_w = 0;

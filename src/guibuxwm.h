@@ -755,6 +755,8 @@ struct guibux_lock {
 	struct wl_event_source *tick;
 };
 
+#define CHAR_CACHE_SIZE 512
+
 struct guibux_launcher {
 	bool active;
 	char text[512];
@@ -766,6 +768,10 @@ struct guibux_launcher {
 	struct wlr_allocator *shm_alloc;
 	FT_Library ft;
 	FT_Face face;
+	/* char-width cache (keyed by codepoint, single-threaded) */
+	uint32_t char_cache_cp[CHAR_CACHE_SIZE];
+	int char_cache_w[CHAR_CACHE_SIZE];
+	int char_width_cache_size;
 	struct wl_event_source *test_timer;
 	char icon_theme[64];
 
@@ -795,6 +801,35 @@ struct guibux_ws_drag {
 	int target_ws;
 	double press_x, press_y;
 	double last_x, last_y;
+};
+
+struct guibux_server_tests {
+	struct wl_event_source *tile_test_timer;
+	struct wl_event_source *topbar_test_timer;
+	struct wl_event_source *audio_test_timer;
+	struct wl_event_source *battery_test_timer;
+	struct wl_event_source *scroll_test_timer;
+	struct wl_event_source *altdrag_test_timer;
+	struct wl_event_source *workspace_test_timer;
+	struct wl_event_source *outputs_test_timer;
+	struct wl_event_source *outputs_panel_test_timer;
+	struct wl_event_source *keybind_test_timer;
+	struct wl_event_source *overview_test_timer;
+	struct wl_event_source *psel_test_timer;
+	struct wl_event_source *resize_test_timer;
+	struct wl_event_source *xmondrag_test_timer;
+	struct wl_event_source *always_on_top_test_timer;
+	struct wl_event_source *notify_test_timer;
+	struct wl_event_source *tooltip_test_timer;
+	struct wl_event_source *osd_test_timer;
+	struct wl_event_source *power_test_timer;
+	struct wl_event_source *lock_test_timer;
+	struct wl_event_source *topbar_items_test_timer;
+	struct wl_event_source *quit_test_timer;
+	struct wl_event_source *screenshot_test_timer;
+	struct wl_event_source *global_topbar_test_timer;
+	struct wl_event_source *effects_test_timer;
+	bool psel_test_enter_sent;
 };
 
 struct guibux_server {
@@ -886,31 +921,8 @@ struct guibux_server {
 	struct wl_event_source *config_signal_source;   /* SIGHUP = reload config */
 	struct wl_event_source *shutdown_signal_source; /* SIGTERM/SIGINT = clean exit */
 
-	struct wl_event_source *tile_test_timer;
+	struct guibux_server_tests tests;
 	struct wl_event_source *topbar_timer;
-	struct wl_event_source *topbar_test_timer;
-	struct wl_event_source *audio_test_timer;
-	struct wl_event_source *battery_test_timer;
-	struct wl_event_source *scroll_test_timer;
-	struct wl_event_source *altdrag_test_timer;
-	struct wl_event_source *workspace_test_timer;
-	struct wl_event_source *outputs_test_timer;
-	struct wl_event_source *outputs_panel_test_timer;
-	struct wl_event_source *keybind_test_timer;
-	struct wl_event_source *overview_test_timer;
-	struct wl_event_source *psel_test_timer;
-	struct wl_event_source *resize_test_timer;
-	struct wl_event_source *xmondrag_test_timer;
-	struct wl_event_source *always_on_top_test_timer;
-	struct wl_event_source *notify_test_timer;
-	struct wl_event_source *tooltip_test_timer;
-	struct wl_event_source *osd_test_timer;
-	struct wl_event_source *power_test_timer;
-	struct wl_event_source *lock_test_timer;
-    struct wl_event_source *topbar_items_test_timer;
-    struct wl_event_source *quit_test_timer;
-    struct wl_event_source *screenshot_test_timer;
-    struct wl_event_source *global_topbar_test_timer;
 	bool psel_test_enter_sent;
 struct guibux_launcher launcher;
     struct guibux_sysinfo sysinfo;
@@ -960,7 +972,6 @@ struct guibux_launcher launcher;
     bool osd_enabled;
     int osd_timeout_ms;
     struct guibux_effects effects;
-    struct wl_event_source *effects_test_timer;
 
     /* window position persistence: last position per app, saved on
      * unmap, restored on map; terminal windows are excluded */

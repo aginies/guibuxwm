@@ -304,6 +304,50 @@ static void parse_preferred_app(struct guibux_server *server, int idx,
 	free(icon_raw);
 }
 
+/* parse a config line into key and value; returns false for
+ * blank/comment/malformed lines. path may be NULL to suppress errors */
+static bool config_parse_line(char *line, const char *path, int lineno,
+		char **out_key, char **out_val) {
+	char *p = line;
+	while (*p == ' ' || *p == '\t') {
+		p++;
+	}
+	if (*p == '\0' || *p == '#' || *p == '\n') {
+		return false;
+	}
+	char *eq = strchr(p, '=');
+	if (eq == NULL) {
+		if (path != NULL) {
+			wlr_log(WLR_ERROR, "config: %s:%d: expected 'key = value'", path, lineno);
+		}
+		return false;
+	}
+	*eq = '\0';
+	char *key = p;
+	char *val = eq + 1;
+	char *end = key + strlen(key);
+	while (end > key && (end[-1] == ' ' || end[-1] == '\t')) {
+		*--end = '\0';
+	}
+	while (*val == ' ' || *val == '\t') {
+		val++;
+	}
+	end = val + strlen(val);
+	while (end > val && (end[-1] == ' ' || end[-1] == '\t' ||
+			end[-1] == '\n' || end[-1] == '\r')) {
+		*--end = '\0';
+	}
+	if (*key == '\0' || *val == '\0') {
+		if (path != NULL) {
+			wlr_log(WLR_ERROR, "config: %s:%d: empty key or value", path, lineno);
+		}
+		return false;
+	}
+	*out_key = key;
+	*out_val = val;
+	return true;
+}
+
 void load_config(struct guibux_server *server, const char *path) {
 	FILE *f = fopen(path, "r");
 	if (f == NULL) {
@@ -317,39 +361,30 @@ void load_config(struct guibux_server *server, const char *path) {
 	int lineno = 0;
 	while (fgets(line, sizeof(line), f) != NULL) {
 		lineno++;
-		char *p = line;
-		while (*p == ' ' || *p == '\t') {
-			p++;
-		}
-		if (*p == '\0' || *p == '#' || *p == '\n') {
-			continue;
-		}
-		char *eq = strchr(p, '=');
-		if (eq == NULL) {
-			wlr_log(WLR_ERROR, "config: %s:%d: expected 'key = value'", path, lineno);
-			continue;
-		}
-		*eq = '\0';
-		char *key = p;
-		char *val = eq + 1;
-		char *end = key + strlen(key);
-		while (end > key && (end[-1] == ' ' || end[-1] == '\t')) {
-			*--end = '\0';
-		}
-		while (*val == ' ' || *val == '\t') {
-			val++;
-		}
-		end = val + strlen(val);
-		while (end > val && (end[-1] == ' ' || end[-1] == '\t' ||
-				end[-1] == '\n' || end[-1] == '\r')) {
-			*--end = '\0';
-		}
-		if (*key == '\0' || *val == '\0') {
-			wlr_log(WLR_ERROR, "config: %s:%d: empty key or value", path, lineno);
+		char *key, *val;
+		if (!config_parse_line(line, path, lineno, &key, &val)) {
 			continue;
 		}
 
-		if (!strcmp(key, "term")) {
+		uint32_t *color_target = NULL;
+		if (!strcmp(key, "color_bg")) color_target = &server->color_bg;
+		else if (!strcmp(key, "color_border")) color_target = &server->color_border;
+		else if (!strcmp(key, "color_highlight")) color_target = &server->color_highlight;
+		else if (!strcmp(key, "color_text")) color_target = &server->color_text;
+		else if (!strcmp(key, "color_dim")) color_target = &server->color_dim;
+		else if (!strcmp(key, "topbar_bg")) color_target = &server->color_topbar_bg;
+		else if (!strcmp(key, "topbar_text")) color_target = &server->color_topbar_text;
+		else if (!strcmp(key, "topbar_bg2")) color_target = &server->color_topbar_bg2;
+		else if (!strcmp(key, "color_accent")) color_target = &server->color_accent;
+		else if (!strcmp(key, "window_border_color")) color_target = &server->window_border_color;
+
+		if (color_target != NULL) {
+			if (parse_color(val, color_target)) {
+				wlr_log(WLR_INFO, "config: %s = %s", key, val);
+			} else {
+				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
+			}
+		} else if (!strcmp(key, "term")) {
 			free(server->term_cmd);
 			server->term_cmd = strdup(val);
 			wlr_log(WLR_INFO, "config: term = %s", val);
@@ -371,54 +406,6 @@ void load_config(struct guibux_server *server, const char *path) {
 			wlr_log(WLR_INFO, "config: xkb_options = %s", val);
 		} else if (!strcmp(key, "keybind")) {
 			parse_keybind(server, val);
-		} else if (!strcmp(key, "color_bg")) {
-			if (parse_color(val, &server->color_bg)) {
-				wlr_log(WLR_INFO, "config: color_bg = %s", val);
-			} else {
-				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
-			}
-		} else if (!strcmp(key, "color_border")) {
-			if (parse_color(val, &server->color_border)) {
-				wlr_log(WLR_INFO, "config: color_border = %s", val);
-			} else {
-				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
-			}
-		} else if (!strcmp(key, "color_highlight")) {
-			if (parse_color(val, &server->color_highlight)) {
-				wlr_log(WLR_INFO, "config: color_highlight = %s", val);
-			} else {
-				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
-			}
-		} else if (!strcmp(key, "color_text")) {
-			if (parse_color(val, &server->color_text)) {
-				wlr_log(WLR_INFO, "config: color_text = %s", val);
-			} else {
-				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
-			}
-		} else if (!strcmp(key, "color_dim")) {
-			if (parse_color(val, &server->color_dim)) {
-				wlr_log(WLR_INFO, "config: color_dim = %s", val);
-			} else {
-				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
-			}
-		} else if (!strcmp(key, "topbar_bg")) {
-			if (parse_color(val, &server->color_topbar_bg)) {
-				wlr_log(WLR_INFO, "config: topbar_bg = %s", val);
-			} else {
-				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
-			}
-		} else if (!strcmp(key, "topbar_text")) {
-			if (parse_color(val, &server->color_topbar_text)) {
-				wlr_log(WLR_INFO, "config: topbar_text = %s", val);
-			} else {
-				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
-			}
-		} else if (!strcmp(key, "topbar_bg2")) {
-			if (parse_color(val, &server->color_topbar_bg2)) {
-				wlr_log(WLR_INFO, "config: topbar_bg2 = %s", val);
-			} else {
-				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
-			}
 		} else if (!strcmp(key, "topbar_gradient")) {
 			server->topbar_gradient = atoi(val);
 			wlr_log(WLR_INFO, "config: topbar_gradient = %d", server->topbar_gradient);
@@ -428,24 +415,12 @@ void load_config(struct guibux_server *server, const char *path) {
 				server->topbar_alpha = 217;
 			}
 			wlr_log(WLR_INFO, "config: topbar_alpha = %d", server->topbar_alpha);
-		} else if (!strcmp(key, "color_accent")) {
-			if (parse_color(val, &server->color_accent)) {
-				wlr_log(WLR_INFO, "config: color_accent = %s", val);
-			} else {
-				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
-			}
 		} else if (!strcmp(key, "window_border_width")) {
 			server->window_border_width = atoi(val);
 			if (server->window_border_width < 0 || server->window_border_width > 8) {
 				server->window_border_width = 2;
 			}
 			wlr_log(WLR_INFO, "config: window_border_width = %d", server->window_border_width);
-		} else if (!strcmp(key, "window_border_color")) {
-			if (parse_color(val, &server->window_border_color)) {
-				wlr_log(WLR_INFO, "config: window_border_color = %s", val);
-			} else {
-				wlr_log(WLR_ERROR, "config: %s:%d: bad color '%s' (expected #rrggbb)", path, lineno, val);
-			}
 		} else if (!strcmp(key, "overview_dim_alpha")) {
 			server->overview_dim_alpha = atoi(val);
 			if (server->overview_dim_alpha < 0 || server->overview_dim_alpha > 255) {
@@ -614,8 +589,9 @@ void load_config(struct guibux_server *server, const char *path) {
 			char *copy = strdup(val);
 			char *icon_val = NULL;
 			if (copy) {
+				char *first_semi = strchr(copy, ';');
 				char *last_semi = strrchr(copy, ';');
-				if (last_semi) {
+				if (first_semi != NULL && first_semi != last_semi) {
 					*last_semi = '\0';
 					icon_val = trim(last_semi + 1);
 					if (icon_val[0] == '\0') icon_val = NULL;
@@ -735,31 +711,9 @@ char *config_read_outputs_line(const char *path) {
 	char line[512];
 	char *result = NULL;
 	while (fgets(line, sizeof(line), f) != NULL) {
-		char *p = line;
-		while (*p == ' ' || *p == '\t') {
-			p++;
-		}
-		if (*p == '\0' || *p == '#' || *p == '\n') {
+		char *key, *val;
+		if (!config_parse_line(line, NULL, 0, &key, &val)) {
 			continue;
-		}
-		char *eq = strchr(p, '=');
-		if (eq == NULL) {
-			continue;
-		}
-		*eq = '\0';
-		char *key = p;
-		char *val = eq + 1;
-		char *end = key + strlen(key);
-		while (end > key && (end[-1] == ' ' || end[-1] == '\t')) {
-			*--end = '\0';
-		}
-		while (*val == ' ' || *val == '\t') {
-			val++;
-		}
-		end = val + strlen(val);
-		while (end > val && (end[-1] == ' ' || end[-1] == '\t' ||
-				end[-1] == '\n' || end[-1] == '\r')) {
-			*--end = '\0';
 		}
 		if (!strcmp(key, "outputs")) {
 			result = strdup(val);

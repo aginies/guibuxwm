@@ -296,12 +296,12 @@ void focus_toplevel(struct guibux_toplevel *toplevel, bool raise) {
 		wlr_seat_keyboard_notify_enter(seat, surface,
 			keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
 	}
-	struct guibux_output *fo = guibux_output_for(server,
+	struct guibux_output *o = guibux_output_for(server,
 		toplevel_output_for(toplevel));
-	if (fo) {
+	if (o) {
 		/* only the active pill moved: the fast path redraws just the
 		 * window-pill region, no full-bar repaint */
-		fo->topbar_focus_dirty = true;
+		o->topbar_focus_dirty = true;
 		/* the pill list is global: a focus change on one monitor must
 		 * update the pill highlight on every bar. The fast path redraws
 		 * only the pill + minimap region, so other monitors stay cheap
@@ -309,7 +309,7 @@ void focus_toplevel(struct guibux_toplevel *toplevel, bool raise) {
 		 * focus_follow_mouse) */
 		struct guibux_output *bo;
 		wl_list_for_each(bo, &server->outputs, link) {
-			if (bo != fo) {
+			if (bo != o) {
 				bo->topbar_focus_dirty = true;
 			}
 		}
@@ -416,6 +416,77 @@ void begin_interactive(struct guibux_toplevel *toplevel,
 // xdg_toplevel lifecycle
 // ---------------------------------------------------------------------------
 
+/* common map logic shared by xdg and xwayland toplevels: insert into the
+ * toplevel list, apply restore, place/retile, focus, mark topbar dirty,
+ * start the open effect */
+static void focus_after_unmap(struct guibux_server *server);
+static void toplevel_map_common(struct guibux_toplevel *toplevel) {
+	struct guibux_server *server = toplevel->server;
+	wl_list_insert(&server->toplevels, &toplevel->link);
+
+	struct wlr_output *output = output_at_cursor(server);
+	struct guibux_output *o = output != NULL
+		? guibux_output_for(server, output) : NULL;
+	enum restore_result rr = restore_apply(server, toplevel);
+	if (rr != RESTORE_FREE) {
+		o = toplevel->output != NULL
+			? toplevel->output
+			: (output != NULL
+				? guibux_output_for(server, output) : NULL);
+		toplevel->output = o;
+		toplevel->workspace = o != NULL ? o->current_workspace : 1;
+		if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
+			struct wlr_box box;
+			wlr_output_layout_get_box(server->output_layout,
+				o->wlr_output, &box);
+			wlr_scene_node_set_position(&toplevel->scene_tree->node, box.x, box.y);
+			retile_output(o);
+		} else {
+			place_toplevel(toplevel);
+		}
+	}
+	focus_toplevel(toplevel, true);
+	struct guibux_output *o2 = guibux_output_for(server,
+		toplevel_output_for(toplevel));
+	if (o2)
+		topbar_mark_dirty(o2);
+	effects_window_open(toplevel);
+}
+
+/* common unmap logic shared by xdg and xwayland toplevels */
+static void toplevel_unmap_common(struct guibux_toplevel *toplevel) {
+	struct guibux_server *server = toplevel->server;
+
+	if (server->overview.active) {
+		overview_hide(server);
+	}
+
+	restore_save(server, toplevel);
+
+	if (toplevel == server->grabbed_toplevel) {
+		reset_cursor_mode(server);
+	}
+
+	struct guibux_output *o = guibux_output_for(server,
+		toplevel_output_for(toplevel));
+	toplevel->open_effect_pending = false;
+	wl_list_remove(&toplevel->link);
+	switcher_on_unmap(server, toplevel);
+	topbar_win_remove(o, toplevel);
+	if (o != NULL) {
+		effects_window_closed(toplevel, o);
+	}
+	topbar_mark_dirty(o);
+	struct guibux_output *bo;
+	wl_list_for_each(bo, &server->outputs, link) {
+		if (bo != o) {
+			topbar_mark_dirty(bo);
+		}
+	}
+
+	focus_after_unmap(server);
+}
+
 /* the scene tree is owned by wlroots (xdg) or destroyed on
  * dissociate (xwayland): track its death so a dangling scene_tree
  * pointer can never be used (effects anims, hit testing) */
@@ -480,38 +551,8 @@ void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	wlr_log(WLR_INFO, "mapped toplevel '%s'",
 		toplevel->xdg_toplevel->title ? toplevel->xdg_toplevel->title : "(untitled)");
 
-	wl_list_insert(&toplevel->server->toplevels, &toplevel->link);
+	toplevel_map_common(toplevel);
 
-	struct wlr_output *output = output_at_cursor(toplevel->server);
-	struct guibux_output *o = output != NULL
-		? guibux_output_for(toplevel->server, output) : NULL;
-	enum restore_result rr = restore_apply(toplevel->server, toplevel);
-	if (rr != RESTORE_FREE) {
-		/* restore_apply may have switched the saved output's workspace
-		 * and set toplevel->output: it is authoritative for both the
-		 * tile and the free result, so re-derive o from it (the cursor
-		 * output captured above is stale after a workspace switch) */
-		o = toplevel->output != NULL
-			? toplevel->output
-			: (output != NULL
-				? guibux_output_for(toplevel->server, output) : NULL);
-		toplevel->output = o;
-		toplevel->workspace = o != NULL ? o->current_workspace : 1;
-		if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
-			struct wlr_box box;
-			wlr_output_layout_get_box(toplevel->server->output_layout,
-				o->wlr_output, &box);
-			wlr_scene_node_set_position(&toplevel->scene_tree->node, box.x, box.y);
-			retile_output(o);
-		} else {
-			place_toplevel(toplevel);
-		}
-	}
-	focus_toplevel(toplevel, true);
-	struct guibux_output *o2 = guibux_output_for(toplevel->server,
-		toplevel_output_for(toplevel));
-	if (o2)
-		topbar_mark_dirty(o2);
 	/* tell fractional-scale clients the output's scale so they can
 	 * render at 1.5x/1.25x instead of being forced to integer */
 	if (toplevel->xdg_toplevel->base->surface != NULL &&
@@ -520,7 +561,6 @@ void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 			toplevel->xdg_toplevel->base->surface,
 			toplevel_output_for(toplevel)->scale);
 	}
-	effects_window_open(toplevel);
 }
 
 /* Pick a visible toplevel to focus after one was unmapped; the
@@ -543,39 +583,8 @@ static void focus_after_unmap(struct guibux_server *server) {
 
 void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, unmap);
-	struct guibux_server *server = toplevel->server;
 
-	if (server->overview.active) {
-		overview_hide(server);
-	}
-
-	/* remember the final position for the next launch */
-	restore_save(server, toplevel);
-
-	if (toplevel == server->grabbed_toplevel) {
-		reset_cursor_mode(server);
-	}
-
-	struct guibux_output *o = guibux_output_for(server,
-		toplevel_output_for(toplevel));
-	toplevel->open_effect_pending = false;
-	wl_list_remove(&toplevel->link);
-	switcher_on_unmap(server, toplevel);
-	topbar_win_remove(o, toplevel);
-	if (o != NULL) {
-		effects_window_closed(toplevel, o);
-	}
-	topbar_mark_dirty(o);
-	/* the pill list is global: the removed window must vanish from
-	 * every bar, not just its own */
-	struct guibux_output *bo;
-	wl_list_for_each(bo, &server->outputs, link) {
-		if (bo != o) {
-			topbar_mark_dirty(bo);
-		}
-	}
-
-	focus_after_unmap(server);
+	toplevel_unmap_common(toplevel);
 }
 
 void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
@@ -642,10 +651,10 @@ void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 		toplevel->border_buffer = NULL;
 	}
 
-	struct guibux_output *fo = guibux_output_for(toplevel->server,
+	struct guibux_output *o = guibux_output_for(toplevel->server,
 		toplevel_output_for(toplevel));
-	if (fo)
-		topbar_mark_dirty(fo);
+	if (o)
+		topbar_mark_dirty(o);
 
 	if (toplevel->server->last_ffm_toplevel == toplevel) {
 		toplevel->server->last_ffm_toplevel = NULL;
@@ -941,84 +950,21 @@ static void xsurface_map(struct wl_listener *listener, void *data) {
 		return;
 	}
 
-	wl_list_insert(&toplevel->server->toplevels, &toplevel->link);
 	toplevel->initial_commit = true;
-
-	struct wlr_output *output = output_at_cursor(toplevel->server);
-	struct guibux_output *o = output != NULL
-		? guibux_output_for(toplevel->server, output) : NULL;
-	enum restore_result rr = restore_apply(toplevel->server, toplevel);
-	if (rr != RESTORE_FREE) {
-		/* restore_apply may have switched the saved output's workspace
-		 * and set toplevel->output: it is authoritative for both the
-		 * tile and the free result, so re-derive o from it (the cursor
-		 * output captured above is stale after a workspace switch) */
-		o = toplevel->output != NULL
-			? toplevel->output
-			: (output != NULL
-				? guibux_output_for(toplevel->server, output) : NULL);
-		toplevel->output = o;
-		toplevel->workspace = o != NULL ? o->current_workspace : 1;
-		if (o != NULL && o->tile_modes[o->current_workspace] != GUIBUX_TILE_FREE) {
-			struct wlr_box box;
-			wlr_output_layout_get_box(toplevel->server->output_layout,
-				o->wlr_output, &box);
-			wlr_scene_node_set_position(&toplevel->scene_tree->node, box.x, box.y);
-			retile_output(o);
-		} else {
-			place_toplevel(toplevel);
-		}
-	}
-	focus_toplevel(toplevel, true);
+	toplevel_map_common(toplevel);
 	if (xsurface->fullscreen) {
 		set_fullscreen(toplevel, true, NULL);
 	}
-	struct guibux_output *o2 = guibux_output_for(toplevel->server,
-		toplevel_output_for(toplevel));
-	if (o2)
-		topbar_mark_dirty(o2);
-	effects_window_open(toplevel);
 }
 
 static void xsurface_unmap(struct wl_listener *listener, void *data) {
 	struct guibux_toplevel *toplevel = wl_container_of(listener, toplevel, unmap);
-	struct guibux_server *server = toplevel->server;
 
 	if (!toplevel->managed) {
 		return;
 	}
 
-	if (server->overview.active) {
-		overview_hide(server);
-	}
-
-	/* remember the final position for the next launch */
-	restore_save(server, toplevel);
-
-	if (toplevel == server->grabbed_toplevel) {
-		reset_cursor_mode(server);
-	}
-
-	struct guibux_output *o = guibux_output_for(server,
-		toplevel_output_for(toplevel));
-	toplevel->open_effect_pending = false;
-	wl_list_remove(&toplevel->link);
-	switcher_on_unmap(server, toplevel);
-	topbar_win_remove(o, toplevel);
-	if (o != NULL) {
-		effects_window_closed(toplevel, o);
-	}
-	topbar_mark_dirty(o);
-	/* the pill list is global: the removed window must vanish from
-	 * every bar, not just its own */
-	struct guibux_output *bo;
-	wl_list_for_each(bo, &server->outputs, link) {
-		if (bo != o) {
-			topbar_mark_dirty(bo);
-		}
-	}
-
-	focus_after_unmap(server);
+	toplevel_unmap_common(toplevel);
 }
 
 static void xsurface_commit(struct wl_listener *listener, void *data) {
@@ -1089,10 +1035,10 @@ static void xsurface_destroy(struct wl_listener *listener, void *data) {
 		}
 	}
 
-	struct guibux_output *fo = guibux_output_for(toplevel->server,
+	struct guibux_output *o = guibux_output_for(toplevel->server,
 		toplevel_output_for(toplevel));
-	if (fo)
-		topbar_mark_dirty(fo);
+	if (o)
+		topbar_mark_dirty(o);
 
 	if (toplevel->server->last_ffm_toplevel == toplevel) {
 		toplevel->server->last_ffm_toplevel = NULL;

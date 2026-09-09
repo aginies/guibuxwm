@@ -73,6 +73,27 @@ static int shutdown_signal_readable(int fd, uint32_t mask, void *data) {
 	return 1;
 }
 
+/* set up a test timer from an env var; if the value is a positive
+ * integer it is used as the delay, otherwise default_delay is used */
+static void setup_test_timer(struct guibux_server *server,
+		const char *env, int (*callback)(void *),
+		int default_delay, struct wl_event_source **timer_field) {
+	const char *val = getenv(env);
+	if (val == NULL) {
+		return;
+	}
+	*timer_field = wl_event_loop_add_timer(
+		wl_display_get_event_loop(server->wl_display),
+		callback, server);
+	int delay = default_delay;
+	char *end;
+	long parsed = strtol(val, &end, 10);
+	if (end != val && *end == '\0' && parsed > 0) {
+		delay = (int)parsed;
+	}
+	wl_event_source_timer_update(*timer_field, delay);
+}
+
 int main(int argc, char *argv[]) {
 	wlr_log_init(WLR_INFO, NULL);
 	/* SIGUSR1 (guibuxwm-output live re-apply) and SIGHUP (config
@@ -111,6 +132,9 @@ int main(int argc, char *argv[]) {
 		case 'c':
 			config_path = optarg;
 			break;
+		case 'h':
+			printf("Usage: %s [-t terminal command] [-k keyboard layout] [-c config file]\n", argv[0]);
+			return 0;
 		default:
 			printf("Usage: %s [-t terminal command] [-k keyboard layout] [-c config file]\n", argv[0]);
 			return 1;
@@ -462,29 +486,16 @@ int main(int argc, char *argv[]) {
 	}
 	outputs_state_write(&server);
 
-	const char *launcher_test_cmd = getenv("GUIBUX_TEST_LAUNCHER_CMD");
-	if (launcher_test_cmd != NULL) {
-		server.launcher.test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			launcher_test_run, &server);
-		wl_event_source_timer_update(server.launcher.test_timer, 500);
-	}
-
-	const char *tile_test_mode = getenv("GUIBUX_TEST_TILE_MODE");
-	if (tile_test_mode != NULL) {
-		server.tile_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			tile_test_run, &server);
-		wl_event_source_timer_update(server.tile_test_timer, 500);
-	}
+	setup_test_timer(&server, "GUIBUX_TEST_LAUNCHER_CMD", launcher_test_run, 500,
+			&server.launcher.test_timer);
+	setup_test_timer(&server, "GUIBUX_TEST_TILE_MODE", tile_test_run, 500,
+			&server.tests.tile_test_timer);
 
 	const char *overview_test = getenv("GUIBUX_TEST_OVERVIEW");
 	if (overview_test != NULL) {
 		test_seat_add_keyboard(&server);
-		server.overview_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			overview_test_run, &server);
-		wl_event_source_timer_update(server.overview_test_timer, 2000);
+		setup_test_timer(&server, "GUIBUX_TEST_OVERVIEW", overview_test_run, 2000,
+				&server.tests.overview_test_timer);
 	}
 
 	server.topbar_timer = wl_event_loop_add_timer(
@@ -498,206 +509,80 @@ int main(int argc, char *argv[]) {
 
 	const char *topbar_test = getenv("GUIBUX_TEST_TOPBAR");
 	if (topbar_test != NULL) {
-		/* seed fake toplevels before the first render so the occupancy
-		 * dot count is present when the test hook fires */
 		topbar_seed_fake_toplevels(&server);
-		server.topbar_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			topbar_test_run, &server);
-		wl_event_source_timer_update(server.topbar_test_timer, 500);
+		setup_test_timer(&server, "GUIBUX_TEST_TOPBAR", topbar_test_run, 500,
+				&server.tests.topbar_test_timer);
 	}
 
-	const char *audio_test = getenv("GUIBUX_TEST_AUDIO");
-	if (audio_test != NULL) {
-		/* fire after the first sysinfo audio poll (~5s) so the
-		 * indicators have been rendered */
-		server.audio_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			audio_test_run, &server);
-		wl_event_source_timer_update(server.audio_test_timer, 6500);
-	}
-
-	const char *battery_test = getenv("GUIBUX_TEST_BATTERY");
-	if (battery_test != NULL) {
-		/* fire after the first sysinfo UPower poll (~5s) so the
-		 * battery indicator has been rendered */
-		server.battery_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			battery_test_run, &server);
-		wl_event_source_timer_update(server.battery_test_timer, 6500);
-	}
-
-	const char *tooltip_test = getenv("GUIBUX_TEST_TOOLTIP");
-	if (tooltip_test != NULL) {
-		/* the sysinfo worker seeds a fake battery at startup, so the
-		 * indicator is rendered by the first topbar tick (~0.5s) */
-		server.tooltip_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			tooltip_test_run, &server);
-		wl_event_source_timer_update(server.tooltip_test_timer, 2000);
-	}
-
-	const char *osd_test = getenv("GUIBUX_TEST_OSD");
-	if (osd_test != NULL) {
-		server.osd_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			osd_test_run, &server);
-		wl_event_source_timer_update(server.osd_test_timer, 2000);
-	}
-
-	const char *power_test = getenv("GUIBUX_TEST_POWER");
-	if (power_test != NULL) {
-		server.power_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			power_panel_test_run, &server);
-		wl_event_source_timer_update(server.power_test_timer, 2000);
-	}
+	setup_test_timer(&server, "GUIBUX_TEST_AUDIO", audio_test_run, 6500,
+			&server.tests.audio_test_timer);
+	setup_test_timer(&server, "GUIBUX_TEST_BATTERY", battery_test_run, 6500,
+			&server.tests.battery_test_timer);
+	setup_test_timer(&server, "GUIBUX_TEST_TOOLTIP", tooltip_test_run, 2000,
+			&server.tests.tooltip_test_timer);
+	setup_test_timer(&server, "GUIBUX_TEST_OSD", osd_test_run, 2000,
+			&server.tests.osd_test_timer);
+	setup_test_timer(&server, "GUIBUX_TEST_POWER", power_panel_test_run, 2000,
+			&server.tests.power_test_timer);
 
 	const char *lock_test = getenv("GUIBUX_TEST_LOCK");
 	if (lock_test != NULL) {
 		server.lock.tick = wl_event_loop_add_timer(
 			wl_display_get_event_loop(server.wl_display),
 			lock_tick, &server);
-		server.lock_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			lock_test_run, &server);
-		wl_event_source_timer_update(server.lock_test_timer, 2000);
+		setup_test_timer(&server, "GUIBUX_TEST_LOCK", lock_test_run, 2000,
+				&server.tests.lock_test_timer);
 	}
 
-	const char *screenshot_test = getenv("GUIBUX_TEST_SCREENSHOT");
-	if (screenshot_test != NULL) {
-		server.screenshot_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			screenshot_test_run, &server);
-		wl_event_source_timer_update(server.screenshot_test_timer, 2000);
-	}
-
-	const char *topbar_items_test = getenv("GUIBUX_TEST_TOPBAR_ITEMS");
-	if (topbar_items_test != NULL) {
-		server.topbar_items_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			topbar_items_panel_test_run, &server);
-		wl_event_source_timer_update(server.topbar_items_test_timer, 2000);
-	}
-
-	const char *notify_test = getenv("GUIBUX_TEST_NOTIFY");
-	if (notify_test != NULL) {
-		server.notify_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			notify_test_run, &server);
-		wl_event_source_timer_update(server.notify_test_timer, 500);
-	}
-
-	const char *scroll_test = getenv("GUIBUX_TEST_SCROLL");
-	if (scroll_test != NULL) {
-		/* after the first audio poll: the VOL indicator must be
-		 * rendered for the scroll hit area to exist */
-		server.scroll_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			scroll_test_run, &server);
-		wl_event_source_timer_update(server.scroll_test_timer, 6500);
-	}
+	setup_test_timer(&server, "GUIBUX_TEST_SCREENSHOT", screenshot_test_run, 2000,
+			&server.tests.screenshot_test_timer);
+	setup_test_timer(&server, "GUIBUX_TEST_TOPBAR_ITEMS", topbar_items_panel_test_run, 2000,
+			&server.tests.topbar_items_test_timer);
+	setup_test_timer(&server, "GUIBUX_TEST_NOTIFY", notify_test_run, 500,
+			&server.tests.notify_test_timer);
+	setup_test_timer(&server, "GUIBUX_TEST_SCROLL", scroll_test_run, 6500,
+			&server.tests.scroll_test_timer);
 
 	const char *altdrag_test = getenv("GUIBUX_TEST_ALTDRAG");
 	if (altdrag_test != NULL) {
 		test_seat_add_keyboard(&server);
-		server.altdrag_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			alt_drag_test_run, &server);
-		wl_event_source_timer_update(server.altdrag_test_timer, 2000);
+		setup_test_timer(&server, "GUIBUX_TEST_ALTDRAG", alt_drag_test_run, 2000,
+				&server.tests.altdrag_test_timer);
 	}
 
 	const char *xmondrag_test = getenv("GUIBUX_TEST_XMONDRAG");
 	if (xmondrag_test != NULL) {
 		test_seat_add_keyboard(&server);
-		server.xmondrag_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			xmondrag_test_run, &server);
-		wl_event_source_timer_update(server.xmondrag_test_timer, 2000);
+		setup_test_timer(&server, "GUIBUX_TEST_XMONDRAG", xmondrag_test_run, 2000,
+				&server.tests.xmondrag_test_timer);
 	}
 
-	const char *always_on_top_test = getenv("GUIBUX_TEST_ALWAYS_ON_TOP");
-	if (always_on_top_test != NULL) {
-		server.always_on_top_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			always_on_top_test_run, &server);
-		wl_event_source_timer_update(server.always_on_top_test_timer, 2000);
-	}
-
-	const char *psel_test = getenv("GUIBUX_TEST_PRIMARY_SELECTION");
-	if (psel_test != NULL) {
-		server.psel_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			psel_test_run, &server);
-		wl_event_source_timer_update(server.psel_test_timer, 1500);
-	}
+	setup_test_timer(&server, "GUIBUX_TEST_ALWAYS_ON_TOP", always_on_top_test_run, 2000,
+			&server.tests.always_on_top_test_timer);
+	setup_test_timer(&server, "GUIBUX_TEST_PRIMARY_SELECTION", psel_test_run, 1500,
+			&server.tests.psel_test_timer);
 
 	const char *workspace_test = getenv("GUIBUX_TEST_WORKSPACES");
 	if (workspace_test != NULL) {
 		test_seat_add_keyboard(&server);
-		server.workspace_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			workspace_test_run, &server);
-		wl_event_source_timer_update(server.workspace_test_timer, 2000);
+		setup_test_timer(&server, "GUIBUX_TEST_WORKSPACES", workspace_test_run, 2000,
+				&server.tests.workspace_test_timer);
 	}
 
-	const char *outputs_test = getenv("GUIBUX_TEST_OUTPUTS");
-	if (outputs_test != NULL) {
-		server.outputs_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			outputs_test_run, &server);
-		wl_event_source_timer_update(server.outputs_test_timer, 2000);
-	}
-
-	const char *outputs_panel_test = getenv("GUIBUX_TEST_OUTPUTS_PANEL");
-	if (outputs_panel_test != NULL) {
-		server.outputs_panel_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			outputs_panel_test_run, &server);
-		wl_event_source_timer_update(server.outputs_panel_test_timer, 2000);
-	}
-
-	const char *keybind_test = getenv("GUIBUX_TEST_KEYBIND");
-	if (keybind_test != NULL) {
-		server.keybind_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			keybind_test_run, &server);
-		wl_event_source_timer_update(server.keybind_test_timer, 500);
-	}
-
-	const char *resize_test = getenv("GUIBUX_TEST_RESIZE");
-	if (resize_test != NULL) {
-		server.resize_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			resize_test_run, &server);
-		wl_event_source_timer_update(server.resize_test_timer, 3000);
-	}
-
-	const char *effects_test = getenv("GUIBUX_TEST_EFFECTS");
-	if (effects_test != NULL) {
-		server.effects_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			effects_test_run, &server);
-		wl_event_source_timer_update(server.effects_test_timer, 1000);
-	}
-
-	const char *quit_test = getenv("GUIBUX_TEST_QUIT");
-	if (quit_test != NULL) {
-		server.quit_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			quit_test_run, &server);
-		int delay = atoi(quit_test);
-		wl_event_source_timer_update(server.quit_test_timer,
-			delay > 0 ? delay : 2000);
-	}
-
-	const char *global_topbar_test = getenv("GUIBUX_TEST_GLOBAL_TOPBAR");
-	if (global_topbar_test != NULL) {
-		server.global_topbar_test_timer = wl_event_loop_add_timer(
-			wl_display_get_event_loop(server.wl_display),
-			global_topbar_test_run, &server);
-		wl_event_source_timer_update(server.global_topbar_test_timer, 4000);
-	}
+	setup_test_timer(&server, "GUIBUX_TEST_OUTPUTS", outputs_test_run, 2000,
+			&server.tests.outputs_test_timer);
+	setup_test_timer(&server, "GUIBUX_TEST_OUTPUTS_PANEL", outputs_panel_test_run, 2000,
+			&server.tests.outputs_panel_test_timer);
+	setup_test_timer(&server, "GUIBUX_TEST_KEYBIND", keybind_test_run, 500,
+			&server.tests.keybind_test_timer);
+	setup_test_timer(&server, "GUIBUX_TEST_RESIZE", resize_test_run, 3000,
+			&server.tests.resize_test_timer);
+	setup_test_timer(&server, "GUIBUX_TEST_EFFECTS", effects_test_run, 1000,
+			&server.tests.effects_test_timer);
+	setup_test_timer(&server, "GUIBUX_TEST_QUIT", quit_test_run, 2000,
+			&server.tests.quit_test_timer);
+	setup_test_timer(&server, "GUIBUX_TEST_GLOBAL_TOPBAR", global_topbar_test_run, 4000,
+			&server.tests.global_topbar_test_timer);
 
 	wlr_log(WLR_INFO, "guibuxwm running on WAYLAND_DISPLAY=%s", socket);
 	wl_display_run(server.wl_display);
@@ -761,74 +646,74 @@ int main(int argc, char *argv[]) {
 	if (server.topbar_timer != NULL) {
 		wl_event_source_remove(server.topbar_timer);
 	}
-	if (server.topbar_test_timer != NULL) {
-		wl_event_source_remove(server.topbar_test_timer);
+	if (server.tests.topbar_test_timer != NULL) {
+		wl_event_source_remove(server.tests.topbar_test_timer);
 	}
-	if (server.audio_test_timer != NULL) {
-		wl_event_source_remove(server.audio_test_timer);
+	if (server.tests.audio_test_timer != NULL) {
+		wl_event_source_remove(server.tests.audio_test_timer);
 	}
-	if (server.battery_test_timer != NULL) {
-		wl_event_source_remove(server.battery_test_timer);
+	if (server.tests.battery_test_timer != NULL) {
+		wl_event_source_remove(server.tests.battery_test_timer);
 	}
-	if (server.tooltip_test_timer != NULL) {
-		wl_event_source_remove(server.tooltip_test_timer);
+	if (server.tests.tooltip_test_timer != NULL) {
+		wl_event_source_remove(server.tests.tooltip_test_timer);
 	}
-	if (server.osd_test_timer != NULL) {
-		wl_event_source_remove(server.osd_test_timer);
+	if (server.tests.osd_test_timer != NULL) {
+		wl_event_source_remove(server.tests.osd_test_timer);
 	}
-	if (server.power_test_timer != NULL) {
-		wl_event_source_remove(server.power_test_timer);
+	if (server.tests.power_test_timer != NULL) {
+		wl_event_source_remove(server.tests.power_test_timer);
 	}
-	if (server.lock_test_timer != NULL) {
-		wl_event_source_remove(server.lock_test_timer);
+	if (server.tests.lock_test_timer != NULL) {
+		wl_event_source_remove(server.tests.lock_test_timer);
 	}
-	if (server.topbar_items_test_timer != NULL) {
-		wl_event_source_remove(server.topbar_items_test_timer);
+	if (server.tests.topbar_items_test_timer != NULL) {
+		wl_event_source_remove(server.tests.topbar_items_test_timer);
 	}
-	if (server.scroll_test_timer != NULL) {
-		wl_event_source_remove(server.scroll_test_timer);
+	if (server.tests.scroll_test_timer != NULL) {
+		wl_event_source_remove(server.tests.scroll_test_timer);
 	}
-	if (server.altdrag_test_timer != NULL) {
-		wl_event_source_remove(server.altdrag_test_timer);
+	if (server.tests.altdrag_test_timer != NULL) {
+		wl_event_source_remove(server.tests.altdrag_test_timer);
 	}
-	if (server.xmondrag_test_timer != NULL) {
-		wl_event_source_remove(server.xmondrag_test_timer);
+	if (server.tests.xmondrag_test_timer != NULL) {
+		wl_event_source_remove(server.tests.xmondrag_test_timer);
 	}
-	if (server.always_on_top_test_timer != NULL) {
-		wl_event_source_remove(server.always_on_top_test_timer);
+	if (server.tests.always_on_top_test_timer != NULL) {
+		wl_event_source_remove(server.tests.always_on_top_test_timer);
 	}
-	if (server.workspace_test_timer != NULL) {
-		wl_event_source_remove(server.workspace_test_timer);
+	if (server.tests.workspace_test_timer != NULL) {
+		wl_event_source_remove(server.tests.workspace_test_timer);
 	}
-	if (server.outputs_test_timer != NULL) {
-		wl_event_source_remove(server.outputs_test_timer);
+	if (server.tests.outputs_test_timer != NULL) {
+		wl_event_source_remove(server.tests.outputs_test_timer);
 	}
-	if (server.keybind_test_timer != NULL) {
-		wl_event_source_remove(server.keybind_test_timer);
+	if (server.tests.keybind_test_timer != NULL) {
+		wl_event_source_remove(server.tests.keybind_test_timer);
 	}
-	if (server.overview_test_timer != NULL) {
-		wl_event_source_remove(server.overview_test_timer);
+	if (server.tests.overview_test_timer != NULL) {
+		wl_event_source_remove(server.tests.overview_test_timer);
 	}
-	if (server.psel_test_timer != NULL) {
-		wl_event_source_remove(server.psel_test_timer);
+	if (server.tests.psel_test_timer != NULL) {
+		wl_event_source_remove(server.tests.psel_test_timer);
 	}
-	if (server.resize_test_timer != NULL) {
-		wl_event_source_remove(server.resize_test_timer);
+	if (server.tests.resize_test_timer != NULL) {
+		wl_event_source_remove(server.tests.resize_test_timer);
 	}
-	if (server.notify_test_timer != NULL) {
-		wl_event_source_remove(server.notify_test_timer);
+	if (server.tests.notify_test_timer != NULL) {
+		wl_event_source_remove(server.tests.notify_test_timer);
 	}
-	if (server.effects_test_timer != NULL) {
-		wl_event_source_remove(server.effects_test_timer);
+	if (server.tests.effects_test_timer != NULL) {
+		wl_event_source_remove(server.tests.effects_test_timer);
 	}
-	if (server.quit_test_timer != NULL) {
-		wl_event_source_remove(server.quit_test_timer);
+	if (server.tests.quit_test_timer != NULL) {
+		wl_event_source_remove(server.tests.quit_test_timer);
 	}
-	if (server.global_topbar_test_timer != NULL) {
-		wl_event_source_remove(server.global_topbar_test_timer);
+	if (server.tests.global_topbar_test_timer != NULL) {
+		wl_event_source_remove(server.tests.global_topbar_test_timer);
 	}
-	if (server.screenshot_test_timer != NULL) {
-		wl_event_source_remove(server.screenshot_test_timer);
+	if (server.tests.screenshot_test_timer != NULL) {
+		wl_event_source_remove(server.tests.screenshot_test_timer);
 	}
 
 	launcher_hide(&server);

@@ -544,11 +544,11 @@ int psel_test_run(void *data) {
 		wlr_log(WLR_ERROR, "psel-test: FAIL no toplevel mapped");
 		return 0;
 	}
-	if (!server->psel_test_enter_sent) {
+	if (!server->tests.psel_test_enter_sent) {
 		wlr_seat_set_capabilities(server->seat, WL_SEAT_CAPABILITY_POINTER);
 		wlr_log(WLR_INFO, "psel-test: pointer capability set");
-		server->psel_test_enter_sent = true;
-		wl_event_source_timer_update(server->psel_test_timer, 1000);
+		server->tests.psel_test_enter_sent = true;
+		wl_event_source_timer_update(server->tests.psel_test_timer, 1000);
 		return 0;
 	}
 	struct guibux_toplevel *t = wl_container_of(
@@ -782,7 +782,7 @@ static bool topbar_lists(struct guibux_output *o, struct guibux_toplevel *t) {
 }
 
 static void xmondrag_test_next(struct guibux_server *server) {
-	wl_event_source_timer_update(server->xmondrag_test_timer, 400);
+	wl_event_source_timer_update(server->tests.xmondrag_test_timer, 400);
 }
 
 int xmondrag_test_run(void *data) {
@@ -1012,7 +1012,7 @@ static bool resize_drag(struct guibux_server *server,
 }
 
 static void resize_test_next(struct guibux_server *server) {
-	wl_event_source_timer_update(server->resize_test_timer, 400);
+	wl_event_source_timer_update(server->tests.resize_test_timer, 400);
 }
 
 int resize_test_run(void *data) {
@@ -1141,7 +1141,7 @@ static int64_t effects_test_now(void) {
 }
 
 static void effects_test_next(struct guibux_server *server, int ms) {
-	wl_event_source_timer_update(server->effects_test_timer, ms);
+	wl_event_source_timer_update(server->tests.effects_test_timer, ms);
 }
 
 int effects_test_run(void *data) {

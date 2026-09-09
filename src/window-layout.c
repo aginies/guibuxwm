@@ -303,7 +303,10 @@ void move_toplevel_to_adjacent_output(struct guibux_server *server,
 // Snap (half-screen positioning)
 // ---------------------------------------------------------------------------
 
-void snap_toplevel_left(struct guibux_toplevel *toplevel) {
+/* generic half-screen snap: dir_x/dir_y in {-1, 0, 1} select the half
+ * (left/right, top/bottom); 0 = full extent on that axis */
+static void snap_toplevel_dir(struct guibux_toplevel *toplevel,
+		int dir_x, int dir_y) {
 	struct guibux_server *server = toplevel->server;
 	struct wlr_output *output = toplevel_output_for(toplevel);
 	if (output == NULL) {
@@ -314,65 +317,37 @@ void snap_toplevel_left(struct guibux_toplevel *toplevel) {
 	if (toplevel->is_fullscreen) {
 		set_fullscreen(toplevel, false, NULL);
 	}
-	int w = box.width / 2;
-	int h = box.height - toplevel->server->topbar_height;
-	wlr_scene_node_set_position(&toplevel->scene_tree->node,
-		box.x, box.y + toplevel->server->topbar_height);
+	int th = server->topbar_height;
+	int work_h = box.height - th;
+	int x = box.x, y = box.y + th, w = box.width, h = work_h;
+	if (dir_x == -1) {
+		w = box.width / 2;
+	} else if (dir_x == 1) {
+		x = box.x + box.width / 2;
+		w = box.width - box.width / 2;
+	}
+	if (dir_y == -1) {
+		h = work_h / 2;
+	} else if (dir_y == 1) {
+		y = box.y + th + work_h / 2;
+		h = work_h - work_h / 2;
+	}
+	wlr_scene_node_set_position(&toplevel->scene_tree->node, x, y);
 	toplevel_set_size(toplevel, w, h);
 }
 
-void snap_toplevel_right(struct guibux_toplevel *toplevel) {
-	struct guibux_server *server = toplevel->server;
-	struct wlr_output *output = toplevel_output_for(toplevel);
-	if (output == NULL) {
-		return;
-	}
-	struct wlr_box box;
-	wlr_output_layout_get_box(server->output_layout, output, &box);
-	if (toplevel->is_fullscreen) {
-		set_fullscreen(toplevel, false, NULL);
-	}
-	int rx = box.width / 2;
-	int w = box.width - box.width / 2;
-	int h = box.height - server->topbar_height;
-	wlr_scene_node_set_position(&toplevel->scene_tree->node,
-		box.x + rx, box.y + server->topbar_height);
-	toplevel_set_size(toplevel, w, h);
+void snap_toplevel_left(struct guibux_toplevel *t) {
+	snap_toplevel_dir(t, -1, 0);
 }
 
-void snap_toplevel_top(struct guibux_toplevel *toplevel) {
-	struct guibux_server *server = toplevel->server;
-	struct wlr_output *output = toplevel_output_for(toplevel);
-	if (output == NULL) {
-		return;
-	}
-	struct wlr_box box;
-	wlr_output_layout_get_box(server->output_layout, output, &box);
-	if (toplevel->is_fullscreen) {
-		set_fullscreen(toplevel, false, NULL);
-	}
-	int w = box.width;
-	int h = (box.height - toplevel->server->topbar_height) / 2;
-	wlr_scene_node_set_position(&toplevel->scene_tree->node,
-		box.x, box.y + toplevel->server->topbar_height);
-	toplevel_set_size(toplevel, w, h);
+void snap_toplevel_right(struct guibux_toplevel *t) {
+	snap_toplevel_dir(t, 1, 0);
 }
 
-void snap_toplevel_bottom(struct guibux_toplevel *toplevel) {
-	struct guibux_server *server = toplevel->server;
-	struct wlr_output *output = toplevel_output_for(toplevel);
-	if (output == NULL) {
-		return;
-	}
-	struct wlr_box box;
-	wlr_output_layout_get_box(server->output_layout, output, &box);
-	if (toplevel->is_fullscreen) {
-		set_fullscreen(toplevel, false, NULL);
-	}
-	int w = box.width;
-	int h = (box.height - toplevel->server->topbar_height) - (box.height - toplevel->server->topbar_height) / 2;
-	int ry = toplevel->server->topbar_height + (box.height - toplevel->server->topbar_height) / 2;
-	wlr_scene_node_set_position(&toplevel->scene_tree->node,
-		box.x, box.y + ry);
-	toplevel_set_size(toplevel, w, h);
+void snap_toplevel_top(struct guibux_toplevel *t) {
+	snap_toplevel_dir(t, 0, -1);
+}
+
+void snap_toplevel_bottom(struct guibux_toplevel *t) {
+	snap_toplevel_dir(t, 0, 1);
 }
