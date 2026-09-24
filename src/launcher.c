@@ -38,6 +38,7 @@ struct icon_resolve_entry {
 	char name[64];
 	char path[PATH_MAX + 64];
 	bool miss;
+	bool symbolic;
 };
 static struct icon_resolve_entry icon_resolve_cache[ICON_RESOLVE_CACHE_SIZE];
 static int icon_resolve_cache_count;
@@ -167,12 +168,13 @@ static void icon_build_dirs(struct guibux_launcher *l) {
 		theme, num_icon_dirs);
 }
 
-const char *resolve_icon(const char *icon_name) {
+static const char *resolve_icon_impl(const char *icon_name, bool only_symbolic) {
 	if (!icon_name || icon_name[0] == '\0')
 		return NULL;
 
 	for (int i = 0; i < icon_resolve_cache_count; i++) {
-		if (strcmp(icon_resolve_cache[i].name, icon_name) == 0) {
+		if (strcmp(icon_resolve_cache[i].name, icon_name) == 0 &&
+				icon_resolve_cache[i].symbolic == only_symbolic) {
 			return icon_resolve_cache[i].miss ? NULL :
 				icon_resolve_cache[i].path;
 		}
@@ -180,12 +182,13 @@ const char *resolve_icon(const char *icon_name) {
 
 	char path[PATH_MAX + 64];
 	const char *found = NULL;
-	for (int t = 0; t < num_icon_dirs; t++) {
-		for (size_t s = 0; s < ICON_ARRAY_LEN(icon_sizes); s++) {
-			for (size_t c = 0; c < ICON_ARRAY_LEN(icon_contexts); c++) {
-				snprintf(path, sizeof(path), "%s/%s/%s/%s.png",
-					icon_dirs[t], icon_sizes[s],
-					icon_contexts[c], icon_name);
+
+	if (only_symbolic) {
+		/* only search symbolic SVG icons */
+		for (int t = 0; t < num_icon_dirs; t++) {
+			for (size_t s = 0; s < ICON_ARRAY_LEN(icon_symbolic_dirs); s++) {
+				snprintf(path, sizeof(path), "%s/%s/%s-symbolic.svg",
+					icon_dirs[t], icon_symbolic_dirs[s], icon_name);
 				if (access(path, F_OK) == 0) {
 					found = path;
 					break;
@@ -194,19 +197,36 @@ const char *resolve_icon(const char *icon_name) {
 			if (found)
 				break;
 		}
-		if (found)
-			break;
-		/* symbolic SVG icons (Adwaita status/device indicators) */
-		for (size_t s = 0; s < ICON_ARRAY_LEN(icon_symbolic_dirs); s++) {
-			snprintf(path, sizeof(path), "%s/%s/%s-symbolic.svg",
-				icon_dirs[t], icon_symbolic_dirs[s], icon_name);
-			if (access(path, F_OK) == 0) {
-				found = path;
-				break;
+	} else {
+		/* standard search (PNG first, then symbolic SVG as fallback) */
+		for (int t = 0; t < num_icon_dirs; t++) {
+			for (size_t s = 0; s < ICON_ARRAY_LEN(icon_sizes); s++) {
+				for (size_t c = 0; c < ICON_ARRAY_LEN(icon_contexts); c++) {
+					snprintf(path, sizeof(path), "%s/%s/%s/%s.png",
+						icon_dirs[t], icon_sizes[s],
+						icon_contexts[c], icon_name);
+					if (access(path, F_OK) == 0) {
+						found = path;
+						break;
+					}
+				}
+				if (found)
+					break;
 			}
+			if (found)
+				break;
+			/* symbolic SVG icons (Adwaita status/device indicators) */
+			for (size_t s = 0; s < ICON_ARRAY_LEN(icon_symbolic_dirs); s++) {
+				snprintf(path, sizeof(path), "%s/%s/%s-symbolic.svg",
+					icon_dirs[t], icon_symbolic_dirs[s], icon_name);
+				if (access(path, F_OK) == 0) {
+					found = path;
+					break;
+				}
+			}
+			if (found)
+				break;
 		}
-		if (found)
-			break;
 	}
 
 	/* always cache the result: the returned pointer must stay valid
@@ -221,15 +241,25 @@ const char *resolve_icon(const char *icon_name) {
 			(ICON_RESOLVE_CACHE_SIZE - 1) * sizeof(icon_resolve_cache[0]));
 	}
 	snprintf(e->name, sizeof(e->name), "%s", icon_name);
+	e->symbolic = only_symbolic;
 	if (found) {
 		snprintf(e->path, sizeof(e->path), "%s", found);
-		wlr_log(WLR_INFO, "launcher: icon '%s' -> %s",
-			icon_name, found);
+		wlr_log(WLR_INFO, "launcher: icon '%s' (%s) -> %s",
+			icon_name, only_symbolic ? "symbolic" : "standard", found);
 		return e->path;
 	}
 	e->miss = true;
-	wlr_log(WLR_DEBUG, "launcher: icon '%s' not found", icon_name);
+	wlr_log(WLR_DEBUG, "launcher: icon '%s' (%s) not found",
+		icon_name, only_symbolic ? "symbolic" : "standard");
 	return NULL;
+}
+
+const char *resolve_icon(const char *icon_name) {
+	return resolve_icon_impl(icon_name, false);
+}
+
+const char *resolve_icon_symbolic(const char *icon_name) {
+	return resolve_icon_impl(icon_name, true);
 }
 
 static uint8_t *load_icon(const char *path, int *out_w, int *out_h) {
@@ -363,7 +393,10 @@ static void launcher_draw_icon(cairo_t *cr, struct guibux_launcher *l,
 int topbar_icon_draw(cairo_t *cr, struct guibux_launcher *l,
 		const char *name, int cx, int cy, int size, int scale,
 		uint32_t color) {
-	const char *path = resolve_icon(name);
+	const char *path = resolve_icon_symbolic(name);
+	if (path == NULL) {
+		path = resolve_icon(name);
+	}
 	if (path == NULL) {
 		return 0;
 	}

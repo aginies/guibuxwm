@@ -993,7 +993,7 @@ static void topbar_render_clock(struct guibux_output *o) {
 	/* restore the cached background */
 	for (int y = 0; y < h && y < o->topbar_clock_bg_h; y++) {
 		memcpy((uint8_t *)data + (size_t)y * stride + (size_t)cx * 4,
-			o->topbar_clock_bg + (size_t)y * cw, (size_t)cw * 4);
+			o->topbar_clock_bg + (size_t)y * cw * 4, (size_t)cw * 4);
 	}
 	cairo_surface_t *cs = cairo_image_surface_create_for_data(
 		data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
@@ -1380,7 +1380,7 @@ void topbar_render(struct guibux_output *o) {
 				o->topbar_clock_bg = malloc((size_t)cw * h * 4);
 				if (o->topbar_clock_bg != NULL) {
 					for (int y = 0; y < h; y++) {
-						memcpy(o->topbar_clock_bg + (size_t)y * cw,
+						memcpy(o->topbar_clock_bg + (size_t)y * cw * 4,
 							(uint8_t *)data + (size_t)y * stride + (size_t)cx * 4,
 							(size_t)cw * 4);
 					}
