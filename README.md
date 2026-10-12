@@ -19,6 +19,35 @@ See [Features](docs/features.md) for the full list.
 
 Run: `./build/guibuxwm`
 
+Requires the Liberation monospace font, which provides the text face used by the
+topbar, command box, overview and every overlay. Without it those are disabled
+and you get a black screen. Install it once:
+
+```sh
+sudo zypper install liberation-fonts   # /usr/share/fonts/truetype/LiberationMono-Regular.ttf
+```
+
+Brightness control (`brightness-up` / `brightness-down` and the
+`XF86MonBrightness*` keys) shells out to `brightnessctl`:
+
+```sh
+sudo zypper install brightnessctl
+```
+
+`brightnessctl` writes `/sys/class/backlight/<dev>/brightness`, which is
+`root:root 0644` by default on openSUSE (the device is tagged `seat` but not
+`uaccess`), so every set fails with *Permission denied* for a normal user.
+Grant the seat user an ACL once:
+
+```sh
+echo 'SUBSYSTEM=="backlight", ACTION=="add", TAG+="uaccess"' \
+  | sudo tee /etc/udev/rules.d/90-backlight-uaccess.rules
+sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=backlight
+```
+
+Re-login so logind applies the ACL (`getfacl /sys/class/backlight/*/brightness`
+should then list `user:<you>:rw-`).
+
 See [Build](docs/build.md) for requirements.
 
 ## Keybindings

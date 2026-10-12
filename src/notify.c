@@ -807,8 +807,10 @@ bool notify_panel_handle_key(struct guibux_server *server, xkb_keysym_t sym) {
 	default:
 		break;
 	}
-	/* modal: swallow the rest so keys do not leak to focused windows */
-	return true;
+	/* non-modal: the panel only owns Esc/Delete, everything else keeps
+	 * going to keybinds and the focused window so typing is not
+	 * interrupted while a notification is up */
+	return false;
 }
 
 static bool panel_box_at(struct guibux_server *server, double lx, double ly,

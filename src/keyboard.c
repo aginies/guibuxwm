@@ -708,7 +708,10 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 			{ &server->launcher.active, launcher_handle_key, false },
 			{ &server->switcher.active, switcher_handle_key, false },
 			{ &server->help.active, help_handle_key, false },
-			{ &server->notify_panel.active, notify_panel_handle_key, false },
+			/* the notification panel is non-modal: it eats only
+			 * Esc/Delete, the rest falls through to keybinds and
+			 * then to the focused client */
+			{ &server->notify_panel.active, notify_panel_handle_key, true },
 			{ &server->outputs_panel.active, outputs_panel_handle_key, false },
 			{ &server->power_panel.active, power_panel_handle_key, true },
 			{ &server->topbar_items_panel.active,
