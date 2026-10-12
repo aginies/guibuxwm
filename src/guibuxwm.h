@@ -47,6 +47,11 @@
 #define DEFAULT_TOPBAR_H 24
 #define DEFAULT_TOPBAR_FONT_SIZE 16
 #define DEFAULT_TOPBAR_WIN_PAD 2
+#define DEFAULT_TOPBAR_ALPHA 217
+#define DEFAULT_WINDOW_BORDER_WIDTH 4
+#define DEFAULT_OVERVIEW_DIM_ALPHA 153
+#define DEFAULT_EFFECTS_DURATION_MS 200
+#define DEFAULT_OSD_TIMEOUT_MS 1500
 #define TOPBAR_PAD 8
 #define TOPBAR_ITEMS_MAX 6
 enum topbar_item_id {
@@ -521,6 +526,11 @@ struct guibux_output {
     int topbar_win_region_end;
     struct wlr_scene_buffer *bg_node;
     struct wlr_buffer *bg_ws_buffers[NUM_WORKSPACES];
+    /* buffer currently set on bg_node: wlr_scene_buffer_set_buffer()
+     * destroys the node's cached texture even when re-setting the same
+     * buffer, so re-setting would re-import the full-screen shm buffer
+     * (a ~15MB CPU copy per output) on every retile for no visual change */
+    struct wlr_buffer *bg_current;
     int bg_w, bg_h, bg_scale;
     struct wlr_scene_rect *overview_dim;
     struct wlr_scene_buffer *overview_ws_col_node;
@@ -713,6 +723,11 @@ struct guibux_power_panel {
 	int selected;
 	bool confirming;
 	int confirm_idx;
+	/* which actions are usable on this machine, filled in once by
+	 * power_panel_init at startup (an action is available when the
+	 * binary backing it is on $PATH) */
+	bool avail[POWER_COUNT];
+	bool probed;
 };
 
 struct guibux_topbar_items_panel {
@@ -980,6 +995,63 @@ struct guibux_launcher launcher;
     bool restore_positions;
 };
 
+/* gfx.c */
+/* allocate an shm-backed buffer of width x height device pixels in the
+ * given DRM format (DRM_FORMAT_XRGB8888 / DRM_FORMAT_ARGB8888); the shared
+ * form of the buffer every overlay draws into. NULL on failure */
+struct wlr_buffer *guibux_shm_buffer(struct guibux_server *server,
+	int width, int height, uint32_t drm_format);
+
+/* panel.c - plumbing shared by every self-drawn overlay (power menu,
+ * topbar items, outputs panel, help, OSD, switcher, notification panel,
+ * tooltips). Each overlay keeps its own state and drawing code; these own
+ * the buffer/scene-node lifecycle, the cairo session over an XRGB8888 shm
+ * buffer, the common translucent frame, and the centred-box hit test.
+ * Panels draw in device pixels and are published at logical size via the
+ * scene buffer's dest size so they stay sharp on fractional-scale outputs */
+#define PANEL_RADIUS 12
+#define PANEL_BG_ALPHA 0.88
+#define PANEL_BORDER_ALPHA 0.12
+
+/* an open cairo session on a panel buffer */
+struct guibux_panel_draw {
+	cairo_surface_t *surface;
+	cairo_t *cr;
+	int w, h;    /* device px */
+	int scale;
+};
+
+/* open a draw session on an XRGB8888 buffer of dev_w x dev_h device px,
+ * cleared first. false when the buffer is missing, inaccessible, not
+ * XRGB8888, or cairo fails (nothing is left open) */
+bool panel_begin_draw(struct wlr_buffer *buffer, int dev_w, int dev_h,
+	int scale, struct guibux_panel_draw *draw);
+/* close the session, publish the buffer to the scene node and schedule a
+ * frame; node and output may be NULL */
+void panel_end_draw(struct guibux_panel_draw *draw, struct wlr_buffer *buffer,
+	struct wlr_scene_buffer *node, struct wlr_output *output);
+/* translucent rounded background + hairline border, in device px */
+void panel_draw_frame(const struct guibux_panel_draw *draw, uint32_t color_bg);
+/* layout position that centres a box_w x box_h panel on `output` */
+void panel_centred_pos(struct guibux_server *server, struct wlr_output *output,
+	int box_w, int box_h, int *lx, int *ly);
+/* allocate the buffer + scene node and place it at (lx, ly) layout coords;
+ * leaves both NULL and returns false on failure */
+bool panel_create(struct guibux_server *server, int lx, int ly, int scale,
+	int box_w, int box_h, struct wlr_buffer **buffer,
+	struct wlr_scene_buffer **node);
+/* destroy the scene node and drop the buffer, leaving both NULL */
+void panel_destroy(struct wlr_buffer **buffer, struct wlr_scene_buffer **node);
+/* is (lx, ly) inside the centred panel? out_px/out_py (may be NULL) receive
+ * its top-left in output-local logical px. Named for the centred layout so
+ * it cannot collide with an overlay's own anchored-box helper */
+bool panel_centred_box_at(struct guibux_server *server,
+	struct wlr_output *output, int box_w, int box_h, double lx, double ly,
+	int *out_px, int *out_py);
+/* row of a centred panel under (lx, ly), or -1 when outside / out of range */
+int panel_row_at(struct guibux_server *server, struct wlr_output *output,
+	int box_w, int box_h, int row_h, int nrows, double lx, double ly);
+
 /* output.c */
 /* an output's fractional scale (1.5) as an integer buffer multiplier;
  * wlroots has no public helper and a plain (int) cast truncates 1.5 to 1,
@@ -1021,6 +1093,10 @@ void outputs_apply(struct guibux_server *server);
 /* the config named no connected output: drop the placements and
  * re-arrange every output automatically */
 void outputs_reset_auto(struct guibux_server *server);
+/* true when at least one placement matched a connected output; a spec
+ * with placements but no match must fall back to outputs_reset_auto so
+ * the session is never blacked out */
+bool outputs_any_placed(struct guibux_server *server);
 /* publish the current outputs (name, box, mode, transform, enabled,
  * available modes) to the state file for the guibuxwm-output tool */
 void outputs_state_write(struct guibux_server *server);
@@ -1147,7 +1223,7 @@ bool topbar_notif_at(struct guibux_server *server, struct guibux_output *o, doub
 void tooltip_hide(struct guibux_server *server);
 bool tooltip_contains(struct guibux_server *server, double lx, double ly);
 /* arm/disarm the hover from pointer motion; called on every move */
-void tooltip_update_hover(struct guibux_server *server, uint32_t time);
+void tooltip_update_hover(struct guibux_server *server, uint32_t now_ms);
 /* show the armed tooltip once the hover delay has elapsed; called
  * from topbar_tick */
 void tooltip_tick(struct guibux_server *server);
@@ -1275,6 +1351,9 @@ void outputs_panel_hide(struct guibux_server *server);
 bool outputs_panel_handle_key(struct guibux_server *server, xkb_keysym_t sym);
 
 /* power.c */
+/* probe which power actions this machine supports; called once at startup
+ * so opening the panel never blocks the compositor */
+void power_panel_init(struct guibux_server *server);
 void power_panel_show(struct guibux_server *server);
 void power_panel_hide(struct guibux_server *server);
 bool power_panel_handle_key(struct guibux_server *server, xkb_keysym_t sym);
@@ -1342,9 +1421,17 @@ void volume_flush(struct guibux_server *server);
 void volume_toggle_mute(struct guibux_server *server, bool mic);
 void spawn_sigchld_handler(int sig);
 void spawn_track(pid_t pid);
+/* fork /bin/sh -c cmd and track the child for reaping; `label` names the
+ * action in the log line and may be NULL to log nothing. Returns the child
+ * pid, or -1 when the fork failed. */
+pid_t guibux_spawn(const char *cmd, const char *label);
 
 /* config.c */
 void load_config(struct guibux_server *server, const char *path);
+/* the built-in indicator set and order: applied before the config is read
+ * and used as the fallback when a `topbar_items` list is empty or entirely
+ * invalid, so the default exists in exactly one place */
+void topbar_items_set_defaults(struct guibux_server *server);
 /* re-read the config file live: keybinds are reset+re-added, colors and
  * topbar settings apply on the next render, backgrounds are reloaded
  * when changed, the outputs spec is re-applied. renderer and xkb_* are

@@ -522,38 +522,16 @@ void notify_panel_render(struct guibux_server *server) {
 		return;
 	}
 
-	void *data;
-	uint32_t format;
-	size_t stride;
-	if (!wlr_buffer_begin_data_ptr_access(p->buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) {
+	struct guibux_panel_draw d;
+	if (!panel_begin_draw(p->buffer, p->box_w * p->box_scale,
+			p->box_h * p->box_scale, p->box_scale, &d)) {
 		return;
 	}
-	if (format != DRM_FORMAT_XRGB8888) {
-		wlr_buffer_end_data_ptr_access(p->buffer);
-		return;
-	}
+	int w = d.w;
+	cairo_t *cr = d.cr;
+	cairo_surface_t *cs = d.surface;
 
-	int w = p->box_w * p->box_scale;
-	int hgt = p->box_h * p->box_scale;
-	cairo_surface_t *cs = cairo_image_surface_create_for_data(
-		data, CAIRO_FORMAT_RGB24, w, hgt, (int)stride);
-	cairo_t *cr = cairo_create(cs);
-	memset(data, 0, stride * hgt);
-
-	/* translucent rounded background */
-	cairo_set_source_rgba(cr,
-		((server->color_bg >> 16) & 0xFF) / 255.0,
-		((server->color_bg >> 8) & 0xFF) / 255.0,
-		(server->color_bg & 0xFF) / 255.0, 0.88);
-	topbar_rounded_rect(cr, 0, 0, w, hgt, 12 * p->box_scale);
-	cairo_fill(cr);
-	/* subtle border */
-	cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12);
-	cairo_set_line_width(cr, p->box_scale);
-	topbar_rounded_rect(cr, p->box_scale / 2.0, p->box_scale / 2.0,
-		w - p->box_scale, hgt - p->box_scale, 11 * p->box_scale);
-	cairo_stroke(cr);
+	panel_draw_frame(&d, server->color_bg);
 
 	FT_Face face = server->launcher.face;
 	int sc = p->box_scale;
@@ -645,15 +623,7 @@ void notify_panel_render(struct guibux_server *server) {
 		}
 	}
 
-	cairo_destroy(cr);
-	cairo_surface_destroy(cs);
-	wlr_buffer_end_data_ptr_access(p->buffer);
-	if (p->scene_node != NULL) {
-		wlr_scene_buffer_set_buffer(p->scene_node, p->buffer);
-	}
-	if (p->output != NULL) {
-		wlr_output_schedule_frame(p->output);
-	}
+	panel_end_draw(&d, p->buffer, p->scene_node, p->output);
 }
 
 void notify_panel_free_node(struct guibux_server *server);
@@ -709,14 +679,8 @@ void notify_panel_show(struct guibux_server *server,
 	p->box_x = ew - bw - NOTIF_PANEL_MARGIN;
 	p->output = output;
 
-	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-	struct wlr_drm_format format = {
-		.format = DRM_FORMAT_XRGB8888,
-		.len = 1,
-		.modifiers = mods,
-	};
-	p->buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-		bw * scale, p->box_h * scale, &format);
+	p->buffer = guibux_shm_buffer(server, bw * scale, p->box_h * scale,
+		DRM_FORMAT_XRGB8888);
 	if (p->buffer == NULL) {
 		return;
 	}
@@ -741,14 +705,7 @@ void notify_panel_free_node(struct guibux_server *server) {
 	struct guibux_notif_panel *p = &server->notify_panel;
 	p->hiding = false;
 	p->output = NULL;
-	if (p->scene_node != NULL) {
-		wlr_scene_node_destroy(&p->scene_node->node);
-		p->scene_node = NULL;
-	}
-	if (p->buffer != NULL) {
-		wlr_buffer_drop(p->buffer);
-		p->buffer = NULL;
-	}
+	panel_destroy(&p->buffer, &p->scene_node);
 }
 
 /* completion of the slide-out animation */

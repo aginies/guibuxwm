@@ -18,48 +18,9 @@ static void invalidate_char_width_cache(struct guibux_launcher *l) {
 }
 
 // decode one UTF-8 codepoint, advance *p past it
-uint32_t utf8_next(const char **p) {
-	const unsigned char *s = (const unsigned char *)*p;
-	uint32_t cp;
-	if (s[0] < 0x80) {
-		cp = s[0];
-		*p += 1;
-	} else if ((s[0] & 0xE0) == 0xC0 && s[1]) {
-		cp = ((uint32_t)(s[0] & 0x1F) << 6) | (s[1] & 0x3F);
-		*p += 2;
-	} else if ((s[0] & 0xF0) == 0xE0 && s[1] && s[2]) {
-		cp = ((uint32_t)(s[0] & 0x0F) << 12) | ((uint32_t)(s[1] & 0x3F) << 6) |
-			(s[2] & 0x3F);
-		*p += 3;
-	} else if ((s[0] & 0xF8) == 0xF0 && s[1] && s[2] && s[3]) {
-		cp = ((uint32_t)(s[0] & 0x07) << 18) | ((uint32_t)(s[1] & 0x3F) << 12) |
-			((uint32_t)(s[2] & 0x3F) << 6) | (s[3] & 0x3F);
-		*p += 4;
-	} else {
-		cp = '?';
-		*p += 1;
-	}
-	return cp;
-}
-
-// copy up to max_cp codepoints of src into dst (NUL-terminated)
-void utf8_truncate(const char *src, char *dst, size_t dst_size, int max_cp) {
-	int cp = 0;
-	size_t n = 0;
-	while (src[0] && cp < max_cp) {
-		const char *p = src;
-		utf8_next(&p);
-		size_t len = (size_t)(p - src);
-		if (n + len >= dst_size) {
-			break;
-		}
-		memcpy(dst + n, src, len);
-		n += len;
-		src = p;
-		cp++;
-	}
-	dst[n] = '\0';
-}
+// (utf8_next, utf8_truncate, guibux_text_width, set_color,
+// topbar_rounded_rect and launcher_draw_text_on_surface live in gfx.c:
+// they are generic drawing primitives shared by every overlay)
 
 static int char_advance_width(struct guibux_launcher *l, uint32_t cp,
 		int font_size) {
@@ -94,19 +55,8 @@ static int char_advance_width(struct guibux_launcher *l, uint32_t cp,
 	return w;
 }
 
-int guibux_text_width(FT_Face face, const char *text) {
-	int w = 0;
-	const char *p = text;
-	while (*p) {
-		FT_UInt glyph = FT_Get_Char_Index(face, utf8_next(&p));
-		if (glyph != 0 && FT_Load_Glyph(face, glyph, FT_LOAD_RENDER) == 0) {
-			w += face->glyph->advance.x / 64;
-		}
-	}
-	return w;
-}
-
-/* cached variant: uses the launcher's char-width cache (single-threaded) */
+/* cached variant of guibux_text_width: uses the launcher's char-width
+ * cache, so it stays here with char_advance_width (single-threaded) */
 static int guibux_text_width_cached(struct guibux_launcher *l,
 		const char *text) {
 	int w = 0;
@@ -116,11 +66,6 @@ static int guibux_text_width_cached(struct guibux_launcher *l,
 		w += char_advance_width(l, utf8_next(&p), font_size);
 	}
 	return w;
-}
-
-void set_color(cairo_t *cr, uint32_t c) {
-	cairo_set_source_rgb(cr, ((c >> 16) & 0xFF) / 255.0,
-		((c >> 8) & 0xFF) / 255.0, (c & 0xFF) / 255.0);
 }
 
 static void set_color_alpha(cairo_t *cr, uint32_t c, double a) {
@@ -154,67 +99,6 @@ static void topbar_bg_fill(cairo_t *cr, struct guibux_server *server,
 	}
 	cairo_rectangle(cr, x, y, w, h);
 	cairo_fill(cr);
-}
-
-void topbar_rounded_rect(cairo_t *cr, double x, double y,
-		double w, double h, double r) {
-	if (r > w / 2)
-		r = w / 2;
-	if (r > h / 2)
-		r = h / 2;
-	cairo_new_sub_path(cr);
-	cairo_arc(cr, x + w - r, y + r, r, -M_PI / 2, 0);
-	cairo_arc(cr, x + w - r, y + h - r, r, 0, M_PI / 2);
-	cairo_arc(cr, x + r, y + h - r, r, M_PI / 2, M_PI);
-	cairo_arc(cr, x + r, y + r, r, M_PI, 3 * M_PI / 2);
-	cairo_close_path(cr);
-}
-
-int launcher_draw_text_on_surface(cairo_surface_t *cs, FT_Face face,
-		const char *text, int x, int baseline, uint32_t color) {
-	uint32_t *data = (uint32_t *)cairo_image_surface_get_data(cs);
-	int stride = cairo_image_surface_get_stride(cs) / 4;
-	int sw = cairo_image_surface_get_width(cs);
-	int sh = cairo_image_surface_get_height(cs);
-	int cx = x;
-	const char *p = text;
-	while (*p) {
-		uint32_t cp = utf8_next(&p);
-		FT_UInt glyph = FT_Get_Char_Index(face, cp);
-		if (glyph == 0 || FT_Load_Glyph(face, glyph, FT_LOAD_RENDER) != 0) {
-			continue;
-		}
-		FT_GlyphSlot g = face->glyph;
-		for (uint32_t row = 0; row < g->bitmap.rows; row++) {
-			int py = baseline - (int)g->bitmap_top + (int)row;
-			if (py < 0 || py >= sh) {
-				continue;
-			}
-			for (uint32_t col = 0; col < g->bitmap.width; col++) {
-				int px = cx + (int)g->bitmap_left + (int)col;
-				if (px < 0 || px >= sw) {
-					continue;
-				}
-				uint8_t a = g->bitmap.buffer[row * g->bitmap.pitch + col];
-				if (a == 0) {
-					continue;
-				}
-				uint32_t *dst = &data[py * stride + px];
-				uint8_t r = (color >> 16) & 0xFF;
-				uint8_t gg = (color >> 8) & 0xFF;
-				uint8_t b = color & 0xFF;
-				uint8_t dr = (*dst >> 16) & 0xFF;
-				uint8_t dg = (*dst >> 8) & 0xFF;
-				uint8_t db = *dst & 0xFF;
-				r = (r * a + dr * (255 - a)) / 255;
-				gg = (gg * a + dg * (255 - a)) / 255;
-				b = (b * a + db * (255 - a)) / 255;
-				*dst = (r << 16) | (gg << 8) | b;
-			}
-		}
-		cx += g->advance.x / 64;
-	}
-	return cx - x;
 }
 
 /* per-render context for the right-side indicator items: the enabled
@@ -1060,14 +944,8 @@ void topbar_render(struct guibux_output *o) {
 			o->topbar_buffer_h != h) {
 		wlr_buffer_drop(o->topbar_buffer);
 		o->topbar_buffer = NULL;
-		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-		struct wlr_drm_format format = {
-			.format = DRM_FORMAT_XRGB8888,
-			.len = 1,
-			.modifiers = mods,
-		};
-		o->topbar_buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-			w, h, &format);
+		o->topbar_buffer = guibux_shm_buffer(server, w, h,
+			DRM_FORMAT_XRGB8888);
 		if (o->topbar_buffer == NULL) {
 			wlr_log(WLR_ERROR, "topbar: failed to create buffer on %s",
 				o->wlr_output->name ? o->wlr_output->name : "(unknown)");

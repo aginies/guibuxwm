@@ -9,7 +9,6 @@
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_buffer.h>
 #include <drm_fourcc.h>
-#include <stdlib.h>
 #include <string.h>
 #include <xkbcommon/xkbcommon.h>
 
@@ -281,22 +280,15 @@ static void panel_render(struct guibux_server *server) {
 	if (p->buffer == NULL || server->launcher.face == NULL) {
 		return;
 	}
-	void *data;
-	uint32_t format;
-	size_t stride;
-	if (!wlr_buffer_begin_data_ptr_access(p->buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) {
+	struct guibux_panel_draw d;
+	if (!panel_begin_draw(p->buffer, p->box_w * p->box_scale,
+			p->box_h * p->box_scale, p->box_scale, &d)) {
 		return;
 	}
-	if (format != DRM_FORMAT_XRGB8888) {
-		wlr_buffer_end_data_ptr_access(p->buffer);
-		return;
-	}
-	int w = p->box_w * p->box_scale;
-	int hgt = p->box_h * p->box_scale;
-	cairo_surface_t *cs = cairo_image_surface_create_for_data(
-		data, CAIRO_FORMAT_RGB24, w, hgt, (int)stride);
-	cairo_t *cr = cairo_create(cs);
+	int w = d.w;
+	int hgt = d.h;
+	cairo_t *cr = d.cr;
+	cairo_surface_t *cs = d.surface;
 
 	set_color(cr, server->color_bg);
 	cairo_paint(cr);
@@ -351,15 +343,7 @@ static void panel_render(struct guibux_server *server) {
 		"up/dn select  left/right move  m mode  r rotate  d off  esc close",
 		PANEL_PAD * p->box_scale, sb, server->color_dim);
 
-	cairo_destroy(cr);
-	cairo_surface_destroy(cs);
-	wlr_buffer_end_data_ptr_access(p->buffer);
-	if (p->scene_node != NULL) {
-		wlr_scene_buffer_set_buffer(p->scene_node, p->buffer);
-	}
-	if (p->output != NULL) {
-		wlr_output_schedule_frame(p->output);
-	}
+	panel_end_draw(&d, p->buffer, p->scene_node, p->output);
 }
 
 void outputs_panel_show(struct guibux_server *server) {
@@ -375,8 +359,6 @@ void outputs_panel_show(struct guibux_server *server) {
 	if (output == NULL) {
 		return;
 	}
-	struct wlr_box box;
-	wlr_output_layout_get_box(server->output_layout, output, &box);
 	int ew, eh;
 	wlr_output_effective_resolution(output, &ew, &eh);
 	int scale = guibux_scale_round(output->scale);
@@ -409,21 +391,21 @@ void outputs_panel_show(struct guibux_server *server) {
 	p->box_scale = scale;
 	p->output = output;
 
-	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-	struct wlr_drm_format format = {
-		.format = DRM_FORMAT_XRGB8888,
-		.len = 1,
-		.modifiers = mods,
-	};
-	p->buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-		bw * scale, p->box_h * scale, &format);
+	p->buffer = guibux_shm_buffer(server, bw * scale, p->box_h * scale,
+		DRM_FORMAT_XRGB8888);
 	if (p->buffer == NULL) {
 		return;
 	}
 	p->scene_node = wlr_scene_buffer_create(&server->scene->tree, p->buffer);
+	if (p->scene_node == NULL) {
+		wlr_buffer_drop(p->buffer);
+		p->buffer = NULL;
+		return;
+	}
 	wlr_scene_buffer_set_dest_size(p->scene_node, bw, p->box_h);
-	wlr_scene_node_set_position(&p->scene_node->node,
-		box.x + (ew - bw) / 2, box.y + (eh - p->box_h) / 2);
+	int lx, ly;
+	panel_centred_pos(server, output, bw, p->box_h, &lx, &ly);
+	wlr_scene_node_set_position(&p->scene_node->node, lx, ly);
 
 	p->active = true;
 	panel_render(server);
@@ -438,14 +420,7 @@ void outputs_panel_hide(struct guibux_server *server) {
 	p->num_entries = 0;
 	p->selected = 0;
 	p->output = NULL;
-	if (p->scene_node != NULL) {
-		wlr_scene_node_destroy(&p->scene_node->node);
-		p->scene_node = NULL;
-	}
-	if (p->buffer != NULL) {
-		wlr_buffer_drop(p->buffer);
-		p->buffer = NULL;
-	}
+	panel_destroy(&p->buffer, &p->scene_node);
 }
 
 bool outputs_panel_handle_key(struct guibux_server *server, xkb_keysym_t sym) {

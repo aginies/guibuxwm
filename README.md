@@ -5,8 +5,6 @@
 
 A simple Wayland window manager built on [wlroots 0.20](https://gitlab.freedesktop.org/wlroots/wlroots).
 
-![screenshot](src/screen.png)
-
 ## Features
 
 Window management (focus, move, resize, fullscreen), tiling modes, GNOME-style overview, command box, topbar with clock/network/audio, workspaces, XWayland, desktop notifications, and more.

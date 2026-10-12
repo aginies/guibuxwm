@@ -94,6 +94,10 @@ static void background_drop_ws_buffers(struct guibux_output *o) {
 			o->bg_ws_buffers[i] = NULL;
 		}
 	}
+	/* the node may still show a dropped buffer (the scene holds its own
+	 * reference until the next set_buffer): the tracker must not point at
+	 * freed state */
+	o->bg_current = NULL;
 	o->bg_w = 0;
 	o->bg_h = 0;
 }
@@ -110,14 +114,8 @@ static struct wlr_buffer *background_render_workspace(struct guibux_output *o,
 	int w = box.width * scale;
 	int h = box.height * scale;
 
-	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-	struct wlr_drm_format format = {
-		.format = DRM_FORMAT_XRGB8888,
-		.len = 1,
-		.modifiers = mods,
-	};
-	struct wlr_buffer *buf = wlr_allocator_create_buffer(
-		server->launcher.shm_alloc, w, h, &format);
+	struct wlr_buffer *buf = guibux_shm_buffer(server, w, h,
+		DRM_FORMAT_XRGB8888);
 	if (!buf) {
 		wlr_log(WLR_ERROR, "background: failed to create buffer on %s",
 			o->wlr_output->name ? o->wlr_output->name : "(unknown)");
@@ -219,7 +217,7 @@ void background_render(struct guibux_output *o) {
 		return;
 
 	if (!img) {
-		if (o->bg_node) {
+		if (o->bg_node && o->bg_current != NULL) {
 			background_drop_ws_buffers(o);
 			wlr_scene_buffer_set_buffer(o->bg_node, NULL);
 			wlr_output_schedule_frame(o->wlr_output);
@@ -229,6 +227,11 @@ void background_render(struct guibux_output *o) {
 
 	if (!o->bg_node) {
 		o->bg_node = wlr_scene_buffer_create(&server->scene->tree, NULL);
+		if (o->bg_node == NULL) {
+			wlr_log(WLR_ERROR, "background: failed to create scene node on %s",
+				o->wlr_output->name ? o->wlr_output->name : "(unknown)");
+			return;
+		}
 		wlr_scene_node_set_position(&o->bg_node->node, box.x, box.y);
 	}
 
@@ -242,9 +245,16 @@ void background_render(struct guibux_output *o) {
 		o->bg_scale = scale;
 	}
 
-	/* already rendered for this workspace: just swap the buffer in */
+	/* already rendered for this workspace: swap the buffer in, unless
+	 * the node already shows it - re-setting the same buffer would
+	 * destroy the scene's cached texture and re-import the full-screen
+	 * buffer on the next commit (see bg_current in guibuxwm.h) */
 	if (o->bg_ws_buffers[ws - 1]) {
+		if (o->bg_current == o->bg_ws_buffers[ws - 1]) {
+			return;
+		}
 		wlr_scene_buffer_set_buffer(o->bg_node, o->bg_ws_buffers[ws - 1]);
+		o->bg_current = o->bg_ws_buffers[ws - 1];
 		wlr_output_schedule_frame(o->wlr_output);
 		return;
 	}
@@ -255,6 +265,7 @@ void background_render(struct guibux_output *o) {
 	}
 	o->bg_ws_buffers[ws - 1] = buf;
 	wlr_scene_buffer_set_buffer(o->bg_node, buf);
+	o->bg_current = buf;
 	wlr_output_schedule_frame(o->wlr_output);
 }
 
@@ -263,5 +274,6 @@ void background_destroy(struct guibux_output *o) {
 		wlr_scene_node_destroy(&o->bg_node->node);
 		o->bg_node = NULL;
 	}
+	o->bg_current = NULL;
 	background_drop_ws_buffers(o);
 }

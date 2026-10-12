@@ -2,7 +2,6 @@
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_buffer.h>
 #include <drm_fourcc.h>
-#include <stdlib.h>
 #include <string.h>
 
 #define SWITCHER_LINE_H 28
@@ -34,15 +33,8 @@ static void switcher_preview(struct guibux_server *server) {
 	if (sb == NULL || sb->buffer == NULL) return;
 
 	if (s->preview_buf == NULL) {
-		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-		struct wlr_drm_format format = {
-			.format = DRM_FORMAT_XRGB8888,
-			.len = 1,
-			.modifiers = mods,
-		};
-		s->preview_buf = wlr_allocator_create_buffer(
-			server->launcher.shm_alloc, SWITCHER_PREVIEW_W,
-			SWITCHER_PREVIEW_H, &format);
+		s->preview_buf = guibux_shm_buffer(server, SWITCHER_PREVIEW_W,
+			SWITCHER_PREVIEW_H, DRM_FORMAT_XRGB8888);
 		if (s->preview_buf == NULL) return;
 		s->preview_w = SWITCHER_PREVIEW_W;
 		s->preview_h = SWITCHER_PREVIEW_H;
@@ -99,23 +91,15 @@ static void switcher_render(struct guibux_server *server) {
 		return;
 	}
 
-	void *data;
-	uint32_t format;
-	size_t stride;
-	if (!wlr_buffer_begin_data_ptr_access(s->buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) {
+	struct guibux_panel_draw d;
+	if (!panel_begin_draw(s->buffer, s->box_w * s->box_scale,
+			s->box_h * s->box_scale, s->box_scale, &d)) {
 		return;
 	}
-	if (format != DRM_FORMAT_XRGB8888) {
-		wlr_buffer_end_data_ptr_access(s->buffer);
-		return;
-	}
-
-	int w = s->box_w * s->box_scale;
-	int h = s->box_h * s->box_scale;
-	cairo_surface_t *cs = cairo_image_surface_create_for_data(
-		data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
-	cairo_t *cr = cairo_create(cs);
+	int w = d.w;
+	int h = d.h;
+	cairo_t *cr = d.cr;
+	cairo_surface_t *cs = d.surface;
 
 	set_color(cr, server->color_bg);
 	cairo_paint(cr);
@@ -170,15 +154,7 @@ static void switcher_render(struct guibux_server *server) {
 		launcher_draw_text_on_surface(cs, face, label, tx, mb, mc);
 	}
 
-	cairo_destroy(cr);
-	cairo_surface_destroy(cs);
-	wlr_buffer_end_data_ptr_access(s->buffer);
-	if (s->scene_node != NULL) {
-		wlr_scene_buffer_set_buffer(s->scene_node, s->buffer);
-	}
-	if (s->output != NULL) {
-		wlr_output_schedule_frame(s->output);
-	}
+	panel_end_draw(&d, s->buffer, s->scene_node, s->output);
 }
 
 void switcher_show(struct guibux_server *server) {
@@ -194,8 +170,6 @@ void switcher_show(struct guibux_server *server) {
 	if (output == NULL) {
 		return;
 	}
-	struct wlr_box box;
-	wlr_output_layout_get_box(server->output_layout, output, &box);
 	int ew, eh;
 	wlr_output_effective_resolution(output, &ew, &eh);
 	int scale = guibux_scale_round(output->scale);
@@ -219,21 +193,21 @@ void switcher_show(struct guibux_server *server) {
 	s->box_scale = scale;
 	s->output = output;
 
-	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-	struct wlr_drm_format format = {
-		.format = DRM_FORMAT_XRGB8888,
-		.len = 1,
-		.modifiers = mods,
-	};
-	s->buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-		bw * scale, s->box_h * scale, &format);
+	s->buffer = guibux_shm_buffer(server, bw * scale, s->box_h * scale,
+		DRM_FORMAT_XRGB8888);
 	if (s->buffer == NULL) {
 		return;
 	}
 	s->scene_node = wlr_scene_buffer_create(&server->scene->tree, s->buffer);
+	if (s->scene_node == NULL) {
+		wlr_buffer_drop(s->buffer);
+		s->buffer = NULL;
+		return;
+	}
 	wlr_scene_buffer_set_dest_size(s->scene_node, bw, s->box_h);
-	wlr_scene_node_set_position(&s->scene_node->node,
-		box.x + (ew - bw) / 2, box.y + (eh - s->box_h) / 2);
+	int lx, ly;
+	panel_centred_pos(server, output, bw, s->box_h, &lx, &ly);
+	wlr_scene_node_set_position(&s->scene_node->node, lx, ly);
 	wlr_scene_node_raise_to_top(&s->scene_node->node);
 	topbar_raise_all(server);
 
@@ -278,22 +252,8 @@ void switcher_hide(struct guibux_server *server) {
 	s->active = false;
 	s->num_wins = 0;
 	s->output = NULL;
-	if (s->scene_node != NULL) {
-		wlr_scene_node_destroy(&s->scene_node->node);
-		s->scene_node = NULL;
-	}
-	if (s->buffer != NULL) {
-		wlr_buffer_drop(s->buffer);
-		s->buffer = NULL;
-	}
-	if (s->preview_node != NULL) {
-		wlr_scene_node_destroy(&s->preview_node->node);
-		s->preview_node = NULL;
-	}
-	if (s->preview_buf != NULL) {
-		wlr_buffer_drop(s->preview_buf);
-		s->preview_buf = NULL;
-	}
+	panel_destroy(&s->buffer, &s->scene_node);
+	panel_destroy(&s->preview_buf, &s->preview_node);
 	s->preview_w = s->preview_h = 0;
 	process_cursor_motion(server, guibux_now_msec());
 }

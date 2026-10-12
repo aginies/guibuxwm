@@ -1,8 +1,5 @@
 #include "guibuxwm.h"
 #include <wlr/types/wlr_scene.h>
-#include <wlr/types/wlr_buffer.h>
-#include <drm_fourcc.h>
-#include <stdlib.h>
 #include <string.h>
 #include <xkbcommon/xkbcommon.h>
 
@@ -35,37 +32,16 @@ static void topbar_items_panel_render(struct guibux_server *server) {
 	if (p->buffer == NULL || server->launcher.face == NULL) {
 		return;
 	}
-	void *data;
-	uint32_t format;
-	size_t stride;
-	if (!wlr_buffer_begin_data_ptr_access(p->buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) {
+	struct guibux_panel_draw d;
+	if (!panel_begin_draw(p->buffer, p->box_w * p->box_scale,
+			p->box_h * p->box_scale, p->box_scale, &d)) {
 		return;
 	}
-	if (format != DRM_FORMAT_XRGB8888) {
-		wlr_buffer_end_data_ptr_access(p->buffer);
-		return;
-	}
-	int w = p->box_w * p->box_scale;
-	int hgt = p->box_h * p->box_scale;
-	cairo_surface_t *cs = cairo_image_surface_create_for_data(
-		data, CAIRO_FORMAT_RGB24, w, hgt, (int)stride);
-	cairo_t *cr = cairo_create(cs);
-	memset(data, 0, stride * hgt);
+	int w = d.w;
+	cairo_t *cr = d.cr;
+	cairo_surface_t *cs = d.surface;
 
-	/* translucent rounded background */
-	cairo_set_source_rgba(cr,
-		((server->color_bg >> 16) & 0xFF) / 255.0,
-		((server->color_bg >> 8) & 0xFF) / 255.0,
-		(server->color_bg & 0xFF) / 255.0, 0.88);
-	topbar_rounded_rect(cr, 0, 0, w, hgt, 12 * p->box_scale);
-	cairo_fill(cr);
-	/* subtle border */
-	cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12);
-	cairo_set_line_width(cr, p->box_scale);
-	topbar_rounded_rect(cr, p->box_scale / 2.0, p->box_scale / 2.0,
-		w - p->box_scale, hgt - p->box_scale, 11 * p->box_scale);
-	cairo_stroke(cr);
+	panel_draw_frame(&d, server->color_bg);
 
 	FT_Face face = server->launcher.face;
 	int font_px = LAUNCHER_FONT_PX * p->box_scale;
@@ -93,15 +69,7 @@ static void topbar_items_panel_render(struct guibux_server *server) {
 			mb, sc);
 	}
 
-	cairo_destroy(cr);
-	cairo_surface_destroy(cs);
-	wlr_buffer_end_data_ptr_access(p->buffer);
-	if (p->scene_node != NULL) {
-		wlr_scene_buffer_set_buffer(p->scene_node, p->buffer);
-	}
-	if (p->output != NULL) {
-		wlr_output_schedule_frame(p->output);
-	}
+	panel_end_draw(&d, p->buffer, p->scene_node, p->output);
 }
 
 void topbar_items_panel_show(struct guibux_server *server) {
@@ -116,8 +84,6 @@ void topbar_items_panel_show(struct guibux_server *server) {
 	if (output == NULL) {
 		return;
 	}
-	struct wlr_box box;
-	wlr_output_layout_get_box(server->output_layout, output, &box);
 	int ew, eh;
 	wlr_output_effective_resolution(output, &ew, &eh);
 	int scale = guibux_scale_round(output->scale);
@@ -132,21 +98,13 @@ void topbar_items_panel_show(struct guibux_server *server) {
 	p->box_scale = scale;
 	p->output = output;
 
-	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-	struct wlr_drm_format format = {
-		.format = DRM_FORMAT_XRGB8888,
-		.len = 1,
-		.modifiers = mods,
-	};
-	p->buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-		bw * scale, p->box_h * scale, &format);
-	if (p->buffer == NULL) {
+	int lx, ly;
+	panel_centred_pos(server, output, bw, p->box_h, &lx, &ly);
+	if (!panel_create(server, lx, ly, scale, bw, p->box_h,
+			&p->buffer, &p->scene_node)) {
+		p->output = NULL;
 		return;
 	}
-	p->scene_node = wlr_scene_buffer_create(&server->scene->tree, p->buffer);
-	wlr_scene_buffer_set_dest_size(p->scene_node, bw, p->box_h);
-	wlr_scene_node_set_position(&p->scene_node->node,
-		box.x + (ew - bw) / 2, box.y + (eh - p->box_h) / 2);
 	wlr_scene_node_raise_to_top(&p->scene_node->node);
 	topbar_raise_all(server);
 
@@ -162,14 +120,7 @@ void topbar_items_panel_hide(struct guibux_server *server) {
 	p->active = false;
 	p->selected = 0;
 	p->output = NULL;
-	if (p->scene_node != NULL) {
-		wlr_scene_node_destroy(&p->scene_node->node);
-		p->scene_node = NULL;
-	}
-	if (p->buffer != NULL) {
-		wlr_buffer_drop(p->buffer);
-		p->buffer = NULL;
-	}
+	panel_destroy(&p->buffer, &p->scene_node);
 }
 
 void topbar_items_panel_toggle(struct guibux_server *server, int idx) {
@@ -250,25 +201,11 @@ bool topbar_items_panel_handle_key(struct guibux_server *server, xkb_keysym_t sy
 
 int topbar_items_panel_row_at(struct guibux_server *server, double lx, double ly) {
 	struct guibux_topbar_items_panel *p = &server->topbar_items_panel;
-	if (!p->active || p->output == NULL) {
+	if (!p->active) {
 		return -1;
 	}
-	struct wlr_box box;
-	wlr_output_layout_get_box(server->output_layout, p->output, &box);
-	int ew, eh;
-	wlr_output_effective_resolution(p->output, &ew, &eh);
-	int px = (ew - p->box_w) / 2;
-	int py = (eh - p->box_h) / 2;
-	double x = lx - box.x;
-	double y = ly - box.y;
-	if (x < px || x >= px + p->box_w || y < py || y >= py + p->box_h) {
-		return -1;
-	}
-	int idx = (int)((y - py) / ITEMS_LINE_H);
-	if (idx < 0 || idx >= TOPBAR_ITEMS_MAX) {
-		return -1;
-	}
-	return idx;
+	return panel_row_at(server, p->output, p->box_w, p->box_h,
+		ITEMS_LINE_H, TOPBAR_ITEMS_MAX, lx, ly);
 }
 
 void topbar_items_panel_destroy(struct guibux_server *server) {

@@ -158,14 +158,8 @@ static bool preview_snapshot(struct guibux_server *server,
 			pv->buffer_w = 0;
 			pv->buffer_h = 0;
 		}
-		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-		struct wlr_drm_format drm_fmt = {
-			.format = DRM_FORMAT_XRGB8888,
-			.len = 1,
-			.modifiers = mods,
-		};
-		pv->buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-			PREVIEW_W, PREVIEW_H, &drm_fmt);
+		pv->buffer = guibux_shm_buffer(server, PREVIEW_W, PREVIEW_H,
+			DRM_FORMAT_XRGB8888);
 		if (pv->buffer == NULL) {
 			return false;
 		}

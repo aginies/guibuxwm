@@ -1,5 +1,4 @@
 #include "guibuxwm.h"
-#include <errno.h>
 #include <limits.h>
 #include <signal.h>
 #include <sys/signalfd.h>
@@ -9,7 +8,6 @@
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/render/drm_format_set.h>
-#include <math.h>
 
 // ---------------------------------------------------------------------------
 // Helpers: output lookup, toplevel output, visibility
@@ -661,6 +659,33 @@ static void output_sync_overlays(struct guibux_output *o) {
 	}
 }
 
+/* shared tail of every layout change: geometry may have moved, so re-pack
+ * the tiled windows, sync the topbar/background overlay nodes with the new
+ * boxes, renumber the topbars (the A/B/C letters follow the x order) and
+ * republish the state file for the guibuxwm-output tool */
+static void outputs_settle(struct guibux_server *server) {
+	struct guibux_output *o;
+	wl_list_for_each(o, &server->outputs, link) {
+		if (o->disabled) {
+			continue;
+		}
+		retile_output(o);
+		output_sync_overlays(o);
+	}
+	topbar_renumber(server);
+	outputs_state_write(server);
+}
+
+/* true when at least one placement matched a connected output */
+bool outputs_any_placed(struct guibux_server *server) {
+	for (int i = 0; i < server->num_placements; i++) {
+		if (server->placements[i].used) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void outputs_apply(struct guibux_server *server) {
 	/* the config file wins when it has an `outputs` line (the tool edits
 	 * it live); otherwise fall back to the spec used at startup */
@@ -669,7 +694,9 @@ void outputs_apply(struct guibux_server *server) {
 		spec = config_read_outputs_line(server->config_path);
 	}
 	const char *use = spec != NULL ? spec : server->outputs_env_spec;
-	struct output_placement new_placements[MAX_OUTPUT_PLACEMENTS];
+	/* zeroed: parse_output_placements_to never writes `.used`, and the
+	 * whole array is copied into the long-lived server->placements */
+	struct output_placement new_placements[MAX_OUTPUT_PLACEMENTS] = {0};
 	int num_new = 0;
 	parse_output_placements_to(new_placements, MAX_OUTPUT_PLACEMENTS,
 		use, &num_new);
@@ -691,18 +718,15 @@ void outputs_apply(struct guibux_server *server) {
 		}
 		output_apply_placement(server, o, p);
 	}
-	/* geometry may have changed: re-pack tiled windows, sync the
-	 * topbar/background overlay nodes with the new boxes, and renumber
-	 * the topbars (the A/B/C letters follow the x order) */
-	wl_list_for_each(o, &server->outputs, link) {
-		if (o->disabled) {
-			continue;
-		}
-		retile_output(o);
-		output_sync_overlays(o);
+	/* same safety net as at startup: a spec that names no connected
+	 * output (typo, monitor unplugged) must not black out the session.
+	 * Without this a live SIGHUP reload or SIGUSR1 re-apply would leave
+	 * every output unmatched and unrecoverable without a second TTY */
+	if (server->num_placements > 0 && !outputs_any_placed(server)) {
+		outputs_reset_auto(server);
+		return;
 	}
-	topbar_renumber(server);
-	outputs_state_write(server);
+	outputs_settle(server);
 }
 
 void outputs_reset_auto(struct guibux_server *server) {
@@ -730,15 +754,7 @@ void outputs_reset_auto(struct guibux_server *server) {
 				l_output, o->scene_output);
 		}
 	}
-	wl_list_for_each(o, &server->outputs, link) {
-		if (o->disabled) {
-			continue;
-		}
-		retile_output(o);
-		output_sync_overlays(o);
-	}
-	topbar_renumber(server);
-	outputs_state_write(server);
+	outputs_settle(server);
 }
 
 void outputs_state_write(struct guibux_server *server) {

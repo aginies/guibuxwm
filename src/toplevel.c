@@ -54,14 +54,8 @@ static void toplevel_border_render(struct guibux_toplevel *t) {
 			wlr_buffer_drop(t->border_buffer);
 			t->border_buffer = NULL;
 		}
-		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-		struct wlr_drm_format format = {
-			.format = DRM_FORMAT_ARGB8888,
-			.len = 1,
-			.modifiers = mods,
-		};
-		t->border_buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-			bw_d, bh_d, &format);
+		t->border_buffer = guibux_shm_buffer(server, bw_d, bh_d,
+			DRM_FORMAT_ARGB8888);
 		if (t->border_buffer == NULL) {
 			wlr_log(WLR_ERROR, "border: failed to create buffer");
 			return;

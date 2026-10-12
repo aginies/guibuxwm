@@ -69,14 +69,21 @@ static void parse_topbar_items(struct guibux_server *server,
 	free(copy);
 	if (server->topbar_item_count == 0) {
 		/* empty or all-invalid list: fall back to the full default set */
-		server->topbar_items[0] = TOPBAR_ITEM_NETWORK;
-		server->topbar_items[1] = TOPBAR_ITEM_VOLUME;
-		server->topbar_items[2] = TOPBAR_ITEM_MIC;
-		server->topbar_items[3] = TOPBAR_ITEM_BATTERY;
-		server->topbar_items[4] = TOPBAR_ITEM_NOTIFICATIONS;
-		server->topbar_items[5] = TOPBAR_ITEM_CLOCK;
-		server->topbar_item_count = TOPBAR_ITEMS_MAX;
+		topbar_items_set_defaults(server);
 	}
+}
+
+void topbar_items_set_defaults(struct guibux_server *server) {
+	static const int defaults[TOPBAR_ITEMS_MAX] = {
+		TOPBAR_ITEM_NETWORK,
+		TOPBAR_ITEM_VOLUME,
+		TOPBAR_ITEM_MIC,
+		TOPBAR_ITEM_BATTERY,
+		TOPBAR_ITEM_NOTIFICATIONS,
+		TOPBAR_ITEM_CLOCK,
+	};
+	memcpy(server->topbar_items, defaults, sizeof(defaults));
+	server->topbar_item_count = TOPBAR_ITEMS_MAX;
 }
 
 bool parse_keybind(struct guibux_server *server, const char *value) {
@@ -412,19 +419,19 @@ void load_config(struct guibux_server *server, const char *path) {
 		} else if (!strcmp(key, "topbar_alpha")) {
 			server->topbar_alpha = atoi(val);
 			if (server->topbar_alpha < 0 || server->topbar_alpha > 255) {
-				server->topbar_alpha = 217;
+				server->topbar_alpha = DEFAULT_TOPBAR_ALPHA;
 			}
 			wlr_log(WLR_INFO, "config: topbar_alpha = %d", server->topbar_alpha);
 		} else if (!strcmp(key, "window_border_width")) {
 			server->window_border_width = atoi(val);
 			if (server->window_border_width < 0 || server->window_border_width > 8) {
-				server->window_border_width = 2;
+				server->window_border_width = DEFAULT_WINDOW_BORDER_WIDTH;
 			}
 			wlr_log(WLR_INFO, "config: window_border_width = %d", server->window_border_width);
 		} else if (!strcmp(key, "overview_dim_alpha")) {
 			server->overview_dim_alpha = atoi(val);
 			if (server->overview_dim_alpha < 0 || server->overview_dim_alpha > 255) {
-				server->overview_dim_alpha = 153;
+				server->overview_dim_alpha = DEFAULT_OVERVIEW_DIM_ALPHA;
 			}
 			wlr_log(WLR_INFO, "config: overview_dim_alpha = %d", server->overview_dim_alpha);
 		} else if (!strcmp(key, "topbar_height")) {
@@ -523,7 +530,7 @@ void load_config(struct guibux_server *server, const char *path) {
 					server->effects_duration_ms > 1000) {
 				wlr_log(WLR_ERROR, "config: %s:%d: effects_duration_ms %d out of range 0..1000, using default",
 					path, lineno, server->effects_duration_ms);
-				server->effects_duration_ms = 200;
+				server->effects_duration_ms = DEFAULT_EFFECTS_DURATION_MS;
 			}
 			wlr_log(WLR_INFO, "config: effects_duration_ms = %d", server->effects_duration_ms);
 		} else if (!strcmp(key, "window_open_effect")) {
@@ -555,7 +562,7 @@ void load_config(struct guibux_server *server, const char *path) {
 					server->osd_timeout_ms > 10000) {
 				wlr_log(WLR_ERROR, "config: %s:%d: osd_timeout_ms %d out of range 0..10000, using default",
 					path, lineno, server->osd_timeout_ms);
-				server->osd_timeout_ms = 1500;
+				server->osd_timeout_ms = DEFAULT_OSD_TIMEOUT_MS;
 			}
 			wlr_log(WLR_INFO, "config: osd_timeout_ms = %d", server->osd_timeout_ms);
 		} else if (!strcmp(key, "renderer")) {

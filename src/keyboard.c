@@ -58,54 +58,46 @@ void spawn_sigchld_handler(int sig) {
 	spawn_reap();
 }
 
-void spawn_terminal(struct guibux_server *server) {
+/* fork /bin/sh -c cmd and track the child for reaping. `label` names the
+ * action in the log line; NULL logs nothing. Returns the child pid, or -1
+ * when the fork failed (logged here: every caller reported the same thing).
+ *
+ * Every fire-and-forget spawn in the compositor used to carry its own copy
+ * of this block, and the copies had drifted: one omitted spawn_track, so its
+ * shell was never waitpid()'d and lingered as a zombie. Callers that must
+ * wait for the child (lock.c) or capture its stdout (sysinfo.c) keep their
+ * own fork because their shape is genuinely different. */
+pid_t guibux_spawn(const char *cmd, const char *label) {
 	pid_t pid = fork();
 	if (pid < 0) {
-		wlr_log(WLR_ERROR, "fork failed: %m");
-		return;
+		wlr_log(WLR_ERROR, "spawn: fork failed for %s: %m",
+			label != NULL ? label : "command");
+		return -1;
 	}
 	if (pid == 0) {
-		execl("/bin/sh", "/bin/sh", "-c", server->term_cmd, (void *)NULL);
+		execl("/bin/sh", "/bin/sh", "-c", cmd, (void *)NULL);
 		_exit(127);
 	}
 	spawn_track(pid);
-	wlr_log(WLR_INFO, "spawned terminal (%s) pid %d", server->term_cmd, pid);
+	if (label != NULL) {
+		wlr_log(WLR_INFO, "spawn: %s '%s' (pid %d)", label, cmd, pid);
+	}
+	return pid;
+}
+
+void spawn_terminal(struct guibux_server *server) {
+	guibux_spawn(server->term_cmd, "terminal");
 }
 
 void spawn_network_info(struct guibux_server *server) {
 	char cmd[512];
 	snprintf(cmd, sizeof(cmd), "%s -- bash -c \"nmtui\"", server->term_cmd);
-	pid_t pid = fork();
-	if (pid < 0) {
-		wlr_log(WLR_ERROR, "fork failed: %m");
-		return;
-	}
-	if (pid == 0) {
-		execl("/bin/sh", "/bin/sh", "-c", cmd, (void *)NULL);
-		_exit(127);
-	}
-	spawn_track(pid);
-	wlr_log(WLR_INFO, "spawned nmtui terminal pid %d", pid);
-}
-
-/* fork /bin/sh -c cmd, track the child for reaping */
-static void spawn_cmd(const char *cmd) {
-	pid_t pid = fork();
-	if (pid < 0) {
-		wlr_log(WLR_ERROR, "fork failed: %m");
-		return;
-	}
-	if (pid == 0) {
-		execl("/bin/sh", "/bin/sh", "-c", cmd, (void *)NULL);
-		_exit(127);
-	}
-	spawn_track(pid);
+	guibux_spawn(cmd, "nmtui terminal");
 }
 
 void spawn_mixer(struct guibux_server *server) {
 	(void)server;
-	spawn_cmd("pavucontrol 2>/dev/null");
-	wlr_log(WLR_INFO, "spawned pavucontrol");
+	guibux_spawn("pavucontrol 2>/dev/null", "mixer");
 }
 
 /*
@@ -175,7 +167,7 @@ void setup_session_environment(struct guibux_server *server) {
 			"try-restart gnome-terminal-server 2>/dev/null",
 			wl_socket, desktop, desktop);
 	}
-	spawn_cmd(cmd);
+	guibux_spawn(cmd, NULL);
 	wlr_log(WLR_INFO, "session env: set DISPLAY/WAYLAND_DISPLAY on "
 		"systemd --user, restarting portal + terminal services");
 }
@@ -276,7 +268,7 @@ void volume_toggle_mute(struct guibux_server *server, bool mic) {
 	snprintf(cmd, sizeof(cmd), mic ?
 		"pactl set-source-mute @DEFAULT_SOURCE@ toggle 2>/dev/null" :
 		"pactl set-sink-mute @DEFAULT_SINK@ toggle 2>/dev/null");
-	spawn_cmd(cmd);
+	guibux_spawn(cmd, NULL);
 	sysinfo_audio_toggle_mute(&server->sysinfo, mic);
 	struct guibux_output *o;
 	wl_list_for_each(o, &server->outputs, link) {
@@ -300,7 +292,7 @@ static void brightness_change(struct guibux_server *server, int delta_pct) {
 	snprintf(cmd, sizeof(cmd),
 		"brightnessctl set -- %c%d%% 2>/dev/null",
 		delta_pct > 0 ? '+' : '-', abs(delta_pct));
-	spawn_cmd(cmd);
+	guibux_spawn(cmd, NULL);
 	sysinfo_brightness_adjust(&server->sysinfo, delta_pct);
 	struct guibux_sysinfo_snapshot snap;
 	sysinfo_get(&server->sysinfo, &snap);
@@ -647,6 +639,15 @@ void keyboard_handle_modifiers(struct wl_listener *listener, void *data) {
 	}
 }
 
+/* one modal overlay in the keyboard dispatch order. `fallthrough` marks the
+ * panels that must still let unhandled keys reach the keybind dispatch (so
+ * their own toggle key, e.g. Mod+p / Mod+l, can close them). */
+struct modal_dispatch {
+	const bool *active;
+	bool (*handle)(struct guibux_server *server, xkb_keysym_t sym);
+	bool fallthrough;
+};
+
 void keyboard_handle_key(struct wl_listener *listener, void *data) {
 	struct guibux_keyboard *keyboard =
 		wl_container_of(listener, keyboard, key);
@@ -696,34 +697,35 @@ void keyboard_handle_key(struct wl_listener *listener, void *data) {
 			keyboard->pressed[keyboard->num_pressed++] = keycode;
 		}
 
+		/* Modal overlays own the keyboard while active, highest priority
+		 * first. The lock is first and never falls through: nothing may
+		 * reach a client while the screen is locked. Overview is
+		 * deliberately NOT in this table - it is matched after the
+		 * F12/XF86 keys below so F12 can toggle it off and the media
+		 * keys keep working while it is open. */
+		const struct modal_dispatch modals[] = {
+			{ &server->lock.active, lock_handle_key, false },
+			{ &server->launcher.active, launcher_handle_key, false },
+			{ &server->switcher.active, switcher_handle_key, false },
+			{ &server->help.active, help_handle_key, false },
+			{ &server->notify_panel.active, notify_panel_handle_key, false },
+			{ &server->outputs_panel.active, outputs_panel_handle_key, false },
+			{ &server->power_panel.active, power_panel_handle_key, true },
+			{ &server->topbar_items_panel.active,
+				topbar_items_panel_handle_key, true },
+		};
+
 		for (int i = 0; i < nsyms; i++) {
-			if (server->lock.active) {
-				/* the lock consumes every key: nothing may reach
-				 * a client while the screen is locked */
-				handled = lock_handle_key(server, syms[i]);
-			} else if (server->launcher.active) {
-				handled = launcher_handle_key(server, syms[i]);
-			} else if (server->switcher.active) {
-				handled = switcher_handle_key(server, syms[i]);
-			} else if (server->help.active) {
-				handled = help_handle_key(server, syms[i]);
-			} else if (server->notify_panel.active) {
-				handled = notify_panel_handle_key(server, syms[i]);
-			} else if (server->outputs_panel.active) {
-				handled = outputs_panel_handle_key(server, syms[i]);
-			} else if (server->power_panel.active) {
-				handled = power_panel_handle_key(server, syms[i]);
-				if (!handled) {
-					/* unhandled keys (e.g. Mod+p to toggle the
-					 * panel) fall through to keybind dispatch */
-					handled = handle_keybinding(server, base_sym, modifiers) ||
-						handle_keybinding(server, syms[i], modifiers);
+			const struct modal_dispatch *modal = NULL;
+			for (size_t m = 0; m < sizeof(modals) / sizeof(modals[0]); m++) {
+				if (*modals[m].active) {
+					modal = &modals[m];
+					break;
 				}
-			} else if (server->topbar_items_panel.active) {
-				handled = topbar_items_panel_handle_key(server, syms[i]);
-				if (!handled) {
-					/* unhandled keys (e.g. Mod+l to toggle the
-					 * panel) fall through to keybind dispatch */
+			}
+			if (modal != NULL) {
+				handled = modal->handle(server, syms[i]);
+				if (!handled && modal->fallthrough) {
 					handled = handle_keybinding(server, base_sym, modifiers) ||
 						handle_keybinding(server, syms[i], modifiers);
 				}

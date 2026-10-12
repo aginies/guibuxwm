@@ -310,14 +310,7 @@ static void screenshot_render_border(struct guibux_server *server,
 		wlr_scene_node_destroy(&ss->sel_node->node);
 		ss->sel_node = NULL;
 	}
-	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-	struct wlr_drm_format format = {
-		.format = DRM_FORMAT_XRGB8888,
-		.len = 1,
-		.modifiers = mods,
-	};
-	ss->sel_buf = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-		bw, bh, &format);
+	ss->sel_buf = guibux_shm_buffer(server, bw, bh, DRM_FORMAT_XRGB8888);
 	if (ss->sel_buf == NULL) {
 		return;
 	}

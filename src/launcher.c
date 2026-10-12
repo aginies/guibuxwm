@@ -242,13 +242,15 @@ static const char *resolve_icon_impl(const char *icon_name, bool only_symbolic) 
 	}
 	snprintf(e->name, sizeof(e->name), "%s", icon_name);
 	e->symbolic = only_symbolic;
+	/* the evicted slot inherits a shifted-in entry's fields, so miss must
+	 * be reset here or a resolved icon would stay reported missing */
+	e->miss = !found;
 	if (found) {
 		snprintf(e->path, sizeof(e->path), "%s", found);
 		wlr_log(WLR_INFO, "launcher: icon '%s' (%s) -> %s",
 			icon_name, only_symbolic ? "symbolic" : "standard", found);
 		return e->path;
 	}
-	e->miss = true;
 	wlr_log(WLR_DEBUG, "launcher: icon '%s' (%s) not found",
 		icon_name, only_symbolic ? "symbolic" : "standard");
 	return NULL;
@@ -311,10 +313,85 @@ static uint8_t *get_cached_icon(struct guibux_launcher *l,
 	return data;
 }
 
+#ifdef GUIBUX_HAS_RSVG
+/* rendered-SVG cache keyed by (path, target width): librsvg re-parses
+ * the XML on every render and the topbar redraws its symbolic icons on
+ * every tick, which showed up as the top CPU consumer. The rendered
+ * ARGB32 surface is the same for both consumers: the topbar uses its
+ * alpha channel as a recolor mask, the launcher paints it as a source.
+ * Entries are borrowed from the static table (LRU-evicted, never freed
+ * wholesale - same lifetime model as icon_resolve_cache) */
+#define SVG_CACHE_SIZE 32
+struct svg_cache_entry {
+	char path[256];
+	int tw, th;
+	cairo_surface_t *surf;
+};
+static struct svg_cache_entry svg_cache[SVG_CACHE_SIZE];
+static int svg_cache_count;
+
+/* render `path` at `tw` device px wide (height keeps the aspect ratio)
+ * and cache it; returns the cached surface (do not destroy) or NULL
+ * when the SVG cannot be loaded. *out_th receives the rendered height */
+static cairo_surface_t *get_cached_svg(const char *path, int tw, int *out_th) {
+	for (int i = 0; i < svg_cache_count; i++) {
+		if (svg_cache[i].tw == tw &&
+				strcmp(svg_cache[i].path, path) == 0) {
+			*out_th = svg_cache[i].th;
+			return svg_cache[i].surf;
+		}
+	}
+	GError *err = NULL;
+	RsvgHandle *handle = rsvg_handle_new_from_file(path, &err);
+	if (handle == NULL) {
+		if (err) {
+			g_error_free(err);
+		}
+		return NULL;
+	}
+	cairo_surface_t *surf = NULL;
+	gdouble dw = 0, dh = 0;
+	rsvg_handle_get_intrinsic_size_in_pixels(handle, &dw, &dh);
+	if (dw > 0 && dh > 0 && tw > 0) {
+		int th = (int)(dh * tw / dw + 0.5);
+		if (th < 1) {
+			th = 1;
+		}
+		surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, tw, th);
+		cairo_t *sfc = cairo_create(surf);
+		/* render directly at the target size (no bilinear upscale:
+		 * upsampling a 16px icon bleeds edge alpha into the topbar
+		 * background and shifts the perceived color) */
+		RsvgRectangle r = {0, 0, dw, dh};
+		cairo_scale(sfc, (double)tw / dw, (double)th / dh);
+		rsvg_handle_render_document(handle, sfc, &r, NULL);
+		cairo_destroy(sfc);
+
+		struct svg_cache_entry *e;
+		if (svg_cache_count < SVG_CACHE_SIZE) {
+			e = &svg_cache[svg_cache_count++];
+		} else {
+			cairo_surface_destroy(svg_cache[0].surf);
+			memmove(&svg_cache[0], &svg_cache[1],
+				(SVG_CACHE_SIZE - 1) * sizeof(svg_cache[0]));
+			e = &svg_cache[SVG_CACHE_SIZE - 1];
+		}
+		snprintf(e->path, sizeof(e->path), "%s", path);
+		e->tw = tw;
+		e->th = th;
+		e->surf = surf;
+		*out_th = th;
+	}
+	g_object_unref(handle);
+	return surf;
+}
+#endif
+
 /* draw a cached icon at (pad, vertically centered in the line),
  * scaled to LAUNCHER_ICON_SIZE * box_scale; advance *tx past the
  * icon plus padding when drawn. PNG goes through the stb cache;
- * SVG is rendered with librsvg (no recolor: app icons are full-color) */
+ * SVG goes through the rendered-SVG cache (no recolor: app icons are
+ * full-color) */
 static void launcher_draw_icon(cairo_t *cr, struct guibux_launcher *l,
 		const char *path, int ly, int lh, int pad, int *tx) {
 	if (path[0] == '\0')
@@ -323,33 +400,12 @@ static void launcher_draw_icon(cairo_t *cr, struct guibux_launcher *l,
 
 #ifdef GUIBUX_HAS_RSVG
 	if (strstr(path, ".svg") != NULL) {
-		GError *err = NULL;
-		RsvgHandle *handle = rsvg_handle_new_from_file(path, &err);
-		if (handle == NULL) {
-			if (err) {
-				g_error_free(err);
-			}
+		int th = 0;
+		cairo_surface_t *surf = get_cached_svg(path, target, &th);
+		if (surf == NULL) {
 			return;
 		}
-		gdouble dw = 0, dh = 0;
-		rsvg_handle_get_intrinsic_size_in_pixels(handle, &dw, &dh);
-		if (dw <= 0 || dh <= 0) {
-			g_object_unref(handle);
-			return;
-		}
-		int th = (int)(dh * target / dw + 0.5);
 		int iy = ly + (lh - th) / 2;
-		/* render directly at the target size (no bilinear upscale) */
-		cairo_surface_t *surf = cairo_image_surface_create(
-			CAIRO_FORMAT_ARGB32, target, th);
-		cairo_t *sfc = cairo_create(surf);
-		{
-			RsvgRectangle r = {0, 0, dw, dh};
-			cairo_scale(sfc, (double)target / dw, (double)th / dh);
-			rsvg_handle_render_document(handle, sfc, &r, NULL);
-		}
-		cairo_destroy(sfc);
-		g_object_unref(handle);
 		cairo_pattern_t *pat = cairo_pattern_create_for_surface(surf);
 		cairo_save(cr);
 		cairo_translate(cr, pad, iy);
@@ -357,7 +413,6 @@ static void launcher_draw_icon(cairo_t *cr, struct guibux_launcher *l,
 		cairo_paint(cr);
 		cairo_restore(cr);
 		cairo_pattern_destroy(pat);
-		cairo_surface_destroy(surf);
 		*tx += target + LAUNCHER_ICON_PAD * l->box_scale;
 		return;
 	}
@@ -406,38 +461,16 @@ int topbar_icon_draw(cairo_t *cr, struct guibux_launcher *l,
 
 #ifdef GUIBUX_HAS_RSVG
 	if (strstr(path, ".svg") != NULL) {
-		GError *err = NULL;
-		RsvgHandle *handle = rsvg_handle_new_from_file(path, &err);
-		if (handle == NULL) {
-			if (err) {
-				g_error_free(err);
-			}
+		int th = 0;
+		cairo_surface_t *surf = get_cached_svg(path, tw, &th);
+		if (surf == NULL) {
 			return 0;
 		}
-		gdouble dw = 0, dh = 0;
-		rsvg_handle_get_intrinsic_size_in_pixels(handle, &dw, &dh);
-		if (dw <= 0 || dh <= 0) {
-			g_object_unref(handle);
-			return 0;
-		}
-		int th = (int)(dh * tw / dw + 0.5);
 		iy = cy * scale - th / 2;
 
-		/* render directly at the target size (no bilinear upscale:
-		 * upsampling a 16px icon bleeds edge alpha into the topbar
-		 * background and shifts the perceived color); the alpha channel
-		 * is then used as a mask to paint the icon in the target color */
-		cairo_surface_t *surf = cairo_image_surface_create(
-			CAIRO_FORMAT_ARGB32, tw, th);
-		cairo_t *sfc = cairo_create(surf);
-		{
-			RsvgRectangle r = {0, 0, dw, dh};
-			cairo_scale(sfc, (double)tw / dw, (double)th / dh);
-			rsvg_handle_render_document(handle, sfc, &r, NULL);
-		}
-		cairo_destroy(sfc);
-		g_object_unref(handle);
-
+		/* the alpha channel of the rendered icon is used as a mask to
+		 * paint it in the target color, so one cached surface serves
+		 * every color (see get_cached_svg) */
 		cairo_pattern_t *pat = cairo_pattern_create_for_surface(surf);
 		cairo_save(cr);
 		cairo_translate(cr, ix, iy);
@@ -448,7 +481,7 @@ int topbar_icon_draw(cairo_t *cr, struct guibux_launcher *l,
 		cairo_mask(cr, pat);
 		cairo_restore(cr);
 		cairo_pattern_destroy(pat);
-		cairo_surface_destroy(surf);
+		/* the surface belongs to the SVG cache: do not destroy */
 		return size;
 	}
 #endif
@@ -967,19 +1000,6 @@ static void launcher_render(struct guibux_server *server) {
 	}
 }
 
-static void launcher_spawn(struct guibux_server *server, const char *cmd) {
-	pid_t pid = fork();
-	if (pid < 0) {
-		wlr_log(WLR_ERROR, "launcher: fork failed: %m");
-		return;
-	}
-	if (pid == 0) {
-		execl("/bin/sh", "/bin/sh", "-c", cmd, (void *)NULL);
-		_exit(127);
-	}
-	spawn_track(pid);
-	wlr_log(WLR_INFO, "launcher: running '%s' (pid %d)", cmd, pid);
-}
 
 void launcher_show(struct guibux_server *server) {
 	struct guibux_launcher *l = &server->launcher;
@@ -1009,19 +1029,19 @@ void launcher_show(struct guibux_server *server) {
 	l->box_scale = scale;
 	l->output = output;
 
-	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-	struct wlr_drm_format format = {
-		.format = DRM_FORMAT_XRGB8888,
-		.len = 1,
-		.modifiers = mods,
-	};
-	l->buffer = wlr_allocator_create_buffer(l->shm_alloc,
-		bw * scale, l->box_h * scale, &format);
+	l->buffer = guibux_shm_buffer(server, bw * scale, l->box_h * scale,
+		DRM_FORMAT_XRGB8888);
 	if (l->buffer == NULL) {
 		wlr_log(WLR_ERROR, "launcher: failed to create buffer");
 		return;
 	}
 	l->scene_node = wlr_scene_buffer_create(&server->scene->tree, l->buffer);
+	if (l->scene_node == NULL) {
+		wlr_log(WLR_ERROR, "launcher: failed to create scene node");
+		wlr_buffer_drop(l->buffer);
+		l->buffer = NULL;
+		return;
+	}
 	wlr_scene_buffer_set_dest_size(l->scene_node, bw, l->box_h);
 	wlr_scene_node_set_position(&l->scene_node->node,
 		box.x + (ew - bw) / 2, box.y + (eh - l->box_h) / 2);
@@ -1084,7 +1104,7 @@ bool launcher_handle_key(struct guibux_server *server, xkb_keysym_t sym) {
 			snprintf(cmd, sizeof(cmd), "%s", l->text);
 		}
 		if (cmd[0] != '\0') {
-			launcher_spawn(server, cmd);
+			guibux_spawn(cmd, "launcher");
 		}
 		launcher_hide(server);
 		return true;

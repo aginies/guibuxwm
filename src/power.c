@@ -2,10 +2,10 @@
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_buffer.h>
 #include <drm_fourcc.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/wait.h>
 #include <xkbcommon/xkbcommon.h>
 
 #define POWER_LINE_H 28
@@ -40,26 +40,9 @@ static const char *power_commands[POWER_COUNT] = {
 	"systemctl poweroff",
 };
 
-/* run a power command through the shell with the session env available */
-static void power_run(const char *cmd) {
-	pid_t pid = fork();
-	if (pid < 0) {
-		wlr_log(WLR_ERROR, "power: fork failed: %m");
-		return;
-	}
-	if (pid == 0) {
-		execl("/bin/sh", "/bin/sh", "-c", cmd, (void *)NULL);
-		_exit(127);
-	}
-	/* track the child so the SIGCHLD handler reaps it; without this the
-	 * shell (and the systemctl/loginctl it runs) is never waitpid()'d and
-	 * lingers as a zombie, and the action silently does nothing */
-	spawn_track(pid);
-	wlr_log(WLR_INFO, "power: %s (pid %d)", cmd, pid);
-}
 
 /* which binaries back each action; an action is available when its
- * binary is on $PATH. Probed once, on the first panel show. Lock is
+ * binary is on $PATH. Probed once at startup by power_panel_init. Lock is
  * NULL: it runs in-process (lock_show) and needs no binary */
 static const char *power_binaries[POWER_COUNT] = {
 	"systemctl",  /* suspend   */
@@ -70,35 +53,45 @@ static const char *power_binaries[POWER_COUNT] = {
 	"systemctl",  /* shut down */
 };
 
-static bool power_avail[POWER_COUNT];
-static bool power_probed = false;
+/* true when `name` is an executable somewhere on $PATH. A direct scan
+ * replaces the old `sh -c "command -v X"` probe, which forked six shells
+ * with a blocking waitpid on the main thread and stalled the compositor
+ * the first time the power menu was opened */
+static bool binary_on_path(const char *name) {
+	const char *path = getenv("PATH");
+	if (path == NULL || path[0] == '\0') {
+		path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+	}
+	size_t name_len = strlen(name);
+	char probe[PATH_MAX];
+	const char *seg = path;
+	while (seg != NULL) {
+		const char *colon = strchr(seg, ':');
+		size_t len = colon != NULL ? (size_t)(colon - seg) : strlen(seg);
+		/* +2 for the '/' and the NUL */
+		if (len > 0 && len + name_len + 2 <= sizeof(probe)) {
+			memcpy(probe, seg, len);
+			probe[len] = '/';
+			memcpy(probe + len + 1, name, name_len + 1);
+			if (access(probe, X_OK) == 0) {
+				return true;
+			}
+		}
+		seg = colon != NULL ? colon + 1 : NULL;
+	}
+	return false;
+}
 
-static void power_probe(void) {
-	if (power_probed) {
+void power_panel_init(struct guibux_server *server) {
+	struct guibux_power_panel *p = &server->power_panel;
+	if (p->probed) {
 		return;
 	}
-	power_probed = true;
+	p->probed = true;
 	for (int i = 0; i < POWER_COUNT; i++) {
 		/* no binary = always available (in-process action) */
-		if (power_binaries[i] == NULL) {
-			power_avail[i] = true;
-			continue;
-		}
-		char cmd[128];
-		snprintf(cmd, sizeof(cmd), "command -v %s >/dev/null 2>&1",
-			power_binaries[i]);
-		pid_t pid = fork();
-		if (pid < 0) {
-			power_avail[i] = false;
-			continue;
-		}
-		if (pid == 0) {
-			execl("/bin/sh", "/bin/sh", "-c", cmd, (void *)NULL);
-			_exit(127);
-		}
-		int st = 0;
-		waitpid(pid, &st, 0);
-		power_avail[i] = WIFEXITED(st) && WEXITSTATUS(st) == 0;
+		p->avail[i] = power_binaries[i] == NULL ||
+			binary_on_path(power_binaries[i]);
 	}
 }
 
@@ -107,37 +100,17 @@ static void power_panel_render(struct guibux_server *server) {
 	if (p->buffer == NULL || server->launcher.face == NULL) {
 		return;
 	}
-	void *data;
-	uint32_t format;
-	size_t stride;
-	if (!wlr_buffer_begin_data_ptr_access(p->buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &format, &stride)) {
+	struct guibux_panel_draw d;
+	if (!panel_begin_draw(p->buffer, p->box_w * p->box_scale,
+			p->box_h * p->box_scale, p->box_scale, &d)) {
 		return;
 	}
-	if (format != DRM_FORMAT_XRGB8888) {
-		wlr_buffer_end_data_ptr_access(p->buffer);
-		return;
-	}
-	int w = p->box_w * p->box_scale;
-	int hgt = p->box_h * p->box_scale;
-	cairo_surface_t *cs = cairo_image_surface_create_for_data(
-		data, CAIRO_FORMAT_RGB24, w, hgt, (int)stride);
-	cairo_t *cr = cairo_create(cs);
-	memset(data, 0, stride * hgt);
+	int w = d.w;
+	int hgt = d.h;
+	cairo_t *cr = d.cr;
+	cairo_surface_t *cs = d.surface;
 
-	/* translucent rounded background */
-	cairo_set_source_rgba(cr,
-		((server->color_bg >> 16) & 0xFF) / 255.0,
-		((server->color_bg >> 8) & 0xFF) / 255.0,
-		(server->color_bg & 0xFF) / 255.0, 0.88);
-	topbar_rounded_rect(cr, 0, 0, w, hgt, 12 * p->box_scale);
-	cairo_fill(cr);
-	/* subtle border */
-	cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12);
-	cairo_set_line_width(cr, p->box_scale);
-	topbar_rounded_rect(cr, p->box_scale / 2.0, p->box_scale / 2.0,
-		w - p->box_scale, hgt - p->box_scale, 11 * p->box_scale);
-	cairo_stroke(cr);
+	panel_draw_frame(&d, server->color_bg);
 
 	FT_Face face = server->launcher.face;
 	int font_px = LAUNCHER_FONT_PX * p->box_scale;
@@ -156,28 +129,20 @@ static void power_panel_render(struct guibux_server *server) {
 			(w - mw * p->box_scale) / 2,
 			(hgt / 2) * p->box_scale - font_px * p->box_scale / 2, mc);
 		char hint[64];
-		snprintf(hint, sizeof(hint), "Enter=yes  Esc=no");
+		snprintf(hint, sizeof(hint), "%s", "Enter=yes  Esc=no");
 		int hw = guibux_text_width(face, hint) / p->box_scale;
 		uint32_t hc = server->color_text;
 		launcher_draw_text_on_surface(cs, face, hint,
 			(w - hw * p->box_scale) / 2,
 			(hgt / 2) * p->box_scale + font_px * p->box_scale / 2, hc);
-		cairo_destroy(cr);
-		cairo_surface_destroy(cs);
-		wlr_buffer_end_data_ptr_access(p->buffer);
-		if (p->scene_node != NULL) {
-			wlr_scene_buffer_set_buffer(p->scene_node, p->buffer);
-		}
-		if (p->output != NULL) {
-			wlr_output_schedule_frame(p->output);
-		}
+		panel_end_draw(&d, p->buffer, p->scene_node, p->output);
 		return;
 	}
 
 	for (int i = 0; i < POWER_COUNT; i++) {
 		int ly = i * POWER_LINE_H * p->box_scale;
 		int lh = POWER_LINE_H * p->box_scale;
-		bool avail = power_avail[i];
+		bool avail = p->avail[i];
 		if (i == p->selected && avail) {
 			set_color(cr, server->color_highlight);
 			cairo_rectangle(cr, 0, ly, w, lh);
@@ -190,24 +155,13 @@ static void power_panel_render(struct guibux_server *server) {
 		launcher_draw_text_on_surface(cs, face, power_labels[i],
 			POWER_PAD * p->box_scale, mb, tc);
 		/* right-aligned key hint */
-		char key[8];
-		snprintf(key, sizeof(key), "%s", power_keys[i]);
-		int kw = guibux_text_width(face, key) / p->box_scale;
-		uint32_t kc = !avail ? server->color_dim : server->color_dim;
-		launcher_draw_text_on_surface(cs, face, key,
+		int kw = guibux_text_width(face, power_keys[i]) / p->box_scale;
+		launcher_draw_text_on_surface(cs, face, power_keys[i],
 			w - POWER_PAD * p->box_scale - kw * p->box_scale,
-			mb, kc);
+			mb, server->color_dim);
 	}
 
-	cairo_destroy(cr);
-	cairo_surface_destroy(cs);
-	wlr_buffer_end_data_ptr_access(p->buffer);
-	if (p->scene_node != NULL) {
-		wlr_scene_buffer_set_buffer(p->scene_node, p->buffer);
-	}
-	if (p->output != NULL) {
-		wlr_output_schedule_frame(p->output);
-	}
+	panel_end_draw(&d, p->buffer, p->scene_node, p->output);
 }
 
 void power_panel_show(struct guibux_server *server) {
@@ -218,14 +172,10 @@ void power_panel_show(struct guibux_server *server) {
 	tooltip_hide(server);
 	osd_hide(server);
 
-	power_probe();
-
 	struct wlr_output *output = output_at_cursor(server);
 	if (output == NULL) {
 		return;
 	}
-	struct wlr_box box;
-	wlr_output_layout_get_box(server->output_layout, output, &box);
 	int ew, eh;
 	wlr_output_effective_resolution(output, &ew, &eh);
 	int scale = guibux_scale_round(output->scale);
@@ -235,7 +185,7 @@ void power_panel_show(struct guibux_server *server) {
 	p->confirming = false;
 	p->confirm_idx = 0;
 	for (int i = 0; i < POWER_COUNT; i++) {
-		if (power_avail[i]) {
+		if (p->avail[i]) {
 			p->selected = i;
 			break;
 		}
@@ -249,21 +199,13 @@ void power_panel_show(struct guibux_server *server) {
 	p->box_scale = scale;
 	p->output = output;
 
-	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-	struct wlr_drm_format format = {
-		.format = DRM_FORMAT_XRGB8888,
-		.len = 1,
-		.modifiers = mods,
-	};
-	p->buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-		bw * scale, p->box_h * scale, &format);
-	if (p->buffer == NULL) {
+	int lx, ly;
+	panel_centred_pos(server, output, bw, p->box_h, &lx, &ly);
+	if (!panel_create(server, lx, ly, scale, bw, p->box_h,
+			&p->buffer, &p->scene_node)) {
+		p->output = NULL;
 		return;
 	}
-	p->scene_node = wlr_scene_buffer_create(&server->scene->tree, p->buffer);
-	wlr_scene_buffer_set_dest_size(p->scene_node, bw, p->box_h);
-	wlr_scene_node_set_position(&p->scene_node->node,
-		box.x + (ew - bw) / 2, box.y + (eh - p->box_h) / 2);
 	wlr_scene_node_raise_to_top(&p->scene_node->node);
 	topbar_raise_all(server);
 
@@ -279,18 +221,12 @@ void power_panel_hide(struct guibux_server *server) {
 	p->active = false;
 	p->selected = 0;
 	p->output = NULL;
-	if (p->scene_node != NULL) {
-		wlr_scene_node_destroy(&p->scene_node->node);
-		p->scene_node = NULL;
-	}
-	if (p->buffer != NULL) {
-		wlr_buffer_drop(p->buffer);
-		p->buffer = NULL;
-	}
+	panel_destroy(&p->buffer, &p->scene_node);
 }
 
 void power_panel_select(struct guibux_server *server, int idx) {
-	if (idx < 0 || idx >= POWER_COUNT || !power_avail[idx]) {
+	struct guibux_power_panel *p = &server->power_panel;
+	if (idx < 0 || idx >= POWER_COUNT || !p->avail[idx]) {
 		return;
 	}
 	if (idx == POWER_LOCK) {
@@ -299,7 +235,6 @@ void power_panel_select(struct guibux_server *server, int idx) {
 		lock_show(server);
 		return;
 	}
-	struct guibux_power_panel *p = &server->power_panel;
 	p->confirming = true;
 	p->confirm_idx = idx;
 	power_panel_render(server);
@@ -309,7 +244,7 @@ static void power_panel_confirm(struct guibux_server *server) {
 	struct guibux_power_panel *p = &server->power_panel;
 	int idx = p->confirm_idx;
 	power_panel_hide(server);
-	power_run(power_commands[idx]);
+	guibux_spawn(power_commands[idx], "power");
 }
 
 static void power_panel_cancel(struct guibux_server *server) {
@@ -324,7 +259,7 @@ static void power_panel_move(struct guibux_server *server, int dir) {
 	struct guibux_power_panel *p = &server->power_panel;
 	for (int step = 1; step <= POWER_COUNT; step++) {
 		int i = (p->selected + dir * step + POWER_COUNT * 2) % POWER_COUNT;
-		if (power_avail[i]) {
+		if (p->avail[i]) {
 			p->selected = i;
 			break;
 		}
@@ -391,22 +326,13 @@ bool power_panel_handle_key(struct guibux_server *server, xkb_keysym_t sym) {
 
 int power_panel_action_at(struct guibux_server *server, double lx, double ly) {
 	struct guibux_power_panel *p = &server->power_panel;
-	if (!p->active || p->output == NULL) {
+	if (!p->active) {
 		return -1;
 	}
-	struct wlr_box box;
-	wlr_output_layout_get_box(server->output_layout, p->output, &box);
-	int ew, eh;
-	wlr_output_effective_resolution(p->output, &ew, &eh);
-	int px = (ew - p->box_w) / 2;
-	int py = (eh - p->box_h) / 2;
-	double x = lx - box.x;
-	double y = ly - box.y;
-	if (x < px || x >= px + p->box_w || y < py || y >= py + p->box_h) {
-		return -1;
-	}
-	int idx = (int)((y - py) / POWER_LINE_H);
-	if (idx < 0 || idx >= POWER_COUNT || !power_avail[idx]) {
+	int idx = panel_row_at(server, p->output, p->box_w, p->box_h,
+		POWER_LINE_H, POWER_COUNT, lx, ly);
+	/* unavailable actions (missing binary) are dimmed and not clickable */
+	if (idx >= 0 && !p->avail[idx]) {
 		return -1;
 	}
 	return idx;

@@ -196,15 +196,8 @@ static void overview_create_ws_cols(struct guibux_server *server) {
 		}
 		int sc = guibux_scale_round(o->wlr_output->scale);
 
-		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-		struct wlr_drm_format fmt = {
-			.format = DRM_FORMAT_XRGB8888,
-			.len = 1,
-			.modifiers = mods,
-		};
-		o->overview_ws_col_buf = wlr_allocator_create_buffer(
-			server->launcher.shm_alloc,
-			OVERVIEW_WS_COL_W * sc, area_h * sc, &fmt);
+		o->overview_ws_col_buf = guibux_shm_buffer(server,
+			OVERVIEW_WS_COL_W * sc, area_h * sc, DRM_FORMAT_XRGB8888);
 		if (!o->overview_ws_col_buf) {
 			continue;
 		}
@@ -364,14 +357,8 @@ static void overview_create_overlays(struct guibux_server *server) {
 		if (lw < 30) lw = 30;
 		int lh = OVERVIEW_LABEL_FONT + 10;
 
-		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-		struct wlr_drm_format fmt = {
-			.format = DRM_FORMAT_XRGB8888,
-			.len = 1,
-			.modifiers = mods,
-		};
-		ov->label_buf[i] = wlr_allocator_create_buffer(
-			server->launcher.shm_alloc, lw * sc, lh * sc, &fmt);
+		ov->label_buf[i] = guibux_shm_buffer(server, lw * sc, lh * sc,
+			DRM_FORMAT_XRGB8888);
 		if (!ov->label_buf[i]) continue;
 
 		ov->label_w[i] = lw;

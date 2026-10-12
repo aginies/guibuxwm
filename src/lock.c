@@ -258,14 +258,8 @@ void lock_show(struct guibux_server *server) {
 		lo->h = box.height;
 		lo->scale = scale;
 
-		uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-		struct wlr_drm_format format = {
-			.format = DRM_FORMAT_XRGB8888,
-			.len = 1,
-			.modifiers = mods,
-		};
-		lo->buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-			box.width * scale, box.height * scale, &format);
+		lo->buffer = guibux_shm_buffer(server, box.width * scale,
+			box.height * scale, DRM_FORMAT_XRGB8888);
 		if (lo->buffer == NULL) {
 			lk->num_outs--;
 			continue;
@@ -305,6 +299,14 @@ void lock_show(struct guibux_server *server) {
 		}
 		lo->scene_node = wlr_scene_buffer_create(&server->scene->tree,
 			lo->buffer);
+		if (lo->scene_node == NULL) {
+			free(lo->bg_pixels);
+			lo->bg_pixels = NULL;
+			wlr_buffer_drop(lo->buffer);
+			lo->buffer = NULL;
+			lk->num_outs--;
+			continue;
+		}
 		wlr_scene_buffer_set_dest_size(lo->scene_node, box.width, box.height);
 		wlr_scene_node_set_position(&lo->scene_node->node, box.x, box.y);
 		wlr_scene_node_raise_to_top(&lo->scene_node->node);

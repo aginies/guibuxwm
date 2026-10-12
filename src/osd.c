@@ -2,7 +2,6 @@
 #include <wlr/types/wlr_scene.h>
 #include <drm_fourcc.h>
 #include <time.h>
-#include <string.h>
 
 #define OSD_PAD 12
 #define OSD_MIN_W 220
@@ -112,14 +111,8 @@ void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
 	if (by < 4)
 		by = 4;
 
-	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-	struct wlr_drm_format format = {
-		.format = DRM_FORMAT_XRGB8888,
-		.len = 1,
-		.modifiers = mods,
-	};
-	osd->buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-		bw * scale, bh * scale, &format);
+	osd->buffer = guibux_shm_buffer(server, bw * scale, bh * scale,
+		DRM_FORMAT_XRGB8888);
 	if (osd->buffer == NULL) {
 		wlr_log(WLR_ERROR, "osd: failed to create buffer on %s",
 			output->name ? output->name : "(unknown)");
@@ -143,60 +136,51 @@ void osd_show(struct guibux_server *server, enum guibux_osd_kind kind,
 	osd->active = true;
 	osd->hide_at_ms = osd_now_ms() + server->osd_timeout_ms;
 
-	void *data;
-	uint32_t buf_format;
-	size_t stride;
-	if (wlr_buffer_begin_data_ptr_access(osd->buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &buf_format, &stride)) {
-		if (buf_format == DRM_FORMAT_XRGB8888) {
-			int w = bw * scale, h = bh * scale;
-			cairo_surface_t *cs = cairo_image_surface_create_for_data(
-				data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
-			cairo_t *cr = cairo_create(cs);
-			memset(data, 0, stride * h);
-			/* translucent rounded background */
-			cairo_set_source_rgba(cr,
-				((server->color_bg >> 16) & 0xFF) / 255.0,
-				((server->color_bg >> 8) & 0xFF) / 255.0,
-				(server->color_bg & 0xFF) / 255.0, 0.85);
-			topbar_rounded_rect(cr, 0, 0, w, h, 12 * scale);
-			cairo_fill(cr);
-			/* subtle border */
-			cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.15);
-			cairo_set_line_width(cr, scale);
-			topbar_rounded_rect(cr, scale / 2.0, scale / 2.0,
-				w - scale, h - scale, 11 * scale);
-			cairo_stroke(cr);
-			int baseline = OSD_PAD * scale + text_h * scale / 2 +
-				font_px * 35 / 100;
-			launcher_draw_text_on_surface(cs, server->launcher.face, text,
-				OSD_PAD * scale, baseline, server->color_text);
-			if (kind != OSD_SHOT && kind != OSD_WS) {
-				int bar_y = (OSD_PAD + OSD_TEXT_H + OSD_TEXT_BAR_GAP) * scale;
-				int bar_w = (w - 2 * OSD_PAD * scale);
-				cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12);
-				topbar_rounded_rect(cr, OSD_PAD * scale, bar_y,
-					bar_w, OSD_BAR_H * scale, (OSD_BAR_H / 2) * scale);
-				cairo_fill(cr);
-				int fill_w = muted ? 0 : (bar_w * value) / 100;
-				if (fill_w > bar_w)
-					fill_w = bar_w;
-				if (fill_w < 0)
-					fill_w = 0;
-				if (fill_w > 0) {
-					set_color(cr, server->color_accent);
-					topbar_rounded_rect(cr, OSD_PAD * scale, bar_y,
-						fill_w, OSD_BAR_H * scale, (OSD_BAR_H / 2) * scale);
-					cairo_fill(cr);
-				}
-			}
-			cairo_destroy(cr);
-			cairo_surface_destroy(cs);
-		}
-		wlr_buffer_end_data_ptr_access(osd->buffer);
+	struct guibux_panel_draw d;
+	if (!panel_begin_draw(osd->buffer, bw * scale, bh * scale, scale, &d)) {
+		return;
 	}
-	wlr_scene_buffer_set_buffer(osd->scene_node, osd->buffer);
-	wlr_output_schedule_frame(output);
+	int w = d.w, h = d.h;
+	cairo_t *cr = d.cr;
+	cairo_surface_t *cs = d.surface;
+	/* translucent rounded background (the OSD is slightly more opaque
+	 * than the panels: it sits over arbitrary window content) */
+	cairo_set_source_rgba(cr,
+		((server->color_bg >> 16) & 0xFF) / 255.0,
+		((server->color_bg >> 8) & 0xFF) / 255.0,
+		(server->color_bg & 0xFF) / 255.0, 0.85);
+	topbar_rounded_rect(cr, 0, 0, w, h, PANEL_RADIUS * scale);
+	cairo_fill(cr);
+	/* subtle border */
+	cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.15);
+	cairo_set_line_width(cr, scale);
+	topbar_rounded_rect(cr, scale / 2.0, scale / 2.0,
+		w - scale, h - scale, (PANEL_RADIUS - 1) * scale);
+	cairo_stroke(cr);
+	int baseline = OSD_PAD * scale + text_h * scale / 2 +
+		font_px * 35 / 100;
+	launcher_draw_text_on_surface(cs, server->launcher.face, text,
+		OSD_PAD * scale, baseline, server->color_text);
+	if (kind != OSD_SHOT && kind != OSD_WS) {
+		int bar_y = (OSD_PAD + OSD_TEXT_H + OSD_TEXT_BAR_GAP) * scale;
+		int bar_w = (w - 2 * OSD_PAD * scale);
+		cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12);
+		topbar_rounded_rect(cr, OSD_PAD * scale, bar_y,
+			bar_w, OSD_BAR_H * scale, (OSD_BAR_H / 2) * scale);
+		cairo_fill(cr);
+		int fill_w = muted ? 0 : (bar_w * value) / 100;
+		if (fill_w > bar_w)
+			fill_w = bar_w;
+		if (fill_w < 0)
+			fill_w = 0;
+		if (fill_w > 0) {
+			set_color(cr, server->color_accent);
+			topbar_rounded_rect(cr, OSD_PAD * scale, bar_y,
+				fill_w, OSD_BAR_H * scale, (OSD_BAR_H / 2) * scale);
+			cairo_fill(cr);
+		}
+	}
+	panel_end_draw(&d, osd->buffer, osd->scene_node, output);
 }
 
 void osd_shot(struct guibux_server *server, const char *msg) {

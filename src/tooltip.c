@@ -175,14 +175,8 @@ static void tooltip_show(struct guibux_server *server, struct guibux_output *o) 
 		bx = 4;
 	int by = server->topbar_height + 4;
 
-	uint64_t mods[] = { DRM_FORMAT_MOD_INVALID };
-	struct wlr_drm_format format = {
-		.format = DRM_FORMAT_XRGB8888,
-		.len = 1,
-		.modifiers = mods,
-	};
-	tt->buffer = wlr_allocator_create_buffer(server->launcher.shm_alloc,
-		bw * scale, bh * scale, &format);
+	tt->buffer = guibux_shm_buffer(server, bw * scale, bh * scale,
+		DRM_FORMAT_XRGB8888);
 	if (tt->buffer == NULL) {
 		wlr_log(WLR_ERROR, "tooltip: failed to create buffer on %s",
 			o->wlr_output->name ? o->wlr_output->name : "(unknown)");
@@ -210,40 +204,31 @@ static void tooltip_show(struct guibux_server *server, struct guibux_output *o) 
 	topbar_raise_all(server);
 	tt->active = true;
 
-	void *data;
-	uint32_t buf_format;
-	size_t stride;
-	if (wlr_buffer_begin_data_ptr_access(tt->buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_WRITE, &data, &buf_format, &stride)) {
-		if (buf_format == DRM_FORMAT_XRGB8888) {
-			int w = bw * scale, h = bh * scale;
-			cairo_surface_t *cs = cairo_image_surface_create_for_data(
-				data, CAIRO_FORMAT_RGB24, w, h, (int)stride);
-			cairo_t *cr = cairo_create(cs);
-			set_color(cr, server->color_bg);
-			cairo_paint(cr);
-			set_color(cr, server->color_border);
-			cairo_set_line_width(cr, scale);
-			cairo_rectangle(cr, scale / 2.0, scale / 2.0, w - scale, h - scale);
-			cairo_stroke(cr);
-			for (int i = 0; i < nlines; i++) {
-				int baseline = TOOLTIP_PAD_Y * scale +
-					i * TOOLTIP_LINE_H * scale +
-					TOOLTIP_LINE_H * scale / 2 + font_px * 35 / 100;
-				launcher_draw_text_on_surface(cs, server->launcher.face,
-					lines[i], TOOLTIP_PAD_X * scale, baseline,
-					server->color_text);
-			}
-			cairo_destroy(cr);
-			cairo_surface_destroy(cs);
-		}
-		wlr_buffer_end_data_ptr_access(tt->buffer);
+	struct guibux_panel_draw d;
+	if (!panel_begin_draw(tt->buffer, bw * scale, bh * scale, scale, &d)) {
+		return;
 	}
-	wlr_scene_buffer_set_buffer(tt->scene_node, tt->buffer);
-	wlr_output_schedule_frame(o->wlr_output);
+	int w = d.w, h = d.h;
+	cairo_t *cr = d.cr;
+	cairo_surface_t *cs = d.surface;
+	set_color(cr, server->color_bg);
+	cairo_paint(cr);
+	set_color(cr, server->color_border);
+	cairo_set_line_width(cr, scale);
+	cairo_rectangle(cr, scale / 2.0, scale / 2.0, w - scale, h - scale);
+	cairo_stroke(cr);
+	for (int i = 0; i < nlines; i++) {
+		int baseline = TOOLTIP_PAD_Y * scale +
+			i * TOOLTIP_LINE_H * scale +
+			TOOLTIP_LINE_H * scale / 2 + font_px * 35 / 100;
+		launcher_draw_text_on_surface(cs, server->launcher.face,
+			lines[i], TOOLTIP_PAD_X * scale, baseline,
+			server->color_text);
+	}
+	panel_end_draw(&d, tt->buffer, tt->scene_node, o->wlr_output);
 }
 
-void tooltip_update_hover(struct guibux_server *server, uint32_t time) {
+void tooltip_update_hover(struct guibux_server *server, uint32_t now_ms) {
 	struct guibux_tooltip *tt = &server->tooltip;
 	double x = server->cursor->x, y = server->cursor->y;
 
@@ -286,7 +271,7 @@ void tooltip_update_hover(struct guibux_server *server, uint32_t time) {
 			tt->hover_output = o;
 			tt->hover_kind = kind;
 			tt->hover_net_idx = net_idx;
-			tt->hover_since = time;
+			tt->hover_since = now_ms;
 		}
 	} else {
 		tt->hover_output = NULL;

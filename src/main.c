@@ -156,30 +156,24 @@ int main(int argc, char *argv[]) {
 	server.color_topbar_text = DEFAULT_COLOR_TOPBAR_TEXT;
 	server.color_accent = DEFAULT_COLOR_ACCENT;
 	server.topbar_gradient = 0;
-	server.topbar_alpha = 217;
-	server.window_border_width = 4;
+	server.topbar_alpha = DEFAULT_TOPBAR_ALPHA;
+	server.window_border_width = DEFAULT_WINDOW_BORDER_WIDTH;
 	server.window_border_color = DEFAULT_COLOR_ACCENT;
-	server.overview_dim_alpha = 153;
+	server.overview_dim_alpha = DEFAULT_OVERVIEW_DIM_ALPHA;
 	server.topbar_height = DEFAULT_TOPBAR_H;
 	server.topbar_font_size = DEFAULT_TOPBAR_FONT_SIZE;
 	server.topbar_win_pad = DEFAULT_TOPBAR_WIN_PAD;
-	server.topbar_items[0] = TOPBAR_ITEM_NETWORK;
-	server.topbar_items[1] = TOPBAR_ITEM_VOLUME;
-	server.topbar_items[2] = TOPBAR_ITEM_MIC;
-	server.topbar_items[3] = TOPBAR_ITEM_BATTERY;
-	server.topbar_items[4] = TOPBAR_ITEM_NOTIFICATIONS;
-	server.topbar_items[5] = TOPBAR_ITEM_CLOCK;
-	server.topbar_item_count = TOPBAR_ITEMS_MAX;
+	topbar_items_set_defaults(&server);
 	server.background_scale = BG_FILL;
 	server.screensaver.timeout = 300;
 	server.lock_on_idle = true;
 	server.focus_follow_mouse = true;
 	server.effects_enabled = true;
-	server.effects_duration_ms = 200;
+	server.effects_duration_ms = DEFAULT_EFFECTS_DURATION_MS;
 	server.window_open_effect = OPEN_EFFECT_SCALE;
 	server.notify_effect_slide = true;
 	server.osd_enabled = true;
-	server.osd_timeout_ms = 1500;
+	server.osd_timeout_ms = DEFAULT_OSD_TIMEOUT_MS;
 	server.restore_positions = true;
 	server.renderer_name = strdup("auto");
 	keybinds_defaults(&server);
@@ -410,6 +404,10 @@ int main(int argc, char *argv[]) {
 	 * thread starts so a fast capture cannot wake a missing fd */
 	screenshot_init(&server);
 
+	/* probe which power actions this machine supports now, so opening the
+	 * power menu later never blocks the compositor on the lookup */
+	power_panel_init(&server);
+
 	/* SIGUSR1 (sent by the guibuxwm-output tool): re-apply the outputs
 	 * config live */
 	outputs_apply_init(&server);
@@ -474,14 +472,7 @@ int main(int argc, char *argv[]) {
 	/* a config that names no connected output (typo'd name, monitor not
 	 * connected at start) must not black out the session: drop the
 	 * placements and auto-arrange everything */
-	bool any_placed = false;
-	for (int i = 0; i < server.num_placements; i++) {
-		if (server.placements[i].used) {
-			any_placed = true;
-			break;
-		}
-	}
-	if (server.num_placements > 0 && !any_placed) {
+	if (server.num_placements > 0 && !outputs_any_placed(&server)) {
 		outputs_reset_auto(&server);
 	}
 	outputs_state_write(&server);
