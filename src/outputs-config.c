@@ -18,11 +18,20 @@ const char *outputs_transform_name(int t) {
 	case 4: return "flipped";
 	case 5: return "90 flipped";
 	case 6: return "180 flipped";
+	case 7: return "270 flipped";
 	default: return "normal";
 	}
 }
 
+/* parses every name outputs_transform_name emits (WL_OUTPUT_TRANSFORM_*) */
 int outputs_transform_from_name(const char *s) {
+	if (strstr(s, "flipped") != NULL) {
+		if (!strcmp(s, "flipped")) return 4;
+		if (!strcmp(s, "90 flipped")) return 5;
+		if (!strcmp(s, "180 flipped")) return 6;
+		if (!strcmp(s, "270 flipped")) return 7;
+		return -1;
+	}
 	if (!strcmp(s, "normal")) return 0;
 	if (!strcmp(s, "90")) return 1;
 	if (!strcmp(s, "180")) return 2;

@@ -11,7 +11,7 @@ struct guibux_output_entry {
 	char name[64];
 	int x, y;
 	int mode_w, mode_h;
-	int transform;  /* -1 = unset, else WL_OUTPUT_TRANSFORM_* (0..3) */
+	int transform;  /* -1 = unset, else WL_OUTPUT_TRANSFORM_* (0..7) */
 	bool disabled;
 };
 
@@ -26,6 +26,8 @@ void outputs_spec_format(const struct guibux_output_entry *arr, int num,
 int outputs_config_read(const char *path, char *buf, size_t n);
 /* replace the `outputs` line, or append it when absent; 0 on success */
 int outputs_config_write(const char *path, const char *spec);
+/* transform name <-> WL_OUTPUT_TRANSFORM_* (0..7) round-trip:
+ * normal, 90, 180, 270, flipped, 90 flipped, 180 flipped, 270 flipped */
 const char *outputs_transform_name(int t);
 int outputs_transform_from_name(const char *s);
 

@@ -8,13 +8,14 @@
 //
 // Config entry format (same as the compositor):
 //   NAME@XxY[:WxH[:ROT]]   place NAME at XxY, optional mode WxH,
-//                          optional rotation normal|90|180|270
+//                          optional rotation (normal|90|180|270,
+//                          optionally with ' flipped')
 //   NAME@off               disable NAME
 //
 // Usage:
 //   guibuxwm-output list
 //   guibuxwm-output listall
-//   guibuxwm-output set NAME X Y [--mode WxH] [--transform normal|90|180|270]
+//   guibuxwm-output set NAME X Y [--mode WxH] [--transform ROT]
 //   guibuxwm-output enable NAME
 //   guibuxwm-output disable NAME
 //   guibuxwm-output apply
@@ -69,6 +70,7 @@ static void usage(void) {
 		"Options:\n"
 		"  --mode WxH            resolution for 'set' (e.g. 1920x1080)\n"
 		"  --transform T         rotation for 'set': normal|90|180|270\n"
+		"                        (optionally with ' flipped')\n"
 		"  --no-apply            save to the config without signaling the compositor\n"
 		"  -c FILE               config file (default: GUIBUX_CONFIG or\n"
 		"                        ~/.config/guibuxwm/config)\n"
@@ -378,7 +380,8 @@ int main(int argc, char *argv[]) {
 			if (j + 1 >= argc ||
 					(transform = outputs_transform_from_name(argv[++j])) < 0) {
 				fprintf(stderr,
-					"guibuxwm-output: bad --transform (expected normal|90|180|270)\n");
+					"guibuxwm-output: bad --transform (expected normal|90|180|270, "
+					"optionally with ' flipped')\n");
 				return 1;
 			}
 		} else if (!strcmp(argv[j], "--no-apply")) {
