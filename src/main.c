@@ -1,7 +1,5 @@
 // guibuxwm - a simple Wayland window manager built on wlroots 0.20
 //
-// Derived from tinywl (wlroots, MIT license).
-//
 // Features:
 //   - xdg-shell toplevels: focus, move, resize, fullscreen
 //   - terminal command (config `term`, GUIBUX_TERM env or -t flag,
@@ -10,27 +8,41 @@
 //     XKB_DEFAULT_LAYOUT env (e.g. -k fr); variant and options via config
 //   - multi-monitor: new windows open on the output under the cursor,
 //     windows move between monitors with Mod+Shift+Left/Right,
-//     monitor arrangement via GUIBUX_OUTPUTS="NAME@XxY,NAME@XxY"
-//   - topbar per monitor: monitor letter (A, B, C, ...) on the left, date
-//     and time on the right (updates every second)
+//     monitor arrangement via the `outputs` config key (edited live by
+//     the guibuxwm-output tool, SIGUSR1, or the outputs panel, Mod+m)
+//   - topbar per monitor: monitor letter (A, B, C, ...) on the left,
+//     workspace pills, window pills, network/audio/battery/notifications
+//     indicators and date/time on the right (updates every second)
 //   - workspaces per monitor (4, numbered 1 2 3 4): Mod+1..4 switch,
 //     Mod+Shift+1..4 move a window; workspace numbers shown in the topbar
 //     (current highlighted, clickable)
+//   - F12 GNOME-style overview (workspace grid, drag-to-move)
+//   - window position restore (per-app state file)
+//   - desktop background (PNG/JPEG, per-workspace images)
+//   - lock screen (Mod+Shift+l, PAM auth), screenshots (Mod+Print family),
+//     power menu (Mod+p), on-screen display for volume/mic/brightness
+//   - XWayland support
+//   - desktop notifications (D-Bus daemon, topbar bell, list panel)
 //   - keybindings (Mod = Super), all configurable via the config file:
 //       Mod+Return            start a new terminal
 //       Mod+q                 close focused window
 //       Mod+f                 toggle fullscreen
 //       Mod+t                 cycle tile mode (free / split / main+stack)
 //       Mod+e                 command box: type a command, Enter runs it
-//       Mod+Tab               cycle focus
+//       Alt+Tab               window switcher
 //       Mod+1..4              switch to workspace 1..4 on the focused monitor
 //       Mod+Shift+1..4        move focused window to workspace 1..4
 //       Mod+Shift+Left/Right  move window to previous/next monitor
+//       Mod+h                 keybinding help
+//       Mod+m                 outputs panel
+//       Mod+p                 power menu
+//       Mod+Shift+l           lock screen
+//       F12                   overview
 //       Mod+Shift+q           quit
 //       Alt+Escape            quit
 //       Mod+Alt+Escape        quit
 //   - config file: -c flag, GUIBUX_CONFIG env or ~/.config/guibuxwm/config
-//     (keybinds, terminal, keyboard layout/variant/options, colors)
+//     (keybinds, terminal, keyboard layout/variant/options, colors, ...)
 //
 // Build:
 //   meson setup build && ninja -C build
