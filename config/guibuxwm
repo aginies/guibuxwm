@@ -10,25 +10,22 @@ term = gnome-terminal
 # Wayland app_id of the terminal: excluded from window position restore.
 # Defaults to the command name from `term`; GNOME Terminal reports
 # org.gnome.Terminal, not gnome-terminal.
-term_app_id = org.gnome.Terminal
+#term_app_id = org.gnome.Terminal
 
 # preferred apps shown above the command box (Mod+e) prompt, up to 6.
 # Format: Name;command[;icon] — icon is a theme icon name or an
 # absolute path; without it the command name is used. A missing
 # theme or icon is skipped silently (no icon, no error). Up/Down
 # selects, Enter launches.
-preferred_app1 = Firefox;firefox;firefox
-preferred_app2 = Slack;slack;slack
-preferred_app3 = Nautilus;nautilus;nautilus
-preferred_app4 = VirtUI-GUI;virtui-gui;virtui-gui
-preferred_app5 = Chrome;flatpak run com.google.Chrome;chromium
+#preferred_app1 = Firefox;firefox;firefox
+#preferred_app2 = Files;nautilus;nautilus
 
 # icon theme for launcher icons (leave unset to use the gtk
 # gtk-icon-theme-name, then Adwaita)
 #icon_theme = Adwaita
 
 # keyboard (xkb names; leave unset for the system default)
-xkb_layout = fr
+#xkb_layout = fr
 #xkb_variant = osd
 #xkb_options = caps:swapscape
 
@@ -107,10 +104,10 @@ topbar_text = #c0caf5
 #topbar_gradient = 1
 
 # topbar height in pixels (default: 24)
-topbar_height = 30
+topbar_height = 24
 
 # topbar font size in pixels (default: 16)
-topbar_font_size = 18
+topbar_font_size = 16
 
 # vertical padding of window pills inside the topbar in pixels (default: 2)
 # smaller = taller pills, 0 = pills fill the whole topbar height
@@ -129,7 +126,7 @@ topbar_win_pad = 2
 
 # desktop background image (PNG or JPEG), used for workspaces
 # without their own image
-background = /home/aginies/Pictures/Emission_nebulae_in_Cassiopeia.jpg
+#background = /path/to/background.jpg
 
 # per-workspace background images (optional, fall back to background)
 #background1 = /path/to/ws1.jpg
@@ -151,14 +148,14 @@ lock_on_idle = true
 # (true = enabled, false = click-to-focus only; default: true)
 focus_follow_mouse = true
 
-# overview: show colored pills for workspace numbers (default: true)
-overview_workspace_colors = true
+# overview: show colored pills for workspace numbers (default: false)
+#overview_workspace_colors = true
 
-# per-workspace overview colors (#rrggbb)
-overview_ws_color1 = #7aa2f7
-overview_ws_color2 = #9ece6a
-overview_ws_color3 = #e0af68
-overview_ws_color4 = #bb9af7
+# per-workspace overview colors (#rrggbb; default: unset, dark pill)
+#overview_ws_color1 = #7aa2f7
+#overview_ws_color2 = #9ece6a
+#overview_ws_color3 = #e0af68
+#overview_ws_color4 = #bb9af7
 
 # overview dim overlay opacity 0-255 (default: 153)
 #overview_dim_alpha = 153
@@ -172,7 +169,7 @@ overview_ws_color4 = #bb9af7
 # animations: master switch (default: true) and duration in ms
 # (default: 200, 0 = off)
 effects = true
-effects_duration_ms = 300
+effects_duration_ms = 200
 
 # window open animation: scale, slide, none (default: scale)
 window_open_effect = scale
