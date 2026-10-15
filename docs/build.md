@@ -68,6 +68,14 @@ meson setup build
 ninja -C build
 ```
 
+## CPU-specific binary
+
+The build passes `-march=native` (see `meson.build`), so the binary is
+tuned to the CPU it was built on. It is not portable to a different
+microarchitecture — a binary built on an AVX2 machine can crash with
+`SIGILL` on older hardware. Rebuild on the target machine before
+installing elsewhere.
+
 ## Run
 
 ```sh
