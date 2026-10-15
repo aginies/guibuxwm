@@ -1,4 +1,5 @@
 build/
+build-dbg/
 
 # personal dotfiles and editor/tooling state
 .bash_profile
