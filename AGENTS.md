@@ -25,7 +25,7 @@ Run: `./build/guibuxwm`
 
 ## Code Style
 
-- C99, 4-space indent, no tabs
+- C11 (meson `c_std=gnu11`), tab indent
 - snake_case for functions/variables, UPPER_CASE for macros/defines
 - `#include` order: system headers, then project headers, alphabetically within each group
 - Comments explain why, not what
@@ -42,18 +42,32 @@ Run: `./build/guibuxwm`
 | `src/toplevel.c` | XDG/X11 surface lifecycle, focus |
 | `src/window-layout.c` | Tiling modes (free/split/main+stack) |
 | `src/topbar.c` | Per-monitor topbar rendering |
+| `src/topbar-items.c` | Topbar items panel (`Mod+l`) |
+| `src/outputs-panel.c` | Monitor layout panel (`Mod+m`) |
+| `src/outputs-config.c/h` | `outputs` spec parse/format, shared with the `guibuxwm-output` tool |
 | `src/overview.c` | F12 overview mode |
 | `src/launcher.c` | Command box (`Mod+e`) |
+| `src/switcher.c` | Alt+Tab window switcher |
 | `src/keyboard.c` | Keybind dispatch |
 | `src/notify.c` | Notification daemon |
 | `src/output.c` | Monitor handling, arrangement |
 | `src/effects.c` | Window/panel animations |
 | `src/background.c` | Desktop background rendering |
 | `src/window-restore.c` | Position save/restore |
-| `src/sysinfo.c` | Audio/network status polling |
-| `src/cursor.c` | Cursor shape, grab state |
+| `src/sysinfo.c` | Audio/network/battery status polling |
+| `src/cursor.c` | Cursor motion, buttons, grab state |
+| `src/popup.c` | XDG popup handling |
 | `src/help.c` | Keybinding help overlay |
 | `src/screensaver.c` | Idle inhibitor |
+| `src/lock.c` | Lock screen (PAM auth) |
+| `src/screenshot.c` | Screenshot (fullscreen/region/window) |
+| `src/power.c` | Power menu (suspend/hibernate/lock/logout/restart/shutdown) |
+| `src/osd.c` | On-screen display (volume/mic/brightness) |
+| `src/tooltip.c` | Topbar indicator tooltips |
+| `src/window-preview.c` | Window preview on topbar pill hover |
+| `src/gfx.c` | Shared drawing/buffer helpers (utf8, text width, shm buffer) |
+| `src/panel.c` | Shared overlay buffer/draw plumbing |
+| `src/stb_image.h` / `src/stb_image_write.h` | stb image loader / PNG writer (public domain) |
 | `src/guibuxwm.h` | Shared types, forward declarations |
 
 ## Testing
